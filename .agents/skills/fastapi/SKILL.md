@@ -44,13 +44,13 @@ Once the app module is stable, add an entrypoint to `pyproject.toml`:
 
 ```toml
 [tool.fastapi]
-entrypoint = "src.main:app"
+entrypoint = "app.main:app"
 ```
 
 If the project is still a small prototype or cannot set an entrypoint yet, pass the app path explicitly:
 
 ```bash
-fastapi dev src/main.py
+fastapi dev app/main.py
 ```
 
 ## Project Structure
@@ -58,7 +58,7 @@ fastapi dev src/main.py
 Organize non-trivial APIs by domain, not by file type. Use one package per bounded context:
 
 ```text
-src/
+app/
   {domain}/
     router.py
     schemas.py
@@ -91,12 +91,12 @@ File roles:
 Cross-domain imports must be explicit:
 
 ```python
-from src.auth import constants as auth_constants
-from src.notifications import service as notification_service
-from src.posts.constants import ErrorCode as PostsErrorCode
+from app.auth import constants as auth_constants
+from app.notifications import service as notification_service
+from app.posts.constants import ErrorCode as PostsErrorCode
 ```
 
-Avoid wildcard imports and deep cross-domain imports such as `from src.auth.service.user import ...`.
+Avoid wildcard imports and deep cross-domain imports such as `from app.auth.service.user import ...`.
 
 ## Routes and Routers
 
@@ -393,7 +393,7 @@ from collections.abc import AsyncIterator
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.main import app
+from app.main import app
 
 
 @pytest.fixture
@@ -425,8 +425,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from src.auth.dependencies import parse_jwt_data
-from src.main import app
+from app.auth.dependencies import parse_jwt_data
+from app.main import app
 
 
 def fake_user() -> dict:
@@ -462,7 +462,7 @@ Hide docs outside selected environments when public docs are not intended:
 ```python
 from fastapi import FastAPI
 
-from src.config import settings
+from app.config import settings
 
 SHOW_DOCS_IN = {"local", "staging"}
 
@@ -489,8 +489,8 @@ Use FastAPI and Starlette streaming primitives intentionally:
 Use Ruff unless the repo already has a stronger local standard:
 
 ```bash
-ruff check --fix src
-ruff format src
+ruff check --fix app
+ruff format app
 ```
 
 Run linting and formatting in CI once backend code exists.
