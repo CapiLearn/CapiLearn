@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/backend-ci.yml"
       - ".pre-commit-config.yaml"
   push:
@@ -11,6 +13,8 @@ on:
       - main
     paths:
       - "backend/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/backend-ci.yml"
       - ".pre-commit-config.yaml"
   workflow_dispatch:
@@ -27,10 +31,6 @@ jobs:
     name: Ruff
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: backend
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -44,7 +44,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
-          cache-dependency-glob: backend/uv.lock
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies
         run: uv sync --locked --dev

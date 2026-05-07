@@ -23,9 +23,8 @@ dist/
 build/
 *.egg-info/
 
-# uv
-uv.lock
-!backend/uv.lock
+
+
 
 # Node / Next.js / TypeScript
 node_modules/
