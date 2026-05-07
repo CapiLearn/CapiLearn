@@ -6,8 +6,7 @@ Feature 3: Data Ingestion Layer.
 
 # Out of Scope: 
 
-    - Future Roadmap
-    - Advanced analytics dashboard for instructors.
+    - Instructor dashboard
     - Course material organized by topics
-    - Caching   
+    - Caching 
     
