@@ -85,4 +85,3 @@ The goal is to create a more engaging and ethical homework help experience that 
     Jose - UI/UX, endpoints
     Stephan - LLM, guardrails
     Lizzy - RAG, ingestion
-
