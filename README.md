@@ -37,6 +37,7 @@ The goal is to create a more engaging and ethical homework help experience that 
  
     backend
     │   ├───DB
+    │   ├───endpoints  
     │   ├───ingestion
     │   ├───LLM
     │   ├───RAG
@@ -44,7 +45,6 @@ The goal is to create a more engaging and ethical homework help experience that 
     ├───data
     ├───docs
     frontend
-        ├───endpoints
         └───tests
 
     
