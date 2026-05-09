@@ -14,7 +14,4 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ruff>=0.15.12",
-    "pathlib>=1.0.1",
 ]
-
-
