@@ -81,7 +81,9 @@ def make_document(path: Path, repo_root: Path) -> dict:
     }
 
 
-def ingest_repo(repo_path: str, output_path: str = "data/processed/documents.json") -> None:
+def ingest_repo(
+    repo_path: str, output_path: str = "data/processed/documents.json"
+) -> None:
     repo_root = Path(repo_path).resolve()
     output_file = Path(output_path)
 
