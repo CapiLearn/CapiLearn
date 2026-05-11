@@ -34,18 +34,20 @@ The goal is to create a more engaging and ethical homework help experience that 
     - ingestion
     
 # Folder structure
- 
-    backend
-    │   ├───DB
-    │   ├───endpoints  
-    │   ├───ingestion
-    │   ├───LLM
-    │   ├───RAG
-    │   └───tests
-    ├───data
-    ├───docs
-    frontend
-        └───tests
+
+```
+backend/
+├── DB/
+├── endpoints/
+├── ingestion/
+├── LLM/
+├── RAG/
+└── tests/
+data/
+docs/
+frontend/
+└── tests/
+```
 
     
 
@@ -99,7 +101,7 @@ The goal is to create a more engaging and ethical homework help experience that 
 
 # Architecture Diagram
 
-    See ![design diagram](CapiLearn\docs\educational-ai-assistant-system-design-simplified.png) in docs folder.
+![Architecture Diagram](docs/educational-ai-assistant-system-design-simplified.png)
 
 
 # Ownership
