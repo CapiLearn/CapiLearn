@@ -1,24 +1,11 @@
 import json
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import get_args
 from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.chat.dependencies import get_chat_service
-from backend.chat.events import (
-    AssistantMessageCreatedPayload,
-    BlockedPayload,
-    ChatStreamEvent,
-    ChatStreamPayloadUnion,
-    CompletedPayload,
-    ConversationCreatedPayload,
-    DeltaPayload,
-    UserMessageCreatedPayload,
-    sse_event,
-)
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
@@ -27,6 +14,7 @@ from backend.chat.schemas import (
     MessageResponse,
     MessageRole,
     MessageStatus,
+    SendMessageResponse,
 )
 from backend.main import app
 
@@ -37,35 +25,17 @@ def clear_overrides():
     app.dependency_overrides.clear()
 
 
-def test_stream_openapi_responses_are_typed_event_streams() -> None:
+def test_chat_openapi_uses_json_send_routes_without_streams_or_citations() -> None:
     schema = app.openapi()
-    stream_paths = [
-        "/api/conversations/stream",
-        "/api/conversations/{conversation_id}/messages/stream",
-    ]
 
-    for path in stream_paths:
-        response = schema["paths"][path]["post"]["responses"]["200"]
-        content = response["content"]
-        assert set(content) == {"text/event-stream"}
+    assert "/api/conversations/stream" not in schema["paths"]
+    assert "/api/conversations/{conversation_id}/messages/stream" not in schema["paths"]
+    assert "post" in schema["paths"]["/api/conversations"]
+    assert "post" in schema["paths"]["/api/conversations/{conversation_id}/messages"]
 
-        stream_schema = content["text/event-stream"]["schema"]
-        assert stream_schema["discriminator"] == {"propertyName": "type"}
-        assert {
-            option["properties"]["type"]["const"] for option in stream_schema["oneOf"]
-        } == {event.value for event in ChatStreamEvent}
-        assert all("type" in option["required"] for option in stream_schema["oneOf"])
-
-
-def test_event_payload_coverage() -> None:
-    payload_union = get_args(ChatStreamPayloadUnion)[0]
-    payload_types = [
-        get_args(variant.__annotations__["type"])[0]
-        for variant in get_args(payload_union)
-    ]
-
-    assert set(payload_types) == {event.value for event in ChatStreamEvent}
-    assert len(payload_types) == len(set(payload_types))
+    serialized_schema = json.dumps(schema)
+    assert "text/event-stream" not in serialized_schema
+    assert "citations" not in serialized_schema
 
 
 def test_chat_routes_have_stable_operation_ids() -> None:
@@ -74,8 +44,8 @@ def test_chat_routes_have_stable_operation_ids() -> None:
     assert schema["paths"]["/api/conversations"]["get"]["operationId"] == (
         "listConversations"
     )
-    assert schema["paths"]["/api/conversations/stream"]["post"]["operationId"] == (
-        "createConversationStream"
+    assert schema["paths"]["/api/conversations"]["post"]["operationId"] == (
+        "createConversation"
     )
     assert (
         schema["paths"]["/api/conversations/{conversation_id}/messages"]["get"][
@@ -84,10 +54,10 @@ def test_chat_routes_have_stable_operation_ids() -> None:
         == "listMessages"
     )
     assert (
-        schema["paths"]["/api/conversations/{conversation_id}/messages/stream"]["post"][
+        schema["paths"]["/api/conversations/{conversation_id}/messages"]["post"][
             "operationId"
         ]
-        == "createMessageStream"
+        == "createMessage"
     )
     assert (
         schema["paths"]["/api/conversations/{conversation_id}"]["patch"]["operationId"]
@@ -100,7 +70,7 @@ def test_chat_routes_have_stable_operation_ids() -> None:
 
 
 @pytest.mark.asyncio
-async def test_first_message_stream_emits_lifecycle_events() -> None:
+async def test_create_conversation_returns_complete_message_response() -> None:
     app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
 
     async with AsyncClient(
@@ -108,26 +78,30 @@ async def test_first_message_stream_emits_lifecycle_events() -> None:
         base_url="http://test",
     ) as client:
         response = await client.post(
-            "/api/conversations/stream",
+            "/api/conversations",
             json={"content": "Explain cells."},
         )
 
     assert response.status_code == 200
-    events = _parse_sse(response.text)
-    assert [event["event"] for event in events] == [
-        ChatStreamEvent.CONVERSATION_CREATED.value,
-        ChatStreamEvent.USER_MESSAGE_CREATED.value,
-        ChatStreamEvent.ASSISTANT_MESSAGE_CREATED.value,
-        ChatStreamEvent.DELTA.value,
-        ChatStreamEvent.COMPLETED.value,
-    ]
-    assert [event["data"]["type"] for event in events] == [
-        event["event"] for event in events
-    ]
+    payload = response.json()
+    assert set(payload) == {
+        "conversation",
+        "userMessage",
+        "assistantMessage",
+        "finishReason",
+        "blockedReason",
+    }
+    assert "citations" not in payload
+    assert payload["conversation"]["id"] == str(FakeChatService.conversation_id)
+    assert payload["userMessage"]["role"] == MessageRole.USER.value
+    assert payload["assistantMessage"]["content"] == "Cells are small units."
+    assert payload["assistantMessage"]["status"] == MessageStatus.COMPLETED.value
+    assert payload["finishReason"] == "stop"
+    assert payload["blockedReason"] is None
 
 
 @pytest.mark.asyncio
-async def test_followup_stream_surfaces_ownership_failure() -> None:
+async def test_followup_message_surfaces_ownership_failure() -> None:
     app.dependency_overrides[get_chat_service] = lambda: MissingConversationService()
 
     async with AsyncClient(
@@ -135,7 +109,7 @@ async def test_followup_stream_surfaces_ownership_failure() -> None:
         base_url="http://test",
     ) as client:
         response = await client.post(
-            f"/api/conversations/{uuid4()}/messages/stream",
+            f"/api/conversations/{uuid4()}/messages",
             json={"content": "Follow up."},
         )
 
@@ -144,7 +118,7 @@ async def test_followup_stream_surfaces_ownership_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_blocked_input_stream_emits_blocked_event() -> None:
+async def test_blocked_input_returns_blocked_assistant_message() -> None:
     app.dependency_overrides[get_chat_service] = lambda: BlockedChatService()
 
     async with AsyncClient(
@@ -152,15 +126,15 @@ async def test_blocked_input_stream_emits_blocked_event() -> None:
         base_url="http://test",
     ) as client:
         response = await client.post(
-            "/api/conversations/stream",
+            "/api/conversations",
             json={"content": "unsafe"},
         )
 
     assert response.status_code == 200
-    events = _parse_sse(response.text)
-    assert events[-1]["event"] == ChatStreamEvent.BLOCKED.value
-    assert events[-1]["data"]["type"] == ChatStreamEvent.BLOCKED.value
-    assert events[-1]["data"]["status"] == MessageStatus.BLOCKED.value
+    payload = response.json()
+    assert payload["assistantMessage"]["status"] == MessageStatus.BLOCKED.value
+    assert payload["assistantMessage"]["content"] == "Blocked."
+    assert payload["blockedReason"] == "Blocked."
 
 
 @pytest.mark.asyncio
@@ -275,51 +249,18 @@ class FakeChatService:
     def __init__(self, *, title: str | None = "Explain cells.") -> None:
         self.title = title
 
-    async def stream_new_conversation(
-        self, content: str
-    ) -> AsyncIterator[dict[str, str]]:
-        return self._stream_conversation(content)
+    async def create_conversation_message(self, content: str) -> SendMessageResponse:
+        return self._send_message_response(content=content)
 
-    async def _stream_conversation(self, content: str) -> AsyncIterator[dict[str, str]]:
-        yield sse_event(
-            ConversationCreatedPayload(
-                conversation_id=self.conversation_id,
-                title=self.title,
-            )
-        )
-        yield sse_event(
-            UserMessageCreatedPayload(
-                message_id=self.user_message_id,
-                conversation_id=self.conversation_id,
-            )
-        )
-        yield sse_event(
-            AssistantMessageCreatedPayload(
-                message_id=self.assistant_message_id,
-                conversation_id=self.conversation_id,
-                status=MessageStatus.STREAMING.value,
-            )
-        )
-        yield sse_event(
-            DeltaPayload(
-                message_id=self.assistant_message_id,
-                text="Cells are small units.",
-            )
-        )
-        yield sse_event(
-            CompletedPayload(
-                message_id=self.assistant_message_id,
-                status=MessageStatus.COMPLETED.value,
-                finish_reason="stop",
-            )
-        )
-
-    async def stream_message(
+    async def create_message(
         self,
         conversation_id: UUID,
         content: str,
-    ) -> AsyncIterator[dict[str, str]]:
-        return self._stream_conversation(content)
+    ) -> SendMessageResponse:
+        return self._send_message_response(
+            conversation_id=conversation_id,
+            content=content,
+        )
 
     async def list_conversations(self) -> ConversationListResponse:
         return ConversationListResponse(
@@ -359,13 +300,50 @@ class FakeChatService:
             updated_at=self.created_at,
         )
 
+    def _send_message_response(
+        self,
+        *,
+        content: str,
+        conversation_id: UUID | None = None,
+        assistant_status: MessageStatus = MessageStatus.COMPLETED,
+        assistant_content: str = "Cells are small units.",
+        finish_reason: str | None = "stop",
+        blocked_reason: str | None = None,
+    ) -> SendMessageResponse:
+        resolved_conversation_id = conversation_id or self.conversation_id
+        return SendMessageResponse(
+            conversation=ConversationResponse(
+                id=resolved_conversation_id,
+                title=self.title,
+                updated_at=self.created_at,
+            ),
+            user_message=MessageResponse(
+                id=self.user_message_id,
+                conversation_id=resolved_conversation_id,
+                role=MessageRole.USER,
+                content=content,
+                status=MessageStatus.COMPLETED,
+                created_at=self.created_at,
+            ),
+            assistant_message=MessageResponse(
+                id=self.assistant_message_id,
+                conversation_id=resolved_conversation_id,
+                role=MessageRole.ASSISTANT,
+                content=assistant_content,
+                status=assistant_status,
+                created_at=self.created_at,
+            ),
+            finish_reason=finish_reason,
+            blocked_reason=blocked_reason,
+        )
+
 
 class MissingConversationService(FakeChatService):
-    async def stream_message(
+    async def create_message(
         self,
         conversation_id: UUID,
         content: str,
-    ) -> AsyncIterator[dict[str, str]]:
+    ) -> SendMessageResponse:
         from backend.core.exceptions import ApiError
 
         raise ApiError(
@@ -376,39 +354,11 @@ class MissingConversationService(FakeChatService):
 
 
 class BlockedChatService(FakeChatService):
-    async def stream_new_conversation(
-        self, content: str
-    ) -> AsyncIterator[dict[str, str]]:
-        return self._stream_blocked()
-
-    async def _stream_blocked(self) -> AsyncIterator[dict[str, str]]:
-        yield sse_event(
-            AssistantMessageCreatedPayload(
-                message_id=self.assistant_message_id,
-                conversation_id=self.conversation_id,
-                status=MessageStatus.STREAMING.value,
-            )
+    async def create_conversation_message(self, content: str) -> SendMessageResponse:
+        return self._send_message_response(
+            content=content,
+            assistant_status=MessageStatus.BLOCKED,
+            assistant_content="Blocked.",
+            finish_reason=None,
+            blocked_reason="Blocked.",
         )
-        yield sse_event(
-            BlockedPayload(
-                message_id=self.assistant_message_id,
-                status=MessageStatus.BLOCKED.value,
-                reason="Blocked.",
-            )
-        )
-
-
-def _parse_sse(body: str) -> list[dict[str, object]]:
-    events = []
-    body = body.replace("\r\n", "\n")
-    for block in body.strip().split("\n\n"):
-        event_name = None
-        data = None
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                event_name = line.removeprefix("event: ")
-            if line.startswith("data: "):
-                data = json.loads(line.removeprefix("data: "))
-        if event_name is not None and data is not None:
-            events.append({"event": event_name, "data": data})
-    return events

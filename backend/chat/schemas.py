@@ -1,6 +1,5 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,7 +68,9 @@ class MessageListResponse(ChatBaseModel):
     messages: list[MessageResponse]
 
 
-class StreamErrorPayload(ChatBaseModel):
-    code: str
-    message: str
-    details: dict[str, Any] | None = None
+class SendMessageResponse(ChatBaseModel):
+    conversation: ConversationResponse
+    user_message: MessageResponse
+    assistant_message: MessageResponse
+    finish_reason: str | None = None
+    blocked_reason: str | None = None

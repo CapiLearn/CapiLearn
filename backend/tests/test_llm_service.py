@@ -9,12 +9,8 @@ from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
     GuardrailResult,
-    LLMBlocked,
-    LLMDelta,
     LLMRequest,
-    LLMResult,
     ProviderResponse,
-    ProviderStreamChunk,
     RetrievedChunk,
 )
 from backend.llm.service import LLMService
@@ -23,9 +19,7 @@ from backend.llm.service import LLMService
 class FakeProvider:
     def __init__(self) -> None:
         self.messages: list[ChatMessage] = []
-        self.stream_messages: list[ChatMessage] = []
         self.complete_called = False
-        self.stream_called = False
 
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
         self.complete_called = True
@@ -33,12 +27,6 @@ class FakeProvider:
         return ProviderResponse(
             content="Plants turn light into energy.", finish_reason="stop"
         )
-
-    async def stream(self, messages: list[ChatMessage]):
-        self.stream_called = True
-        self.stream_messages = messages
-        yield ProviderStreamChunk(text="Plants ", model="provider/model")
-        yield ProviderStreamChunk(text="stream.", finish_reason="stop")
 
 
 class FakeRetriever:
@@ -120,13 +108,6 @@ class BlockingOutputGuardrails(AllowGuardrails):
         return GuardrailResult(blocked=True, reason="Output blocked.", rail="output")
 
 
-class NoOutputGuardrails(AllowGuardrails):
-    has_output_guardrail = False
-
-    async def check_output(self, content: str, *, user_input: str) -> GuardrailResult:
-        raise AssertionError("output guardrail should not run while streaming")
-
-
 @pytest.mark.asyncio
 async def test_llm_service_adds_retrieved_context_to_system_prompt() -> None:
     provider = FakeProvider()
@@ -139,7 +120,8 @@ async def test_llm_service_adds_retrieved_context_to_system_prompt() -> None:
     result = await service.complete(_request("What is photosynthesis?"))
 
     assert result.content == "Plants turn light into energy."
-    assert result.citations[0].source_id == "doc_1"
+    assert result.retrieved_context[0].source_id == "doc_1"
+    assert "citations" not in result.model_dump()
     assert provider.messages[0].role == ChatRole.SYSTEM
     assert "Relevant note for: What is photosynthesis?" in provider.messages[0].content
 
@@ -158,7 +140,7 @@ async def test_llm_service_complete_starts_retrieval_before_input_guardrail_fini
 
     result = await service.complete(_request("What is concurrent retrieval?"))
 
-    assert result.citations[0].source_id == "doc_concurrent"
+    assert result.retrieved_context[0].source_id == "doc_concurrent"
     assert provider.complete_called
     assert (
         "Concurrent note for: What is concurrent retrieval?"
@@ -175,33 +157,12 @@ async def test_llm_service_blocks_unsafe_input_before_provider_call() -> None:
         retriever=FakeRetriever(),
     )
 
-    events = [event async for event in service.stream(_request("bad input"))]
+    result = await service.complete(_request("bad input"))
 
-    assert isinstance(events[0], LLMBlocked)
-    assert events[0].reason == "Input blocked."
+    assert result.input_guardrail_result.blocked
+    assert result.content == "Input blocked."
     assert provider.messages == []
     assert not provider.complete_called
-    assert not provider.stream_called
-
-
-@pytest.mark.asyncio
-async def test_llm_service_stream_ignores_retrieval_when_input_is_blocked() -> None:
-    provider = FakeProvider()
-    retriever = ReleasableRetriever()
-    service = LLMService(
-        provider=provider,
-        guardrails=WaitForRetrievalGuardrails(retriever.started, blocked=True),
-        retriever=retriever,
-    )
-
-    events = [event async for event in service.stream(_request("bad input"))]
-    retriever.release.set()
-    await asyncio.sleep(0)
-
-    assert isinstance(events[0], LLMBlocked)
-    assert events[0].reason == "Input blocked."
-    assert not provider.complete_called
-    assert not provider.stream_called
 
 
 @pytest.mark.asyncio
@@ -218,11 +179,10 @@ async def test_llm_service_complete_ignores_retrieval_when_input_is_blocked() ->
     retriever.release.set()
     await asyncio.sleep(0)
 
+    assert result.input_guardrail_result.blocked
     assert result.content == "Input blocked."
-    assert result.citations == []
-    assert result.retrieved_context == []
     assert not provider.complete_called
-    assert not provider.stream_called
+    assert result.retrieved_context == []
 
 
 @pytest.mark.asyncio
@@ -242,52 +202,30 @@ async def test_llm_service_consumes_ignored_retrieval_exception() -> None:
             retriever=retriever,
         )
 
-        events = [event async for event in service.stream(_request("bad input"))]
+        result = await service.complete(_request("bad input"))
         retriever.release.set()
         await asyncio.sleep(0)
 
-        assert isinstance(events[0], LLMBlocked)
+        assert result.input_guardrail_result.blocked
         assert captured_contexts == []
     finally:
         loop.set_exception_handler(previous_handler)
 
 
 @pytest.mark.asyncio
-async def test_llm_service_streams_provider_chunks_without_output_guardrail() -> None:
+async def test_llm_service_blocks_unsafe_output_after_provider_call() -> None:
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
-        guardrails=NoOutputGuardrails(),
-        retriever=FakeRetriever(),
-    )
-
-    events = [event async for event in service.stream(_request("stream this"))]
-
-    assert [event.text for event in events if isinstance(event, LLMDelta)] == [
-        "Plants ",
-        "stream.",
-    ]
-    assert isinstance(events[-1], LLMResult)
-    assert events[-1].content == "Plants stream."
-    assert events[-1].provider_response is not None
-    assert events[-1].provider_response.finish_reason == "stop"
-    assert provider.stream_called
-    assert not provider.complete_called
-    assert provider.stream_messages[0].role == ChatRole.SYSTEM
-
-
-@pytest.mark.asyncio
-async def test_llm_service_blocks_unsafe_output_before_delta_events() -> None:
-    service = LLMService(
-        provider=FakeProvider(),
         guardrails=BlockingOutputGuardrails(),
         retriever=FakeRetriever(),
     )
 
-    events = [event async for event in service.stream(_request("safe input"))]
+    result = await service.complete(_request("safe input"))
 
-    assert isinstance(events[0], LLMBlocked)
-    assert not any(isinstance(event, LLMDelta) for event in events)
+    assert result.output_guardrail_result.blocked
+    assert result.content == "Output blocked."
+    assert provider.complete_called
 
 
 @pytest.mark.asyncio
@@ -308,35 +246,6 @@ async def test_litellm_provider_uses_server_configured_model(monkeypatch) -> Non
     assert response.content == "Configured model response."
     assert captured_kwargs["model"] == llm_settings.model
     assert "api_key" not in captured_kwargs
-
-
-@pytest.mark.asyncio
-async def test_litellm_provider_streams_configured_model_chunks(monkeypatch) -> None:
-    captured_kwargs = {}
-
-    async def fake_acompletion(**kwargs):
-        captured_kwargs.update(kwargs)
-        return _FakeLiteLLMStream(
-            [
-                _FakeLiteLLMStreamChunk("Configured ", None),
-                _FakeLiteLLMStreamChunk("stream.", "stop"),
-            ],
-        )
-
-    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
-
-    provider = LiteLLMProvider()
-    chunks = [
-        chunk
-        async for chunk in provider.stream(
-            [ChatMessage(role=ChatRole.USER, content="hello")]
-        )
-    ]
-
-    assert [chunk.text for chunk in chunks] == ["Configured ", "stream."]
-    assert chunks[-1].finish_reason == "stop"
-    assert captured_kwargs["model"] == llm_settings.model
-    assert captured_kwargs["stream"] is True
 
 
 def _request(content: str) -> LLMRequest:
@@ -370,37 +279,3 @@ class _FakeLiteLLMResponse:
 
     def model_dump(self, mode: str):
         return {"model": self.model, "mode": mode}
-
-
-class _FakeLiteLLMDelta:
-    def __init__(self, content: str) -> None:
-        self.content = content
-
-
-class _FakeLiteLLMStreamChoice:
-    def __init__(self, content: str, finish_reason: str | None) -> None:
-        self.delta = _FakeLiteLLMDelta(content)
-        self.finish_reason = finish_reason
-
-
-class _FakeLiteLLMStreamChunk:
-    model = "provider/model"
-    usage = None
-
-    def __init__(self, content: str, finish_reason: str | None) -> None:
-        self.choices = [_FakeLiteLLMStreamChoice(content, finish_reason)]
-
-    def model_dump(self, mode: str):
-        return {"model": self.model, "mode": mode}
-
-
-class _FakeLiteLLMStream:
-    def __init__(self, chunks: list[_FakeLiteLLMStreamChunk]) -> None:
-        self._chunks = chunks
-
-    def __aiter__(self):
-        return self._stream()
-
-    async def _stream(self):
-        for chunk in self._chunks:
-            yield chunk

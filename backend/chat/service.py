@@ -1,4 +1,3 @@
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -6,17 +5,6 @@ from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.schemas import CurrentUser
-from backend.chat.events import (
-    AssistantMessageCreatedPayload,
-    BlockedPayload,
-    CitationsPayload,
-    CompletedPayload,
-    ConversationCreatedPayload,
-    DeltaPayload,
-    ErrorPayload,
-    UserMessageCreatedPayload,
-    sse_event,
-)
 from backend.chat.models import Conversation, Message
 from backend.chat.repository import ChatRepository
 from backend.chat.schemas import (
@@ -28,13 +16,12 @@ from backend.chat.schemas import (
     MessageResponse,
     MessageRole,
     MessageStatus,
+    SendMessageResponse,
 )
 from backend.core.exceptions import ApiError
 from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
-    LLMBlocked,
-    LLMDelta,
     LLMRequest,
     LLMResult,
 )
@@ -97,24 +84,22 @@ class ChatService:
         conversation.updated_at = datetime.now(UTC)
         await self._repository.save(self._session)
 
-    async def stream_new_conversation(
-        self, content: str
-    ) -> AsyncIterator[dict[str, str]]:
+    async def create_conversation_message(self, content: str) -> SendMessageResponse:
         title = _title_from_content(content)
         conversation = await self._repository.create_conversation(
             self._session,
             user_id=self._current_user.id,
             title=title,
         )
-        return self._stream_message(
+        return await self._create_message(
             conversation=conversation, content=content, history=[]
         )
 
-    async def stream_message(
+    async def create_message(
         self,
         conversation_id: UUID,
         content: str,
-    ) -> AsyncIterator[dict[str, str]]:
+    ) -> SendMessageResponse:
         conversation = await self._get_owned_conversation(conversation_id)
         existing_messages = await self._repository.list_messages(
             self._session,
@@ -122,19 +107,19 @@ class ChatService:
             user_id=self._current_user.id,
         )
         history = _history_from_messages(existing_messages)
-        return self._stream_message(
+        return await self._create_message(
             conversation=conversation,
             content=content,
             history=history,
         )
 
-    async def _stream_message(
+    async def _create_message(
         self,
         *,
         conversation: Conversation,
         content: str,
         history: list[ChatMessage],
-    ) -> AsyncIterator[dict[str, str]]:
+    ) -> SendMessageResponse:
         user_message = await self._repository.create_message(
             self._session,
             conversation=conversation,
@@ -148,32 +133,10 @@ class ChatService:
             conversation=conversation,
             user_id=self._current_user.id,
             role=MessageRole.ASSISTANT,
-            status=MessageStatus.STREAMING,
+            status=MessageStatus.PENDING,
             content="",
         )
         await self._repository.save(self._session)
-
-        yield sse_event(
-            ConversationCreatedPayload(
-                conversation_id=conversation.id,
-                title=conversation.title,
-            )
-        )
-        yield sse_event(
-            UserMessageCreatedPayload(
-                message_id=user_message.id,
-                conversation_id=conversation.id,
-            )
-        )
-        yield sse_event(
-            AssistantMessageCreatedPayload(
-                message_id=assistant_message.id,
-                conversation_id=conversation.id,
-                status=MessageStatus.STREAMING.value,
-            )
-        )
-
-        accumulated_content = ""
         request = LLMRequest(
             user_id=self._current_user.id,
             conversation_id=conversation.id,
@@ -183,52 +146,27 @@ class ChatService:
         )
 
         try:
-            async for item in self._llm_service.stream(request):
-                if isinstance(item, LLMDelta):
-                    accumulated_content += item.text
-                    yield sse_event(
-                        DeltaPayload(
-                            message_id=assistant_message.id,
-                            text=item.text,
-                        )
-                    )
-                elif isinstance(item, LLMBlocked):
-                    await self._mark_blocked(assistant_message, item)
-                    yield sse_event(
-                        BlockedPayload(
-                            message_id=assistant_message.id,
-                            status=MessageStatus.BLOCKED.value,
-                            reason=item.reason,
-                        )
-                    )
-                    return
-                elif isinstance(item, LLMResult):
-                    await self._mark_completed(
-                        assistant_message, item, accumulated_content
-                    )
-                    if item.citations:
-                        yield sse_event(
-                            CitationsPayload(
-                                message_id=assistant_message.id,
-                                citations=item.citations,
-                            )
-                        )
-                    yield sse_event(
-                        CompletedPayload(
-                            message_id=assistant_message.id,
-                            status=MessageStatus.COMPLETED.value,
-                            finish_reason=_finish_reason(item),
-                        )
-                    )
-                    return
+            result = await self._llm_service.complete(request)
         except Exception as exc:
             await self._mark_failed(assistant_message, exc)
-            yield sse_event(
-                ErrorPayload(
-                    code="llm_unavailable",
-                    message="The assistant is temporarily unavailable.",
-                ),
-            )
+            raise ApiError(
+                code="llm_unavailable",
+                message="The assistant is temporarily unavailable.",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            ) from exc
+
+        if _is_blocked(result):
+            await self._mark_blocked(assistant_message, result)
+        else:
+            await self._mark_completed(assistant_message, result)
+
+        return SendMessageResponse(
+            conversation=self._conversation_response(conversation),
+            user_message=self._message_response(user_message),
+            assistant_message=self._message_response(assistant_message),
+            finish_reason=_finish_reason(result),
+            blocked_reason=assistant_message.blocked_reason,
+        )
 
     async def _get_owned_conversation(self, conversation_id: UUID) -> Conversation:
         conversation = await self._repository.get_conversation(
@@ -248,15 +186,10 @@ class ChatService:
         self,
         message: Message,
         result: LLMResult,
-        streamed_content: str,
     ) -> None:
         provider_response = result.provider_response
         message.status = MessageStatus.COMPLETED.value
-        message.content = streamed_content or result.content
-        message.citations = [
-            citation.model_dump(mode="json", by_alias=True)
-            for citation in result.citations
-        ]
+        message.content = result.content
         message.retrieved_context = [
             chunk.model_dump(mode="json", by_alias=True)
             for chunk in result.retrieved_context
@@ -277,11 +210,20 @@ class ChatService:
             message.provider_response = provider_response.raw_response
         await self._repository.save(self._session)
 
-    async def _mark_blocked(self, message: Message, blocked: LLMBlocked) -> None:
+    async def _mark_blocked(self, message: Message, result: LLMResult) -> None:
+        reason = result.content
         message.status = MessageStatus.BLOCKED.value
-        message.content = blocked.reason
-        message.blocked_reason = blocked.reason
-        message.input_guardrail_result = blocked.guardrail_result.model_dump(
+        message.content = reason
+        message.blocked_reason = reason
+        message.retrieved_context = [
+            chunk.model_dump(mode="json", by_alias=True)
+            for chunk in result.retrieved_context
+        ]
+        message.input_guardrail_result = result.input_guardrail_result.model_dump(
+            mode="json",
+            by_alias=True,
+        )
+        message.output_guardrail_result = result.output_guardrail_result.model_dump(
             mode="json",
             by_alias=True,
         )
@@ -334,3 +276,9 @@ def _finish_reason(result: LLMResult) -> str | None:
     if result.provider_response is None:
         return None
     return result.provider_response.finish_reason
+
+
+def _is_blocked(result: LLMResult) -> bool:
+    return (
+        result.input_guardrail_result.blocked or result.output_guardrail_result.blocked
+    )

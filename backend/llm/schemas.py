@@ -1,4 +1,3 @@
-from collections.abc import AsyncIterator
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -22,14 +21,6 @@ class ChatMessage(LLMBaseModel):
     content: str
 
 
-class Citation(LLMBaseModel):
-    title: str
-    source_id: str
-    page: int | None = None
-    url: str | None = None
-    snippet: str | None = None
-
-
 class RetrievedChunk(LLMBaseModel):
     content: str
     source_id: str
@@ -37,15 +28,6 @@ class RetrievedChunk(LLMBaseModel):
     page: int | None = None
     url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-    def to_citation(self) -> Citation:
-        return Citation(
-            title=self.title,
-            source_id=self.source_id,
-            page=self.page,
-            url=self.url,
-            snippet=self.content[:280],
-        )
 
 
 class GuardrailResult(LLMBaseModel):
@@ -73,32 +55,12 @@ class ProviderResponse(LLMBaseModel):
     raw_response: dict[str, Any] | None = None
 
 
-class ProviderStreamChunk(LLMBaseModel):
-    text: str = ""
-    model: str | None = None
-    finish_reason: str | None = None
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    raw_response: dict[str, Any] | None = None
-
-
 class LLMResult(LLMBaseModel):
     content: str
-    citations: list[Citation] = Field(default_factory=list)
     retrieved_context: list[RetrievedChunk] = Field(default_factory=list)
     input_guardrail_result: GuardrailResult = Field(default_factory=GuardrailResult)
     output_guardrail_result: GuardrailResult = Field(default_factory=GuardrailResult)
     provider_response: ProviderResponse | None = None
-
-
-class LLMDelta(LLMBaseModel):
-    text: str
-
-
-class LLMBlocked(LLMBaseModel):
-    reason: str
-    guardrail_result: GuardrailResult
 
 
 class RetrievalProvider(Protocol):
@@ -113,10 +75,6 @@ class RetrievalProvider(Protocol):
 
 class LLMProvider(Protocol):
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse: ...
-
-    def stream(
-        self, messages: list[ChatMessage]
-    ) -> AsyncIterator[ProviderStreamChunk]: ...
 
 
 class GuardrailsProvider(Protocol):

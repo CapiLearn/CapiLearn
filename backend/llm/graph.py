@@ -126,7 +126,6 @@ class LLMGraph:
         return {
             "result": LLMResult(
                 content=content,
-                citations=[chunk.to_citation() for chunk in retrieved_context],
                 retrieved_context=retrieved_context,
                 input_guardrail_result=input_result,
                 output_guardrail_result=output_result,

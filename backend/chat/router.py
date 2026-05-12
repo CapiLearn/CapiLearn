@@ -1,16 +1,15 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
-from sse_starlette import EventSourceResponse
 
 from backend.auth.dependencies import get_current_user
 from backend.chat.dependencies import ChatServiceDep
-from backend.chat.events import CHAT_STREAM_RESPONSE
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
     ConversationUpdateRequest,
     MessageListResponse,
+    SendMessageResponse,
     SendMessageRequest,
 )
 
@@ -31,17 +30,15 @@ async def list_conversations(service: ChatServiceDep) -> ConversationListRespons
 
 
 @router.post(
-    "/stream",
-    operation_id="createConversationStream",
-    summary="Start a new conversation stream",
-    response_class=EventSourceResponse,
-    responses=CHAT_STREAM_RESPONSE,
+    "",
+    operation_id="createConversation",
+    summary="Start a new conversation",
 )
-async def create_conversation_stream(
+async def create_conversation(
     payload: SendMessageRequest,
     service: ChatServiceDep,
-) -> EventSourceResponse:
-    return EventSourceResponse(await service.stream_new_conversation(payload.content))
+) -> SendMessageResponse:
+    return await service.create_conversation_message(payload.content)
 
 
 @router.get(
@@ -57,20 +54,16 @@ async def list_messages(
 
 
 @router.post(
-    "/{conversation_id}/messages/stream",
-    operation_id="createMessageStream",
-    summary="Send a message with streaming response",
-    response_class=EventSourceResponse,
-    responses=CHAT_STREAM_RESPONSE,
+    "/{conversation_id}/messages",
+    operation_id="createMessage",
+    summary="Send a message",
 )
-async def create_message_stream(
+async def create_message(
     conversation_id: UUID,
     payload: SendMessageRequest,
     service: ChatServiceDep,
-) -> EventSourceResponse:
-    return EventSourceResponse(
-        await service.stream_message(conversation_id, payload.content)
-    )
+) -> SendMessageResponse:
+    return await service.create_message(conversation_id, payload.content)
 
 
 @router.patch(
