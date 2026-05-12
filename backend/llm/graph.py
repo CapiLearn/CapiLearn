@@ -3,7 +3,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from backend.llm.orchestration import prepare_input
-from backend.llm.prompts import build_messages
+from backend.llm.prompts import build_messages, build_socratic_repair_messages
 from backend.llm.schemas import (
     ChatMessage,
     GuardrailResult,
@@ -104,10 +104,38 @@ class LLMGraph:
 
         request = state["request"]
         provider_response = state["provider_response"]
-        return {
-            "output_guardrail_result": await self._guardrails.check_output(
-                provider_response.content,
+        output_result = await self._guardrails.check_output(
+            provider_response.content,
+            user_input=request.content,
+        )
+        if not output_result.blocked:
+            return {"output_guardrail_result": output_result}
+
+        repair_response = await self._provider.complete(
+            build_socratic_repair_messages(
                 user_input=request.content,
+                draft_response=provider_response.content,
+                chunks=state["retrieved_context"],
+            ),
+        )
+        repair_result = await self._guardrails.check_output(
+            repair_response.content,
+            user_input=request.content,
+        )
+        if repair_result.blocked:
+            return {
+                "provider_response": repair_response,
+                "output_guardrail_result": _with_repair_metadata(
+                    repair_result,
+                    initial_result=output_result,
+                ),
+            }
+
+        return {
+            "provider_response": repair_response,
+            "output_guardrail_result": _with_repair_metadata(
+                repair_result,
+                initial_result=output_result,
             ),
         }
 
@@ -132,3 +160,18 @@ class LLMGraph:
                 provider_response=provider_response,
             ),
         }
+
+
+def _with_repair_metadata(
+    result: GuardrailResult,
+    *,
+    initial_result: GuardrailResult,
+) -> GuardrailResult:
+    metadata = dict(result.metadata)
+    metadata["repairAttempted"] = True
+    metadata["repairPassed"] = not result.blocked
+    metadata["initialOutputGuardrailResult"] = initial_result.model_dump(
+        mode="json",
+        by_alias=True,
+    )
+    return result.model_copy(update={"metadata": metadata})

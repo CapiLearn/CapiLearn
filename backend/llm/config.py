@@ -17,8 +17,11 @@ class LLMSettings(BaseSettings):
     temperature: float = 0.2
     max_tokens: int = 800
     request_timeout_seconds: float = 30.0
+    guardrails_enabled: bool = True
     guardrails_config_id: str = "default"
-    guardrails_config_path: Path | None = None
+    guardrails_config_path: Path | None = Path("backend/llm/guardrails/default")
+    guardrails_model_engine: str = "litellm"
+    guardrails_model: str = "openai/gpt-4o-mini"
     rag_index_version: str | None = Field(default=None)
 
 

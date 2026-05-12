@@ -45,6 +45,13 @@ class LLMService:
 
 
 def _build_guardrails() -> GuardrailsProvider:
-    if llm_settings.guardrails_config_path is None:
+    if (
+        not llm_settings.guardrails_enabled
+        or llm_settings.guardrails_config_path is None
+    ):
         return NoopGuardrailsProvider()
-    return NeMoGuardrailsProvider(llm_settings.guardrails_config_path)
+    return NeMoGuardrailsProvider(
+        llm_settings.guardrails_config_path,
+        model_engine=llm_settings.guardrails_model_engine,
+        model=llm_settings.guardrails_model,
+    )

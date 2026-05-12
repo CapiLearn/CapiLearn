@@ -1,9 +1,16 @@
 import asyncio
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from nemoguardrails import RailsConfig
 
-from backend.llm.config import llm_settings
+from backend.llm.config import LLMSettings, llm_settings
+from backend.llm.guardrails import NeMoGuardrailsProvider
+from backend.llm.litellm_guardrails import (
+    LiteLLMGuardrailsChatModel,
+    LiteLLMGuardrailsLLM,
+)
 from backend.llm.provider import LiteLLMProvider
 from backend.llm.schemas import (
     ChatMessage,
@@ -19,13 +26,28 @@ from backend.llm.service import LLMService
 class FakeProvider:
     def __init__(self) -> None:
         self.messages: list[ChatMessage] = []
+        self.calls: list[list[ChatMessage]] = []
         self.complete_called = False
 
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
         self.complete_called = True
         self.messages = messages
+        self.calls.append(messages)
         return ProviderResponse(
             content="Plants turn light into energy.", finish_reason="stop"
+        )
+
+
+class SequenceProvider:
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = responses
+        self.calls: list[list[ChatMessage]] = []
+
+    async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
+        self.calls.append(messages)
+        return ProviderResponse(
+            content=self._responses[len(self.calls) - 1],
+            finish_reason="stop",
         )
 
 
@@ -106,6 +128,18 @@ class WaitForRetrievalGuardrails(AllowGuardrails):
 class BlockingOutputGuardrails(AllowGuardrails):
     async def check_output(self, content: str, *, user_input: str) -> GuardrailResult:
         return GuardrailResult(blocked=True, reason="Output blocked.", rail="output")
+
+
+class RepairableOutputGuardrails(AllowGuardrails):
+    async def check_output(self, content: str, *, user_input: str) -> GuardrailResult:
+        if "direct answer" in content:
+            return GuardrailResult(
+                blocked=True,
+                reason="Output blocked.",
+                rail="output",
+                metadata={"draft": content},
+            )
+        return await super().check_output(content, user_input=user_input)
 
 
 @pytest.mark.asyncio
@@ -229,6 +263,61 @@ async def test_llm_service_blocks_unsafe_output_after_provider_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_service_repairs_blocked_direct_answer_output() -> None:
+    provider = SequenceProvider(
+        [
+            "The direct answer is 42.",
+            "What is the first relationship you can write from the problem?",
+        ]
+    )
+    service = LLMService(
+        provider=provider,
+        guardrails=RepairableOutputGuardrails(),
+        retriever=FakeRetriever(),
+    )
+
+    result = await service.complete(_request("Solve this homework problem."))
+
+    assert result.content == (
+        "What is the first relationship you can write from the problem?"
+    )
+    assert not result.output_guardrail_result.blocked
+    assert result.output_guardrail_result.metadata["repairAttempted"] is True
+    assert result.output_guardrail_result.metadata["repairPassed"] is True
+    assert (
+        result.output_guardrail_result.metadata["initialOutputGuardrailResult"][
+            "blocked"
+        ]
+        is True
+    )
+    assert len(provider.calls) == 2
+    assert "Draft assistant response to repair" in provider.calls[1][-1].content
+
+
+@pytest.mark.asyncio
+async def test_llm_service_blocks_output_when_repair_still_fails() -> None:
+    provider = SequenceProvider(
+        [
+            "The direct answer is 42.",
+            "The direct answer is still 42.",
+        ]
+    )
+    service = LLMService(
+        provider=provider,
+        guardrails=RepairableOutputGuardrails(),
+        retriever=FakeRetriever(),
+    )
+
+    result = await service.complete(_request("Solve this homework problem."))
+
+    assert result.output_guardrail_result.blocked
+    assert result.content == "Output blocked."
+    assert result.output_guardrail_result.metadata["repairAttempted"] is True
+    assert result.output_guardrail_result.metadata["repairPassed"] is False
+    assert len(provider.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_litellm_provider_uses_server_configured_model(monkeypatch) -> None:
     captured_kwargs = {}
 
@@ -246,6 +335,133 @@ async def test_litellm_provider_uses_server_configured_model(monkeypatch) -> Non
     assert response.content == "Configured model response."
     assert captured_kwargs["model"] == llm_settings.model
     assert "api_key" not in captured_kwargs
+
+
+def test_default_nemo_guardrails_config_loads() -> None:
+    config = RailsConfig.from_path("backend/llm/guardrails/default")
+
+    assert config.models[0].type == "main"
+    assert config.models[0].engine == "litellm"
+    assert config.models[0].model == "openai/gpt-4o-mini"
+    assert config.rails.input.flows == ["self check input"]
+    assert config.rails.output.flows == ["self check output"]
+
+
+def test_llm_settings_guardrails_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_GUARDRAILS_ENABLED", raising=False)
+    monkeypatch.delenv("LLM_GUARDRAILS_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("LLM_GUARDRAILS_MODEL_ENGINE", raising=False)
+    monkeypatch.delenv("LLM_GUARDRAILS_MODEL", raising=False)
+    settings = LLMSettings(_env_file=None)
+
+    assert settings.guardrails_enabled is True
+    assert settings.guardrails_config_path == Path("backend/llm/guardrails/default")
+    assert settings.guardrails_model_engine == "litellm"
+    assert settings.guardrails_model == "openai/gpt-4o-mini"
+
+
+def test_llm_settings_guardrails_env_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_GUARDRAILS_ENABLED", "false")
+    monkeypatch.setenv("LLM_GUARDRAILS_CONFIG_PATH", "custom/guardrails")
+    monkeypatch.setenv("LLM_GUARDRAILS_MODEL_ENGINE", "nim")
+    monkeypatch.setenv("LLM_GUARDRAILS_MODEL", "custom-safety-model")
+
+    settings = LLMSettings(_env_file=None)
+
+    assert settings.guardrails_enabled is False
+    assert settings.guardrails_config_path == Path("custom/guardrails")
+    assert settings.guardrails_model_engine == "nim"
+    assert settings.guardrails_model == "custom-safety-model"
+
+
+def test_nemo_guardrails_provider_applies_configured_model(monkeypatch) -> None:
+    captured_config = {}
+
+    class FakeRails:
+        def __init__(self, config) -> None:
+            captured_config["models"] = config.models
+
+    monkeypatch.setattr("nemoguardrails.LLMRails", FakeRails)
+
+    NeMoGuardrailsProvider(
+        Path("backend/llm/guardrails/default"),
+        model_engine="nim",
+        model="nvidia/custom-guard",
+    )
+
+    assert captured_config["models"][0].engine == "nim"
+    assert captured_config["models"][0].model == "nvidia/custom-guard"
+
+
+def test_nemo_guardrails_provider_uses_litellm_adapter() -> None:
+    provider = NeMoGuardrailsProvider(
+        Path("backend/llm/guardrails/default"),
+        model_engine="litellm",
+        model="groq/llama-3.1-8b-instant",
+    )
+
+    assert isinstance(provider._rails.llm, LiteLLMGuardrailsChatModel)
+    assert provider._rails.llm.model == "groq/llama-3.1-8b-instant"
+
+
+@pytest.mark.asyncio
+async def test_litellm_guardrails_chat_model_uses_litellm(monkeypatch) -> None:
+    captured_kwargs = {}
+
+    async def fake_acompletion(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "No",
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+
+    llm = LiteLLMGuardrailsChatModel(model="groq/llama-3.1-8b-instant")
+    response = await llm.ainvoke("Should this be blocked?", max_tokens=3)
+
+    assert response.content == "No"
+    assert captured_kwargs["model"] == "groq/llama-3.1-8b-instant"
+    assert captured_kwargs["messages"] == [
+        {"role": "user", "content": "Should this be blocked?"}
+    ]
+    assert captured_kwargs["temperature"] == 0
+    assert captured_kwargs["max_tokens"] == 3
+
+
+@pytest.mark.asyncio
+async def test_litellm_guardrails_llm_uses_litellm(monkeypatch) -> None:
+    captured_kwargs = {}
+
+    async def fake_acompletion(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "No",
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+
+    llm = LiteLLMGuardrailsLLM(model="groq/llama-3.1-8b-instant")
+    response = await llm.ainvoke("Should this be blocked?", max_tokens=3)
+
+    assert response == "No"
+    assert captured_kwargs["model"] == "groq/llama-3.1-8b-instant"
+    assert captured_kwargs["messages"] == [
+        {"role": "user", "content": "Should this be blocked?"}
+    ]
+    assert captured_kwargs["temperature"] == 0
+    assert captured_kwargs["max_tokens"] == 3
 
 
 def _request(content: str) -> LLMRequest:
