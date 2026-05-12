@@ -59,7 +59,6 @@ class Conversation(Base):
         default=utc_now,
         onupdate=utc_now,
     )
-    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     messages: Mapped[list["Message"]] = relationship(

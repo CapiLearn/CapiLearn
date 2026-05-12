@@ -88,8 +88,6 @@ class ChatService:
             conversation.title = payload.title
         if payload.status is not None:
             conversation.status = payload.status.value
-            if payload.status == ConversationStatus.ARCHIVED:
-                conversation.archived_at = datetime.now(UTC)
         conversation.updated_at = datetime.now(UTC)
         await self._repository.save(self._session)
         return self._conversation_response(conversation)

@@ -21,7 +21,6 @@ class ChatBaseModel(BaseModel):
 
 class ConversationStatus(StrEnum):
     ACTIVE = "active"
-    ARCHIVED = "archived"
     DELETED = "deleted"
 
 
