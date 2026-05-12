@@ -6,8 +6,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from backend.llm.schemas import Citation
-
 MAX_MESSAGE_CONTENT_LENGTH = 8000
 
 
@@ -45,14 +43,11 @@ class SendMessageRequest(ChatBaseModel):
 
 class ConversationUpdateRequest(ChatBaseModel):
     title: str | None = Field(default=None, max_length=160)
-    status: ConversationStatus | None = None
 
 
 class ConversationResponse(ChatBaseModel):
     id: UUID
     title: str | None
-    status: ConversationStatus
-    created_at: datetime
     updated_at: datetime
     last_message_preview: str | None = None
 
@@ -67,7 +62,6 @@ class MessageResponse(ChatBaseModel):
     role: MessageRole
     content: str
     status: MessageStatus
-    citations: list[Citation] = Field(default_factory=list)
     created_at: datetime
 
 

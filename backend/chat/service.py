@@ -84,10 +84,8 @@ class ChatService:
         payload: ConversationUpdateRequest,
     ) -> ConversationResponse:
         conversation = await self._get_owned_conversation(conversation_id)
-        if payload.title is not None:
+        if "title" in payload.model_fields_set:
             conversation.title = payload.title
-        if payload.status is not None:
-            conversation.status = payload.status.value
         conversation.updated_at = datetime.now(UTC)
         await self._repository.save(self._session)
         return self._conversation_response(conversation)
@@ -300,8 +298,6 @@ class ChatService:
         return ConversationResponse(
             id=conversation.id,
             title=conversation.title,
-            status=ConversationStatus(conversation.status),
-            created_at=conversation.created_at,
             updated_at=conversation.updated_at,
         )
 
@@ -312,7 +308,6 @@ class ChatService:
             role=MessageRole(message.role),
             content=message.content or "",
             status=MessageStatus(message.status),
-            citations=message.citations or [],
             created_at=message.created_at,
         )
 

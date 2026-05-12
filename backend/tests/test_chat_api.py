@@ -22,7 +22,7 @@ from backend.chat.events import (
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
-    ConversationStatus,
+    ConversationUpdateRequest,
     MessageListResponse,
     MessageResponse,
     MessageRole,
@@ -183,8 +183,6 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
     assert set(conversation_payload) == {
         "id",
         "title",
-        "status",
-        "createdAt",
         "updatedAt",
         "lastMessagePreview",
     }
@@ -194,9 +192,78 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
         "role",
         "content",
         "status",
-        "citations",
         "createdAt",
     }
+
+
+@pytest.mark.asyncio
+async def test_update_conversation_accepts_title() -> None:
+    service = FakeChatService(title="Old title")
+    app.dependency_overrides[get_chat_service] = lambda: service
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.patch(
+            f"/api/conversations/{service.conversation_id}",
+            json={"title": "New title"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "New title"
+
+
+@pytest.mark.asyncio
+async def test_update_conversation_omitted_title_leaves_title_unchanged() -> None:
+    service = FakeChatService(title="Existing title")
+    app.dependency_overrides[get_chat_service] = lambda: service
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.patch(
+            f"/api/conversations/{service.conversation_id}",
+            json={},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Existing title"
+
+
+@pytest.mark.asyncio
+async def test_update_conversation_null_title_clears_title() -> None:
+    service = FakeChatService(title="Existing title")
+    app.dependency_overrides[get_chat_service] = lambda: service
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.patch(
+            f"/api/conversations/{service.conversation_id}",
+            json={"title": None},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["title"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_conversation_rejects_oversized_title() -> None:
+    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.patch(
+            f"/api/conversations/{FakeChatService.conversation_id}",
+            json={"title": "x" * 161},
+        )
+
+    assert response.status_code == 422
 
 
 class FakeChatService:
@@ -204,6 +271,9 @@ class FakeChatService:
     user_message_id = uuid4()
     assistant_message_id = uuid4()
     created_at = datetime.now(UTC)
+
+    def __init__(self, *, title: str | None = "Explain cells.") -> None:
+        self.title = title
 
     async def stream_new_conversation(
         self, content: str
@@ -214,7 +284,7 @@ class FakeChatService:
         yield sse_event(
             ConversationCreatedPayload(
                 conversation_id=self.conversation_id,
-                title="Explain cells.",
+                title=self.title,
             )
         )
         yield sse_event(
@@ -256,9 +326,7 @@ class FakeChatService:
             conversations=[
                 ConversationResponse(
                     id=self.conversation_id,
-                    title="Explain cells.",
-                    status=ConversationStatus.ACTIVE,
-                    created_at=self.created_at,
+                    title=self.title,
                     updated_at=self.created_at,
                 ),
             ],
@@ -273,10 +341,22 @@ class FakeChatService:
                     role=MessageRole.ASSISTANT,
                     content="Cells are small units.",
                     status=MessageStatus.COMPLETED,
-                    citations=[],
                     created_at=self.created_at,
                 ),
             ],
+        )
+
+    async def update_conversation(
+        self,
+        conversation_id: UUID,
+        payload: ConversationUpdateRequest,
+    ) -> ConversationResponse:
+        if "title" in payload.model_fields_set:
+            self.title = payload.title
+        return ConversationResponse(
+            id=conversation_id,
+            title=self.title,
+            updated_at=self.created_at,
         )
 
 
