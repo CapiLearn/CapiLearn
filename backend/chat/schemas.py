@@ -30,7 +30,6 @@ class MessageRole(StrEnum):
 
 class MessageStatus(StrEnum):
     PENDING = "pending"
-    STREAMING = "streaming"
     COMPLETED = "completed"
     BLOCKED = "blocked"
     FAILED = "failed"
