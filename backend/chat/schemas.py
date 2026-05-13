@@ -39,15 +39,10 @@ class SendMessageRequest(ChatBaseModel):
     content: str = Field(min_length=1, max_length=MAX_MESSAGE_CONTENT_LENGTH)
 
 
-class ConversationUpdateRequest(ChatBaseModel):
-    title: str | None = Field(default=None, max_length=160)
-
-
 class ConversationResponse(ChatBaseModel):
     id: UUID
     title: str | None
     updated_at: datetime
-    last_message_preview: str | None = None
 
 
 class ConversationListResponse(ChatBaseModel):

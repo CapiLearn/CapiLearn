@@ -6,8 +6,6 @@ from backend.auth.dependencies import get_current_user
 from backend.chat.dependencies import ChatServiceDep
 from backend.chat.schemas import (
     ConversationListResponse,
-    ConversationResponse,
-    ConversationUpdateRequest,
     MessageListResponse,
     SendMessageResponse,
     SendMessageRequest,
@@ -64,19 +62,6 @@ async def create_message(
     service: ChatServiceDep,
 ) -> SendMessageResponse:
     return await service.create_message(conversation_id, payload.content)
-
-
-@router.patch(
-    "/{conversation_id}",
-    operation_id="updateConversation",
-    summary="Update a conversation",
-)
-async def update_conversation(
-    conversation_id: UUID,
-    payload: ConversationUpdateRequest,
-    service: ChatServiceDep,
-) -> ConversationResponse:
-    return await service.update_conversation(conversation_id, payload)
 
 
 @router.delete(

@@ -11,7 +11,6 @@ from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
     ConversationStatus,
-    ConversationUpdateRequest,
     MessageListResponse,
     MessageResponse,
     MessageRole,
@@ -64,18 +63,6 @@ class ChatService:
         return MessageListResponse(
             messages=[self._message_response(message) for message in messages],
         )
-
-    async def update_conversation(
-        self,
-        conversation_id: UUID,
-        payload: ConversationUpdateRequest,
-    ) -> ConversationResponse:
-        conversation = await self._get_owned_conversation(conversation_id)
-        if "title" in payload.model_fields_set:
-            conversation.title = payload.title
-        conversation.updated_at = datetime.now(UTC)
-        await self._repository.save(self._session)
-        return self._conversation_response(conversation)
 
     async def delete_conversation(self, conversation_id: UUID) -> None:
         conversation = await self._get_owned_conversation(conversation_id)

@@ -9,7 +9,6 @@ from backend.chat.dependencies import get_chat_service
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
-    ConversationUpdateRequest,
     MessageListResponse,
     MessageResponse,
     MessageRole,
@@ -59,10 +58,9 @@ def test_chat_routes_have_stable_operation_ids() -> None:
         ]
         == "createMessage"
     )
-    assert (
-        schema["paths"]["/api/conversations/{conversation_id}"]["patch"]["operationId"]
-        == "updateConversation"
-    )
+    assert "patch" not in schema["paths"]["/api/conversations/{conversation_id}"]
+    serialized_schema = json.dumps(schema)
+    assert "updateConversation" not in serialized_schema
     assert (
         schema["paths"]["/api/conversations/{conversation_id}"]["delete"]["operationId"]
         == "deleteConversation"
@@ -158,7 +156,6 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
         "id",
         "title",
         "updatedAt",
-        "lastMessagePreview",
     }
     assert set(message_payload) == {
         "id",
@@ -168,76 +165,6 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
         "status",
         "createdAt",
     }
-
-
-@pytest.mark.asyncio
-async def test_update_conversation_accepts_title() -> None:
-    service = FakeChatService(title="Old title")
-    app.dependency_overrides[get_chat_service] = lambda: service
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.patch(
-            f"/api/conversations/{service.conversation_id}",
-            json={"title": "New title"},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["title"] == "New title"
-
-
-@pytest.mark.asyncio
-async def test_update_conversation_omitted_title_leaves_title_unchanged() -> None:
-    service = FakeChatService(title="Existing title")
-    app.dependency_overrides[get_chat_service] = lambda: service
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.patch(
-            f"/api/conversations/{service.conversation_id}",
-            json={},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["title"] == "Existing title"
-
-
-@pytest.mark.asyncio
-async def test_update_conversation_null_title_clears_title() -> None:
-    service = FakeChatService(title="Existing title")
-    app.dependency_overrides[get_chat_service] = lambda: service
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.patch(
-            f"/api/conversations/{service.conversation_id}",
-            json={"title": None},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["title"] is None
-
-
-@pytest.mark.asyncio
-async def test_update_conversation_rejects_oversized_title() -> None:
-    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.patch(
-            f"/api/conversations/{FakeChatService.conversation_id}",
-            json={"title": "x" * 161},
-        )
-
-    assert response.status_code == 422
 
 
 class FakeChatService:
@@ -285,19 +212,6 @@ class FakeChatService:
                     created_at=self.created_at,
                 ),
             ],
-        )
-
-    async def update_conversation(
-        self,
-        conversation_id: UUID,
-        payload: ConversationUpdateRequest,
-    ) -> ConversationResponse:
-        if "title" in payload.model_fields_set:
-            self.title = payload.title
-        return ConversationResponse(
-            id=conversation_id,
-            title=self.title,
-            updated_at=self.created_at,
         )
 
     def _send_message_response(
