@@ -2,8 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
 
-from backend.auth.dependencies import get_current_user
-from backend.chat.dependencies import ChatServiceDep
+from backend.chat.dependencies import ChatServiceDep, get_current_user
 from backend.chat.schemas import (
     ConversationListResponse,
     MessageListResponse,

@@ -16,6 +16,12 @@ class ChatBaseModel(BaseModel):
     )
 
 
+class CurrentUser(BaseModel):
+    id: UUID
+    email: str | None = None
+    display_name: str | None = None
+
+
 class ConversationStatus(StrEnum):
     ACTIVE = "active"
     DELETED = "deleted"

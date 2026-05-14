@@ -3,10 +3,10 @@ from uuid import uuid4
 
 import pytest
 
-from backend.auth.schemas import CurrentUser
 from backend.chat.models import Conversation, Message
 from backend.chat.schemas import (
     ConversationStatus,
+    CurrentUser,
     MessageRole,
     MessageStatus,
 )

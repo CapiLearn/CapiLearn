@@ -4,13 +4,13 @@ from uuid import UUID
 from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.schemas import CurrentUser
 from backend.chat.models import Conversation, Message
 from backend.chat.repository import ChatRepository
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
     ConversationStatus,
+    CurrentUser,
     MessageListResponse,
     MessageResponse,
     MessageRole,

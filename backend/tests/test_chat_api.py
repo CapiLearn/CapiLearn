@@ -99,6 +99,27 @@ async def test_create_conversation_returns_complete_message_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invalid_user_header_returns_401() -> None:
+    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/conversations",
+            headers={"X-User-Id": "not-a-uuid"},
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "code": "invalid_user_header",
+        "message": "X-User-Id must be a valid UUID.",
+        "details": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_followup_message_surfaces_ownership_failure() -> None:
     app.dependency_overrides[get_chat_service] = lambda: MissingConversationService()
 

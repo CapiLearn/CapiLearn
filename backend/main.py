@@ -4,12 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.chat.router import router as chat_router
 from backend.core.config import settings
 from backend.core.exceptions import register_exception_handlers
-from backend.core.logging import configure_logging
 
 
 def create_app() -> FastAPI:
-    configure_logging()
-
     app = FastAPI(title=settings.app_name)
     register_exception_handlers(app)
 
