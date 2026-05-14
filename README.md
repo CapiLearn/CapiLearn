@@ -34,18 +34,20 @@ The goal is to create a more engaging and ethical homework help experience that 
     - ingestion
     
 # Folder structure
- 
-    backend
-    │   ├───DB
-    │   ├───endpoints  
-    │   ├───ingestion
-    │   ├───LLM
-    │   ├───RAG
-    │   └───tests
-    ├───data
-    ├───docs
-    frontend
-        └───tests
+
+```
+backend/
+├── DB/
+├── endpoints/
+├── ingestion/
+├── LLM/
+├── RAG/
+└── tests/
+data/
+docs/
+frontend/
+└── tests/
+```
 
     
 
@@ -71,13 +73,35 @@ The goal is to create a more engaging and ethical homework help experience that 
     
     uv pip install -r requirements.txt
 
-3. Run the application
+3. Start Postgres with pgvector
+
+    ```bash
+    cp .env.example .env
+    docker compose up -d postgres
+    ```
+
+    The database image is `pgvector/pgvector:0.8.2-pg18-trixie`, and the `vector` extension is enabled automatically when the database volume is first created.
+    If port `5432` is already in use locally, set `POSTGRES_PORT` in `.env` and update the local `DATABASE_URL` port to match.
+
+    Local backend connection string:
+
+    ```bash
+    postgresql+psycopg://capilearn:capilearn@localhost:5432/capilearn
+    ```
+
+    Docker service connection string:
+
+    ```bash
+    postgresql+psycopg://capilearn:capilearn@postgres:5432/capilearn
+    ```
+
+4. Run the application
 
     python main.py
 
 # Architecture Diagram
 
-    See ![design diagram](CapiLearn\docs\educational-ai-assistant-system-design-simplified.png) in docs folder.
+![Architecture Diagram](docs/educational-ai-assistant-system-design-simplified.png)
 
 
 # Ownership
