@@ -1,10 +1,9 @@
-from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.chat.models import Conversation, Message
+from backend.chat.models import Conversation, Message, utc_now
 from backend.chat.schemas import ConversationStatus, MessageRole, MessageStatus
 from backend.llm.config import llm_settings
 
@@ -95,7 +94,7 @@ class ChatRepository:
             status=status.value,
             content=content,
         )
-        conversation.updated_at = datetime.now(UTC)
+        conversation.updated_at = utc_now()
         session.add(message)
         await session.flush()
         return message

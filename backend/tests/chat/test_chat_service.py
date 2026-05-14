@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from backend.chat.models import Conversation, Message
 from backend.chat.schemas import (
@@ -356,12 +357,42 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error() -> No
     assert session.commit_count == 2
 
 
+@pytest.mark.asyncio
+async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+        )
+    )
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=llm_service,
+        repository=ConflictingChatRepository(user_id=user.id),
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.create_conversation_message("Explain cells.")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "message_sequence_conflict"
+    assert session.rollback_count == 1
+    assert llm_service.requests == []
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.commit_count = 0
+        self.rollback_count = 0
 
     async def commit(self) -> None:
         self.commit_count += 1
+
+    async def rollback(self) -> None:
+        self.rollback_count += 1
 
 
 class FakeChatRepository:
@@ -421,6 +452,24 @@ class FakeChatRepository:
         )
         self.messages.append(message)
         return message
+
+
+class ConflictingChatRepository(FakeChatRepository):
+    async def create_message(
+        self,
+        session,
+        *,
+        conversation,
+        user_id,
+        role,
+        status,
+        content,
+    ):
+        raise IntegrityError(
+            statement="INSERT INTO message",
+            params={},
+            orig=Exception("message sequence conflict"),
+        )
 
 
 class FakeLLMService:

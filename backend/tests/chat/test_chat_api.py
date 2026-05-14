@@ -188,6 +188,24 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_delete_conversation_returns_empty_204_response() -> None:
+    service = FakeChatService()
+    app.dependency_overrides[get_chat_service] = lambda: service
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.delete(
+            f"/api/conversations/{FakeChatService.conversation_id}"
+        )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert service.deleted_conversation_id == FakeChatService.conversation_id
+
+
 class FakeChatService:
     conversation_id = uuid4()
     user_message_id = uuid4()
@@ -196,6 +214,7 @@ class FakeChatService:
 
     def __init__(self, *, title: str | None = "Explain cells.") -> None:
         self.title = title
+        self.deleted_conversation_id: UUID | None = None
 
     async def create_conversation_message(self, content: str) -> SendMessageResponse:
         return self._send_message_response(content=content)
@@ -234,6 +253,9 @@ class FakeChatService:
                 ),
             ],
         )
+
+    async def delete_conversation(self, conversation_id: UUID) -> None:
+        self.deleted_conversation_id = conversation_id
 
     def _send_message_response(
         self,

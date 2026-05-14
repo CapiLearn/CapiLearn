@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, status
 
 from backend.chat.dependencies import ChatServiceDep, get_current_user
 from backend.chat.schemas import (
@@ -72,6 +72,5 @@ async def create_message(
 async def delete_conversation(
     conversation_id: UUID,
     service: ChatServiceDep,
-) -> Response:
+) -> None:
     await service.delete_conversation(conversation_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

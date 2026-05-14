@@ -1,11 +1,11 @@
-from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import status
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.chat.models import Conversation, Message
+from backend.chat.models import Conversation, Message, utc_now
 from backend.chat.repository import ChatRepository
 from backend.chat.schemas import (
     ConversationListResponse,
@@ -19,6 +19,7 @@ from backend.chat.schemas import (
     SendMessageResponse,
 )
 from backend.core.exceptions import ApiError
+from backend.llm.prompts import build_user_message_content
 from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
@@ -27,7 +28,6 @@ from backend.llm.schemas import (
     RetrievedChunk,
 )
 from backend.llm.service import LLMService
-from backend.llm.prompts import build_user_message_content
 
 
 RECENT_RETRIEVED_CONTEXT_TURNS = 3
@@ -73,8 +73,9 @@ class ChatService:
     async def delete_conversation(self, conversation_id: UUID) -> None:
         conversation = await self._get_owned_conversation(conversation_id)
         conversation.status = ConversationStatus.DELETED.value
-        conversation.deleted_at = datetime.now(UTC)
-        conversation.updated_at = datetime.now(UTC)
+        now = utc_now()
+        conversation.deleted_at = now
+        conversation.updated_at = now
         await self._session.commit()
 
     async def create_conversation_message(self, content: str) -> SendMessageResponse:
@@ -113,23 +114,32 @@ class ChatService:
         content: str,
         history: list[ChatMessage],
     ) -> SendMessageResponse:
-        user_message = await self._repository.create_message(
-            self._session,
-            conversation=conversation,
-            user_id=self._current_user.id,
-            role=MessageRole.USER,
-            status=MessageStatus.COMPLETED,
-            content=content,
-        )
-        assistant_message = await self._repository.create_message(
-            self._session,
-            conversation=conversation,
-            user_id=self._current_user.id,
-            role=MessageRole.ASSISTANT,
-            status=MessageStatus.PENDING,
-            content="",
-        )
-        await self._session.commit()
+        try:
+            user_message = await self._repository.create_message(
+                self._session,
+                conversation=conversation,
+                user_id=self._current_user.id,
+                role=MessageRole.USER,
+                status=MessageStatus.COMPLETED,
+                content=content,
+            )
+            assistant_message = await self._repository.create_message(
+                self._session,
+                conversation=conversation,
+                user_id=self._current_user.id,
+                role=MessageRole.ASSISTANT,
+                status=MessageStatus.PENDING,
+                content="",
+            )
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise ApiError(
+                code="message_sequence_conflict",
+                message="Message ordering conflict. Please retry your request.",
+                status_code=status.HTTP_409_CONFLICT,
+            ) from exc
+
         request = LLMRequest(
             user_id=self._current_user.id,
             conversation_id=conversation.id,
