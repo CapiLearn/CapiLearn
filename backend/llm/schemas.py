@@ -26,21 +26,12 @@ class ChatMessage(LLMBaseModel):
 
 
 class RetrievedChunk(LLMBaseModel):
-    chunk_id: str | None = None
     content: str
-    source_id: str
-    source_title: str | None = None
-    section_title: str | None = None
-    rank: int | None = None
-    page: int | None = None
-    url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RetrievalResult(LLMBaseModel):
-    retrieval_status: str = "success"
     chunks: list[RetrievedChunk] = Field(default_factory=list)
-    retrieval_notes: dict[str, Any] = Field(default_factory=dict)
 
 
 class GuardrailResult(LLMBaseModel):

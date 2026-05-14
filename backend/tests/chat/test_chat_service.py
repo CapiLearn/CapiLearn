@@ -32,18 +32,11 @@ async def test_create_conversation_message_completes_assistant_message() -> None
     llm_service = FakeLLMService(
         LLMResult(
             content="Cells are small units.",
-            retrieval_result=RetrievalResult(
-                retrieval_status="success",
-                retrieval_notes={"reason": "Strong match."},
-            ),
+            retrieval_result=RetrievalResult(),
             retrieved_context=[
                 RetrievedChunk(
-                    chunk_id="chunk_1",
                     content="Cell note",
-                    source_id="doc_1",
-                    source_title="Biology Notes",
-                    section_title="Cells",
-                    rank=1,
+                    metadata={"source_id": "doc_1", "title": "Biology Notes"},
                 )
             ],
             provider_response=ProviderResponse(
@@ -75,19 +68,11 @@ async def test_create_conversation_message_completes_assistant_message() -> None
     assert session.commit_count == 2
     assert repository.messages[0].retrieved_context == [
         {
-            "chunkId": "chunk_1",
             "content": "Cell note",
-            "sourceId": "doc_1",
-            "sourceTitle": "Biology Notes",
-            "sectionTitle": "Cells",
-            "rank": 1,
-            "metadata": {},
+            "metadata": {"source_id": "doc_1", "title": "Biology Notes"},
         }
     ]
-    assert repository.messages[0].extra_metadata["retrieval"] == {
-        "retrievalStatus": "success",
-        "retrievalNotes": {"reason": "Strong match."},
-    }
+    assert repository.messages[0].extra_metadata == {}
     assert repository.messages[-1].retrieved_context in (None, [])
     assert repository.messages[-1].citations in (None, [])
 
@@ -170,12 +155,12 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
                 content=f"Question {index}?",
                 retrieved_context=[
                     {
-                        "chunkId": f"chunk_{index}",
                         "content": f"Stored note for chunk_{index}",
-                        "sourceId": "doc_1",
-                        "sourceTitle": "Biology Notes",
-                        "rank": 1,
-                        "page": index,
+                        "metadata": {
+                            "source_id": "doc_1",
+                            "title": "Biology Notes",
+                            "page": index,
+                        },
                     }
                 ],
             )

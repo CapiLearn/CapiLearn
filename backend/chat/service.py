@@ -243,13 +243,6 @@ class ChatService:
             chunk.model_dump(mode="json", by_alias=True, exclude_none=True)
             for chunk in result.retrieved_context
         ]
-        metadata = dict(message.extra_metadata or {})
-        metadata["retrieval"] = result.retrieval_result.model_dump(
-            mode="json",
-            by_alias=True,
-            exclude={"chunks"},
-        )
-        message.extra_metadata = metadata
 
     async def _mark_failed(self, message: Message, exc: Exception) -> None:
         message.status = MessageStatus.FAILED.value

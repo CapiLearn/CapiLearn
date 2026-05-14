@@ -26,10 +26,7 @@ class EmptyRetrievalProvider:
         conversation_id,
         user_message_id,
     ) -> RetrievalResult:
-        return RetrievalResult(
-            retrieval_status="not_configured",
-            chunks=[],
-        )
+        return RetrievalResult(chunks=[])
 
 
 class LLMService:
@@ -78,12 +75,7 @@ class LLMService:
                 input_result=input_result,
                 output_result=output_result,
                 provider_response=provider_response,
-                retrieval_result=RetrievalResult(
-                    retrieval_status="skipped",
-                    retrieval_notes={
-                        "reason": "Input guardrail blocked retrieval use."
-                    },
-                ),
+                retrieval_result=RetrievalResult(chunks=[]),
             )
 
         retrieval_result = _coerce_retrieval_result(await retrieval_task)
@@ -206,7 +198,7 @@ def _with_repair_metadata(
 
 
 def _coerce_retrieval_result(
-    value: RetrievalResult | list[RetrievedChunk],
+    value: RetrievalResult | list[RetrievedChunk | dict],
 ) -> RetrievalResult:
     if isinstance(value, RetrievalResult):
         return value

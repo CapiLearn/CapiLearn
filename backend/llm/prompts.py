@@ -26,16 +26,21 @@ def build_context_block(chunks: list[RetrievedChunk]) -> str:
 
     sections = []
     for index, chunk in enumerate(chunks, start=1):
-        metadata_page = chunk.metadata.get("page")
-        page = chunk.page if chunk.page is not None else metadata_page
-        location = f", page {page}" if page is not None else ""
-        title = chunk.source_title or chunk.source_id
-        section = f" - {chunk.section_title}" if chunk.section_title else ""
-        rank = chunk.rank or index
-        sections.append(
-            f"[{rank}] {title}{section} ({chunk.source_id}{location})\n{chunk.content}",
-        )
+        label = _context_label(chunk.metadata)
+        heading = f"[{index}] {label}" if label else f"[{index}]"
+        sections.append(f"{heading}\n{chunk.content}")
     return "\n\n".join(sections)
+
+
+def _context_label(metadata: dict) -> str:
+    labels = [
+        str(metadata[key])
+        for key in ("title", "source_title", "source", "source_id", "section")
+        if metadata.get(key)
+    ]
+    if metadata.get("page"):
+        labels.append(f"page {metadata['page']}")
+    return " - ".join(labels)
 
 
 def build_user_message_content(*, user_input: str, chunks: list[RetrievedChunk]) -> str:

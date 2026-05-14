@@ -72,15 +72,14 @@ class FakeRetriever:
         user_message_id: UUID,
     ):
         return RetrievalResult(
-            retrieval_status="success",
             chunks=[
                 RetrievedChunk(
-                    chunk_id="chunk_1",
                     content=f"Relevant note for: {query}",
-                    source_id="doc_1",
-                    source_title="Biology Notes",
-                    rank=1,
-                    metadata={"page": 3},
+                    metadata={
+                        "source_id": "doc_1",
+                        "title": "Biology Notes",
+                        "page": 3,
+                    },
                 ),
             ],
         )
@@ -97,13 +96,9 @@ class RichChunkRetriever:
     ):
         return [
             {
-                "chunkId": "chunk_1",
                 "content": f"Rich note for: {query}",
-                "sourceId": "doc_1",
-                "sourceTitle": "Biology Notes",
-                "sourceType": "lecture_notes",
-                "relevanceScore": 0.92,
-                "title": "Legacy title",
+                "metadata": {"source_id": "doc_1", "title": "Biology Notes"},
+                "distance": 0.12,
             }
         ]
 
@@ -124,10 +119,11 @@ class CoordinatedRetriever:
         return RetrievalResult(
             chunks=[
                 RetrievedChunk(
-                    chunk_id="chunk_concurrent",
                     content=f"Concurrent note for: {query}",
-                    source_id="doc_concurrent",
-                    source_title="Concurrent Notes",
+                    metadata={
+                        "source_id": "doc_concurrent",
+                        "title": "Concurrent Notes",
+                    },
                 ),
             ],
         )
@@ -159,10 +155,11 @@ class ReleasableRetriever:
         return RetrievalResult(
             chunks=[
                 RetrievedChunk(
-                    chunk_id="chunk_ignored",
                     content=f"Ignored note for: {query}",
-                    source_id="doc_ignored",
-                    source_title="Ignored Notes",
+                    metadata={
+                        "source_id": "doc_ignored",
+                        "title": "Ignored Notes",
+                    },
                 ),
             ],
         )
@@ -249,18 +246,19 @@ async def test_llm_service_adds_retrieved_context_to_user_message() -> None:
     result = await service.complete(_request("What is photosynthesis?"))
 
     assert result.content == "Plants turn light into energy."
-    assert result.retrieved_context[0].source_id == "doc_1"
+    assert result.retrieved_context[0].metadata["source_id"] == "doc_1"
     assert "citations" not in result.model_dump()
     assert provider.messages[0].role == ChatRole.SYSTEM
     assert provider.messages[0].content == BASE_SYSTEM_PROMPT
     assert provider.messages[-1].role == ChatRole.USER
     assert "Relevant note for: What is photosynthesis?" in provider.messages[-1].content
+    assert "Biology Notes - doc_1 - page 3" in provider.messages[-1].content
     assert "<retrieved_context>" in provider.messages[-1].content
     assert "<student_message>\nWhat is photosynthesis?" in provider.messages[-1].content
 
 
 @pytest.mark.asyncio
-async def test_llm_service_strips_extra_incoming_chunk_fields() -> None:
+async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -272,10 +270,11 @@ async def test_llm_service_strips_extra_incoming_chunk_fields() -> None:
 
     assert result.retrieved_context == [
         RetrievedChunk(
-            chunk_id="chunk_1",
             content="Rich note for: What is photosynthesis?",
-            source_id="doc_1",
-            source_title="Biology Notes",
+            metadata={
+                "source_id": "doc_1",
+                "title": "Biology Notes",
+            },
         )
     ]
     assert result.retrieved_context[0].model_dump(
@@ -283,13 +282,14 @@ async def test_llm_service_strips_extra_incoming_chunk_fields() -> None:
         by_alias=True,
         exclude_none=True,
     ) == {
-        "chunkId": "chunk_1",
         "content": "Rich note for: What is photosynthesis?",
-        "sourceId": "doc_1",
-        "sourceTitle": "Biology Notes",
-        "metadata": {},
+        "metadata": {
+            "source_id": "doc_1",
+            "title": "Biology Notes",
+        },
     }
     assert "Rich note for: What is photosynthesis?" in provider.messages[-1].content
+    assert "distance" not in result.retrieved_context[0].metadata
 
 
 @pytest.mark.asyncio
@@ -341,7 +341,7 @@ async def test_llm_service_complete_starts_retrieval_before_input_guardrail_fini
 
     result = await service.complete(_request("What is concurrent retrieval?"))
 
-    assert result.retrieved_context[0].source_id == "doc_concurrent"
+    assert result.retrieved_context[0].metadata["source_id"] == "doc_concurrent"
     assert provider.complete_called
     assert (
         "Concurrent note for: What is concurrent retrieval?"
