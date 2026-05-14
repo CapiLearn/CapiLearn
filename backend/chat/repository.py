@@ -50,15 +50,12 @@ class ChatRepository:
         conversation = Conversation(
             user_id=user_id,
             title=title,
-            langgraph_thread_id="",
             model_profile_key=llm_settings.model_profile_key,
             model_profile_version=llm_settings.model_profile_version,
             guardrails_config_id=llm_settings.guardrails_config_id,
             rag_index_version=llm_settings.rag_index_version,
         )
         session.add(conversation)
-        await session.flush()
-        conversation.langgraph_thread_id = str(conversation.id)
         await session.flush()
         return conversation
 

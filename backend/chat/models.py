@@ -26,11 +26,6 @@ def utc_now() -> datetime:
 
 class Conversation(Base):
     __tablename__ = "conversation"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id", "langgraph_thread_id", name="conversation_user_thread_key"
-        ),
-    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
@@ -40,9 +35,6 @@ class Conversation(Base):
         nullable=False,
         default=ConversationStatus.ACTIVE.value,
         index=True,
-    )
-    langgraph_thread_id: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True
     )
     model_profile_key: Mapped[str] = mapped_column(String(120), nullable=False)
     model_profile_version: Mapped[str | None] = mapped_column(String(120))

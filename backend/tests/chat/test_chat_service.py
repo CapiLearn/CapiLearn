@@ -303,7 +303,6 @@ def _conversation(
         user_id=user_id,
         title=title,
         status=ConversationStatus.ACTIVE.value,
-        langgraph_thread_id=str(uuid4()),
         model_profile_key="model",
         created_at=now,
         updated_at=now,

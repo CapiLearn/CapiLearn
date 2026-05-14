@@ -6,8 +6,6 @@ from backend.llm.schemas import GuardrailResult
 
 
 class NoopGuardrailsProvider:
-    has_output_guardrail = False
-
     async def check_input(self, content: str) -> GuardrailResult:
         return GuardrailResult(metadata={"checked_content_length": len(content)})
 
@@ -21,8 +19,6 @@ class NoopGuardrailsProvider:
 
 
 class NeMoGuardrailsProvider:
-    has_output_guardrail = True
-
     def __init__(
         self,
         config_path: Path,

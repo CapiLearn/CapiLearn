@@ -78,8 +78,6 @@ class LLMProvider(Protocol):
 
 
 class GuardrailsProvider(Protocol):
-    has_output_guardrail: bool
-
     async def check_input(self, content: str) -> GuardrailResult: ...
 
     async def check_output(
