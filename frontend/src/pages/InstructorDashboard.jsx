@@ -21,27 +21,27 @@ const summaryStats = [
 
 const topicDistribution = [
   {
-    topic: "RAG Systems",
+    topic: "Ipsum Lorem...",
     count: 38,
     percentage: 78,
   },
   {
-    topic: "Model Evaluation",
+    topic: "Ipsum Lorem...",
     count: 31,
     percentage: 64,
   },
   {
-    topic: "Guardrails",
+    topic: "Ipsum Lorem...",
     count: 24,
     percentage: 50,
   },
   {
-    topic: "FastAPI",
+    topic: "Ipsum Lorem...",
     count: 19,
     percentage: 39,
   },
   {
-    topic: "PostgreSQL",
+    topic: "Ipsum Lorem...",
     count: 15,
     percentage: 31,
   },
@@ -68,7 +68,7 @@ const reviewQueue = [
 const studentRoster = [
   {
     name: "John Carter",
-    topTopic: "RAG Systems",
+    topTopic: "Ipsum Lorem",
     questions: 18,
     streak: "4 days",
     status: "Needs support",
@@ -76,7 +76,7 @@ const studentRoster = [
   },
   {
     name: "Maya Singh",
-    topTopic: "Model Evaluation",
+    topTopic: "Ipsum Lorem",
     questions: 9,
     streak: "1 day",
     status: "Watch",
@@ -84,7 +84,7 @@ const studentRoster = [
   },
   {
     name: "Luis Rivera",
-    topTopic: "Guardrails",
+    topTopic: "Ipsum Lorem",
     questions: 14,
     streak: "5 days",
     status: "Needs support",
@@ -92,7 +92,7 @@ const studentRoster = [
   },
   {
     name: "Ava Thompson",
-    topTopic: "FastAPI",
+    topTopic: "Ipsum Lorem",
     questions: 6,
     streak: "6 days",
     status: "On track",
@@ -100,7 +100,7 @@ const studentRoster = [
   },
   {
     name: "Noah Kim",
-    topTopic: "PostgreSQL",
+    topTopic: "Ipsum Lorem",
     questions: 7,
     streak: "3 days",
     status: "On track",

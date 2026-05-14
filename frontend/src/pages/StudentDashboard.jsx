@@ -26,38 +26,38 @@ const statCards = [
 
 const modules = [
   {
-    title: "Intro to Machine Learning",
+    title: "Ipsum Lorem",
     progress: 90,
     status: "Almost complete",
   },
   {
-    title: "Model Evaluation",
+    title: "Ipsum Lorem",
     progress: 72,
     status: "In progress",
   },
   {
-    title: "RAG Systems",
+    title: "Ipsum Lorem",
     progress: 55,
     status: "Needs review",
   },
   {
-    title: "Guardrails and Safety",
+    title: "Ipsum Lorem",
     progress: 38,
     status: "Started",
   },
 ];
 
 const recentActivity = [
-  "Asked for help understanding model evaluation metrics",
-  "Reviewed lesson: RAG retrieval flow",
-  "Completed guided reflection on overfitting",
-  "Started lesson: Guardrails and bad outputs",
+  "Ipsum Lorem",
+  "Ipsum Lorem",
+  "Ipsum Lorem",
+  "Ipsum Lorem",
 ];
 
 const focusAreas = [
-  "RAG evaluation",
-  "Model monitoring",
-  "Prompt guardrails",
+  "Ipsum Lorem",
+  "Ipsum Lorem",
+  "Ipsum Lorem",
 ];
 
 function StudentDashboard() {

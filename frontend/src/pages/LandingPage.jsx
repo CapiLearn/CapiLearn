@@ -4,7 +4,7 @@ import "../styles/LandingPage.css";
 function LandingPage() {
   return (
     <main className="capilearn-page">
-      <h1 className="capilearn-slide-title">Landing Page</h1>
+      {/* <h1 className="capilearn-slide-title">Landing Page</h1> */}
 
       <section className="capilearn-card">
         <header className="capilearn-nav">

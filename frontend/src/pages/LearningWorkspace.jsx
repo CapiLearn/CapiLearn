@@ -4,15 +4,15 @@ import "../styles/LearningWorkspace.css";
 const recentChats = [
   {
     label: "Today",
-    items: ["Gradient descent confusion", "RAG evaluation questions"],
+    items: ["Ipsum Lorem", "Ipsum Lorem"],
   },
   {
     label: "Yesterday",
-    items: ["Python decorator review", "Model monitoring notes"],
+    items: ["Ipsum Lorem", "Ipsum Lorem"],
   },
   {
     label: "Last week",
-    items: ["FastAPI readiness probes", "Postgres vector search"],
+    items: ["Ipsum Lorem", "Ipsum Lorem"]
   },
 ];
 
