@@ -10,7 +10,7 @@ class LiteLLMProvider:
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
         response = await acompletion(**_completion_kwargs(messages))
 
-        choice = response.choices[0]
+        choice = _first_choice(response)
         usage = getattr(response, "usage", None)
         return ProviderResponse(
             content=choice.message.content or "",
@@ -34,6 +34,13 @@ def _completion_kwargs(messages: list[ChatMessage]) -> dict[str, Any]:
         if llm_settings.fallback_model
         else None,
     }
+
+
+def _first_choice(response: Any) -> Any:
+    choices = getattr(response, "choices", None)
+    if not choices:
+        raise RuntimeError("LLM provider returned a response with no choices.")
+    return choices[0]
 
 
 def _serialize_response(response: Any) -> dict[str, Any] | None:

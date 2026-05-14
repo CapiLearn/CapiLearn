@@ -1,3 +1,4 @@
+from functools import cache
 from typing import Any
 
 from langchain_core.callbacks.manager import (
@@ -21,7 +22,11 @@ class LiteLLMGuardrailsChatModel(BaseChatModel):
 
     @property
     def _identifying_params(self) -> dict[str, Any]:
-        return {"model": self.model}
+        return _identifying_params(
+            base=super()._identifying_params,
+            model=self.model,
+            model_extra=self.model_extra,
+        )
 
     def _generate(
         self,
@@ -72,7 +77,11 @@ class LiteLLMGuardrailsLLM(LLM):
 
     @property
     def _identifying_params(self) -> dict[str, Any]:
-        return {"model": self.model}
+        return _identifying_params(
+            base=super()._identifying_params,
+            model=self.model,
+            model_extra=self.model_extra,
+        )
 
     def _call(
         self,
@@ -113,6 +122,7 @@ class LiteLLMGuardrailsLLM(LLM):
         )
 
 
+@cache
 def register_litellm_guardrails_provider() -> None:
     from nemoguardrails.llm.providers import (
         register_chat_provider,
@@ -121,6 +131,19 @@ def register_litellm_guardrails_provider() -> None:
 
     register_chat_provider("litellm", LiteLLMGuardrailsChatModel)
     register_llm_provider("litellm", LiteLLMGuardrailsLLM)
+
+
+def _identifying_params(
+    *,
+    base: dict[str, Any],
+    model: str,
+    model_extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        **base,
+        "model": model,
+        **(model_extra or {}),
+    }
 
 
 def _completion_kwargs(
@@ -147,15 +170,21 @@ def _completion_kwargs(
 
 def _response_content(response: Any) -> str:
     if isinstance(response, dict):
-        choice = response["choices"][0]
+        choice = _first_choice(response.get("choices"))
         message = choice.get("message") or {}
         return message.get("content") or choice.get("text") or ""
 
-    choice = response.choices[0]
+    choice = _first_choice(getattr(response, "choices", None))
     message = getattr(choice, "message", None)
     if message is not None:
         return getattr(message, "content", None) or ""
     return getattr(choice, "text", None) or ""
+
+
+def _first_choice(choices: Any) -> Any:
+    if not choices:
+        raise RuntimeError("LLM provider returned a response with no choices.")
+    return choices[0]
 
 
 def _chat_result(content: str) -> ChatResult:

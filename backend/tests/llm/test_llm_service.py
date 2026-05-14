@@ -17,6 +17,8 @@ from backend.llm.guardrails import NeMoGuardrailsProvider, NoopGuardrailsProvide
 from backend.llm.litellm_guardrails import (
     LiteLLMGuardrailsChatModel,
     LiteLLMGuardrailsLLM,
+    _response_content,
+    register_litellm_guardrails_provider,
 )
 from backend.llm.provider import LiteLLMProvider
 from backend.llm.schemas import (
@@ -136,6 +138,7 @@ class ReleasableRetriever:
         self.fail = fail
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
 
     async def retrieve(
         self,
@@ -146,7 +149,11 @@ class ReleasableRetriever:
         user_message_id: UUID,
     ):
         self.started.set()
-        await self.release.wait()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
         if self.fail:
             raise RuntimeError("ignored retrieval failure")
         return RetrievalResult(
@@ -159,6 +166,24 @@ class ReleasableRetriever:
                 ),
             ],
         )
+
+
+class FailingRetriever:
+    def __init__(self) -> None:
+        self.done = asyncio.Event()
+
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+        user_message_id: UUID,
+    ):
+        try:
+            raise RuntimeError("ignored retrieval failure")
+        finally:
+            self.done.set()
 
 
 class AllowGuardrails:
@@ -184,6 +209,15 @@ class WaitForRetrievalGuardrails(AllowGuardrails):
         if self._blocked:
             return GuardrailResult(blocked=True, reason="Input blocked.", rail="input")
         return await super().check_input(content)
+
+
+class WaitForRetrievalDoneGuardrails(AllowGuardrails):
+    def __init__(self, done: asyncio.Event) -> None:
+        self._done = done
+
+    async def check_input(self, content: str) -> GuardrailResult:
+        await self._done.wait()
+        return GuardrailResult(blocked=True, reason="Input blocked.", rail="input")
 
 
 class BlockingOutputGuardrails(AllowGuardrails):
@@ -344,13 +378,13 @@ async def test_llm_service_complete_ignores_retrieval_when_input_is_blocked() ->
     )
 
     result = await service.complete(_request("bad input"))
-    retriever.release.set()
     await asyncio.sleep(0)
 
     assert result.input_guardrail_result.blocked
     assert result.content == "Input blocked."
     assert not provider.complete_called
     assert result.retrieved_context == []
+    await asyncio.wait_for(retriever.cancelled.wait(), timeout=1)
 
 
 @pytest.mark.asyncio
@@ -363,15 +397,14 @@ async def test_llm_service_consumes_ignored_retrieval_exception() -> None:
     )
 
     try:
-        retriever = ReleasableRetriever(fail=True)
+        retriever = FailingRetriever()
         service = LLMService(
             provider=FakeProvider(),
-            guardrails=WaitForRetrievalGuardrails(retriever.started, blocked=True),
+            guardrails=WaitForRetrievalDoneGuardrails(retriever.done),
             retriever=retriever,
         )
 
         result = await service.complete(_request("bad input"))
-        retriever.release.set()
         await asyncio.sleep(0)
 
         assert result.input_guardrail_result.blocked
@@ -486,6 +519,22 @@ async def test_litellm_provider_uses_server_configured_model(monkeypatch) -> Non
     assert response.content == "Configured model response."
     assert captured_kwargs["model"] == llm_settings.model
     assert "api_key" not in captured_kwargs
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_rejects_empty_choices(monkeypatch) -> None:
+    async def fake_acompletion(**kwargs):
+        return _FakeEmptyLiteLLMResponse()
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+
+    provider = LiteLLMProvider()
+
+    with pytest.raises(
+        RuntimeError,
+        match="LLM provider returned a response with no choices.",
+    ):
+        await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
 
 
 def test_default_nemo_guardrails_config_loads() -> None:
@@ -621,6 +670,42 @@ def test_nemo_guardrails_provider_applies_configured_model(monkeypatch) -> None:
     assert captured_config["models"][0].model == "nvidia/custom-guard"
 
 
+def test_nemo_guardrails_provider_registers_litellm_adapter_once(monkeypatch) -> None:
+    register_calls = []
+
+    def fake_register_chat_provider(name, provider) -> None:
+        register_calls.append(("chat", name, provider))
+
+    def fake_register_llm_provider(name, provider) -> None:
+        register_calls.append(("llm", name, provider))
+
+    class FakeRails:
+        def __init__(self, config) -> None:
+            pass
+
+    monkeypatch.setattr("nemoguardrails.LLMRails", FakeRails)
+    monkeypatch.setattr(
+        "nemoguardrails.llm.providers.register_chat_provider",
+        fake_register_chat_provider,
+    )
+    monkeypatch.setattr(
+        "nemoguardrails.llm.providers.register_llm_provider",
+        fake_register_llm_provider,
+    )
+
+    register_litellm_guardrails_provider.cache_clear()
+    try:
+        NeMoGuardrailsProvider(Path("backend/llm/guardrails/default"))
+        NeMoGuardrailsProvider(Path("backend/llm/guardrails/default"))
+    finally:
+        register_litellm_guardrails_provider.cache_clear()
+
+    assert register_calls == [
+        ("chat", "litellm", LiteLLMGuardrailsChatModel),
+        ("llm", "litellm", LiteLLMGuardrailsLLM),
+    ]
+
+
 def test_nemo_guardrails_provider_uses_litellm_adapter() -> None:
     provider = NeMoGuardrailsProvider(
         Path("backend/llm/guardrails/default"),
@@ -692,6 +777,36 @@ async def test_litellm_guardrails_llm_uses_litellm(monkeypatch) -> None:
     assert captured_kwargs["max_tokens"] == 3
 
 
+def test_litellm_guardrails_identifying_params_include_model_extra() -> None:
+    chat_model = LiteLLMGuardrailsChatModel(
+        model="groq/llama-3.1-8b-instant",
+        temperature=0.2,
+    )
+    llm = LiteLLMGuardrailsLLM(
+        model="groq/llama-3.1-8b-instant",
+        temperature=0.3,
+    )
+
+    assert chat_model._identifying_params["model"] == "groq/llama-3.1-8b-instant"
+    assert chat_model._identifying_params["temperature"] == 0.2
+    assert llm._identifying_params["model"] == "groq/llama-3.1-8b-instant"
+    assert llm._identifying_params["temperature"] == 0.3
+
+
+def test_litellm_guardrails_response_content_rejects_empty_choices() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="LLM provider returned a response with no choices.",
+    ):
+        _response_content({"choices": []})
+
+    with pytest.raises(
+        RuntimeError,
+        match="LLM provider returned a response with no choices.",
+    ):
+        _response_content(_FakeEmptyLiteLLMResponse())
+
+
 def _request(content: str) -> LLMRequest:
     return LLMRequest(
         user_id=uuid4(),
@@ -724,3 +839,7 @@ class _FakeLiteLLMResponse:
 
     def model_dump(self, mode: str):
         return {"model": self.model, "mode": mode}
+
+
+class _FakeEmptyLiteLLMResponse:
+    choices = []

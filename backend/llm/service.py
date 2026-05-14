@@ -220,6 +220,7 @@ def _coerce_retrieved_chunk(value: RetrievedChunk | dict) -> RetrievedChunk:
 
 
 def _discard_task_result(task: asyncio.Task[RetrievalResult]) -> None:
+    task.cancel()
     task.add_done_callback(_consume_task_exception)
 
 
