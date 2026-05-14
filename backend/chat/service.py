@@ -230,7 +230,7 @@ class ChatService:
         result: LLMResult,
     ) -> None:
         message.retrieved_context = [
-            chunk.model_dump(mode="json", by_alias=True)
+            chunk.model_dump(mode="json", by_alias=True, exclude_none=True)
             for chunk in result.retrieved_context
         ]
         metadata = dict(message.extra_metadata or {})

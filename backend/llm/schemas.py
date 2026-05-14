@@ -7,7 +7,11 @@ from pydantic.alias_generators import to_camel
 
 
 class LLMBaseModel(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="ignore",
+    )
 
 
 class ChatRole(StrEnum):
@@ -26,10 +30,7 @@ class RetrievedChunk(LLMBaseModel):
     content: str
     source_id: str
     source_title: str | None = None
-    source_type: str | None = None
     section_title: str | None = None
-    title: str | None = None
-    relevance_score: float | None = None
     rank: int | None = None
     page: int | None = None
     url: str | None = None
@@ -37,12 +38,7 @@ class RetrievedChunk(LLMBaseModel):
 
 
 class RetrievalResult(LLMBaseModel):
-    user_message_id: UUID | None = None
-    student_question: str | None = None
-    normalized_query: str | None = None
     retrieval_status: str = "success"
-    retrieval_confidence: str | None = None
-    top_k: int | None = None
     chunks: list[RetrievedChunk] = Field(default_factory=list)
     retrieval_notes: dict[str, Any] = Field(default_factory=dict)
 

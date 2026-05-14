@@ -70,12 +70,7 @@ class FakeRetriever:
         user_message_id: UUID,
     ):
         return RetrievalResult(
-            user_message_id=user_message_id,
-            student_question=query,
-            normalized_query=query.lower(),
             retrieval_status="success",
-            retrieval_confidence="high",
-            top_k=1,
             chunks=[
                 RetrievedChunk(
                     chunk_id="chunk_1",
@@ -87,6 +82,28 @@ class FakeRetriever:
                 ),
             ],
         )
+
+
+class RichChunkRetriever:
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+        user_message_id: UUID,
+    ):
+        return [
+            {
+                "chunkId": "chunk_1",
+                "content": f"Rich note for: {query}",
+                "sourceId": "doc_1",
+                "sourceTitle": "Biology Notes",
+                "sourceType": "lecture_notes",
+                "relevanceScore": 0.92,
+                "title": "Legacy title",
+            }
+        ]
 
 
 class CoordinatedRetriever:
@@ -206,6 +223,39 @@ async def test_llm_service_adds_retrieved_context_to_user_message() -> None:
     assert "Relevant note for: What is photosynthesis?" in provider.messages[-1].content
     assert "<retrieved_context>" in provider.messages[-1].content
     assert "<student_message>\nWhat is photosynthesis?" in provider.messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_llm_service_strips_extra_incoming_chunk_fields() -> None:
+    provider = FakeProvider()
+    service = LLMService(
+        provider=provider,
+        guardrails=AllowGuardrails(),
+        retriever=RichChunkRetriever(),
+    )
+
+    result = await service.complete(_request("What is photosynthesis?"))
+
+    assert result.retrieved_context == [
+        RetrievedChunk(
+            chunk_id="chunk_1",
+            content="Rich note for: What is photosynthesis?",
+            source_id="doc_1",
+            source_title="Biology Notes",
+        )
+    ]
+    assert result.retrieved_context[0].model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=True,
+    ) == {
+        "chunkId": "chunk_1",
+        "content": "Rich note for: What is photosynthesis?",
+        "sourceId": "doc_1",
+        "sourceTitle": "Biology Notes",
+        "metadata": {},
+    }
+    assert "Rich note for: What is photosynthesis?" in provider.messages[-1].content
 
 
 @pytest.mark.asyncio

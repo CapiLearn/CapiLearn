@@ -27,8 +27,6 @@ class EmptyRetrievalProvider:
         user_message_id,
     ) -> RetrievalResult:
         return RetrievalResult(
-            user_message_id=user_message_id,
-            student_question=query,
             retrieval_status="not_configured",
             chunks=[],
         )
@@ -81,8 +79,6 @@ class LLMService:
                 output_result=output_result,
                 provider_response=provider_response,
                 retrieval_result=RetrievalResult(
-                    user_message_id=request.user_message_id,
-                    student_question=request.content,
                     retrieval_status="skipped",
                     retrieval_notes={
                         "reason": "Input guardrail blocked retrieval use."

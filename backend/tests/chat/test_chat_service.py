@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -22,8 +22,6 @@ from backend.llm.schemas import (
     RetrievedChunk,
 )
 
-RETRIEVAL_USER_MESSAGE_ID = UUID("00000000-0000-0000-0000-000000000001")
-
 
 @pytest.mark.asyncio
 async def test_create_conversation_message_completes_assistant_message() -> None:
@@ -34,12 +32,7 @@ async def test_create_conversation_message_completes_assistant_message() -> None
         LLMResult(
             content="Cells are small units.",
             retrieval_result=RetrievalResult(
-                user_message_id=RETRIEVAL_USER_MESSAGE_ID,
-                student_question="Explain cells.",
-                normalized_query="explain cells",
                 retrieval_status="success",
-                retrieval_confidence="high",
-                top_k=1,
                 retrieval_notes={"reason": "Strong match."},
             ),
             retrieved_context=[
@@ -48,9 +41,7 @@ async def test_create_conversation_message_completes_assistant_message() -> None
                     content="Cell note",
                     source_id="doc_1",
                     source_title="Biology Notes",
-                    source_type="lecture_notes",
                     section_title="Cells",
-                    relevance_score=0.92,
                     rank=1,
                 )
             ],
@@ -87,23 +78,13 @@ async def test_create_conversation_message_completes_assistant_message() -> None
             "content": "Cell note",
             "sourceId": "doc_1",
             "sourceTitle": "Biology Notes",
-            "sourceType": "lecture_notes",
             "sectionTitle": "Cells",
-            "title": None,
-            "relevanceScore": 0.92,
             "rank": 1,
-            "page": None,
-            "url": None,
             "metadata": {},
         }
     ]
     assert repository.messages[0].extra_metadata["retrieval"] == {
-        "userMessageId": "00000000-0000-0000-0000-000000000001",
-        "studentQuestion": "Explain cells.",
-        "normalizedQuery": "explain cells",
         "retrievalStatus": "success",
-        "retrievalConfidence": "high",
-        "topK": 1,
         "retrievalNotes": {"reason": "Strong match."},
     }
     assert repository.messages[-1].retrieved_context in (None, [])
@@ -193,7 +174,7 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
                         "sourceId": "doc_1",
                         "sourceTitle": "Biology Notes",
                         "rank": 1,
-                        "metadata": {"page": index},
+                        "page": index,
                     }
                 ],
             )

@@ -29,7 +29,7 @@ def build_context_block(chunks: list[RetrievedChunk]) -> str:
         metadata_page = chunk.metadata.get("page")
         page = chunk.page if chunk.page is not None else metadata_page
         location = f", page {page}" if page is not None else ""
-        title = chunk.source_title or chunk.title or chunk.source_id
+        title = chunk.source_title or chunk.source_id
         section = f" - {chunk.section_title}" if chunk.section_title else ""
         rank = chunk.rank or index
         sections.append(
