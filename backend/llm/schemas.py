@@ -22,12 +22,29 @@ class ChatMessage(LLMBaseModel):
 
 
 class RetrievedChunk(LLMBaseModel):
+    chunk_id: str | None = None
     content: str
     source_id: str
-    title: str
+    source_title: str | None = None
+    source_type: str | None = None
+    section_title: str | None = None
+    title: str | None = None
+    relevance_score: float | None = None
+    rank: int | None = None
     page: int | None = None
     url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievalResult(LLMBaseModel):
+    user_message_id: UUID | None = None
+    student_question: str | None = None
+    normalized_query: str | None = None
+    retrieval_status: str = "success"
+    retrieval_confidence: str | None = None
+    top_k: int | None = None
+    chunks: list[RetrievedChunk] = Field(default_factory=list)
+    retrieval_notes: dict[str, Any] = Field(default_factory=dict)
 
 
 class GuardrailResult(LLMBaseModel):
@@ -40,7 +57,8 @@ class GuardrailResult(LLMBaseModel):
 class LLMRequest(LLMBaseModel):
     user_id: UUID
     conversation_id: UUID
-    message_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID | None = None
     content: str
     history: list[ChatMessage] = Field(default_factory=list)
 
@@ -57,6 +75,7 @@ class ProviderResponse(LLMBaseModel):
 
 class LLMResult(LLMBaseModel):
     content: str
+    retrieval_result: RetrievalResult = Field(default_factory=RetrievalResult)
     retrieved_context: list[RetrievedChunk] = Field(default_factory=list)
     input_guardrail_result: GuardrailResult = Field(default_factory=GuardrailResult)
     output_guardrail_result: GuardrailResult = Field(default_factory=GuardrailResult)
@@ -70,7 +89,8 @@ class RetrievalProvider(Protocol):
         *,
         user_id: UUID,
         conversation_id: UUID,
-    ) -> list[RetrievedChunk]: ...
+        user_message_id: UUID,
+    ) -> RetrievalResult: ...
 
 
 class LLMProvider(Protocol):

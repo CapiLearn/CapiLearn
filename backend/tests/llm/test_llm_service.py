@@ -25,9 +25,11 @@ from backend.llm.schemas import (
     GuardrailResult,
     LLMRequest,
     ProviderResponse,
+    RetrievalResult,
     RetrievedChunk,
 )
 from backend.llm.service import LLMService
+from backend.llm.prompts import BASE_SYSTEM_PROMPT
 
 
 class FakeProvider:
@@ -59,30 +61,57 @@ class SequenceProvider:
 
 
 class FakeRetriever:
-    async def retrieve(self, query: str, *, user_id: UUID, conversation_id: UUID):
-        return [
-            RetrievedChunk(
-                content=f"Relevant note for: {query}",
-                source_id="doc_1",
-                title="Biology Notes",
-                page=3,
-            ),
-        ]
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+        user_message_id: UUID,
+    ):
+        return RetrievalResult(
+            user_message_id=user_message_id,
+            student_question=query,
+            normalized_query=query.lower(),
+            retrieval_status="success",
+            retrieval_confidence="high",
+            top_k=1,
+            chunks=[
+                RetrievedChunk(
+                    chunk_id="chunk_1",
+                    content=f"Relevant note for: {query}",
+                    source_id="doc_1",
+                    source_title="Biology Notes",
+                    rank=1,
+                    metadata={"page": 3},
+                ),
+            ],
+        )
 
 
 class CoordinatedRetriever:
     def __init__(self) -> None:
         self.started = asyncio.Event()
 
-    async def retrieve(self, query: str, *, user_id: UUID, conversation_id: UUID):
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+        user_message_id: UUID,
+    ):
         self.started.set()
-        return [
-            RetrievedChunk(
-                content=f"Concurrent note for: {query}",
-                source_id="doc_concurrent",
-                title="Concurrent Notes",
-            ),
-        ]
+        return RetrievalResult(
+            chunks=[
+                RetrievedChunk(
+                    chunk_id="chunk_concurrent",
+                    content=f"Concurrent note for: {query}",
+                    source_id="doc_concurrent",
+                    source_title="Concurrent Notes",
+                ),
+            ],
+        )
 
 
 class ReleasableRetriever:
@@ -91,18 +120,28 @@ class ReleasableRetriever:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def retrieve(self, query: str, *, user_id: UUID, conversation_id: UUID):
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+        user_message_id: UUID,
+    ):
         self.started.set()
         await self.release.wait()
         if self.fail:
             raise RuntimeError("ignored retrieval failure")
-        return [
-            RetrievedChunk(
-                content=f"Ignored note for: {query}",
-                source_id="doc_ignored",
-                title="Ignored Notes",
-            ),
-        ]
+        return RetrievalResult(
+            chunks=[
+                RetrievedChunk(
+                    chunk_id="chunk_ignored",
+                    content=f"Ignored note for: {query}",
+                    source_id="doc_ignored",
+                    source_title="Ignored Notes",
+                ),
+            ],
+        )
 
 
 class AllowGuardrails:
@@ -148,7 +187,7 @@ class RepairableOutputGuardrails(AllowGuardrails):
 
 
 @pytest.mark.asyncio
-async def test_llm_service_adds_retrieved_context_to_system_prompt() -> None:
+async def test_llm_service_adds_retrieved_context_to_user_message() -> None:
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -162,7 +201,46 @@ async def test_llm_service_adds_retrieved_context_to_system_prompt() -> None:
     assert result.retrieved_context[0].source_id == "doc_1"
     assert "citations" not in result.model_dump()
     assert provider.messages[0].role == ChatRole.SYSTEM
-    assert "Relevant note for: What is photosynthesis?" in provider.messages[0].content
+    assert provider.messages[0].content == BASE_SYSTEM_PROMPT
+    assert provider.messages[-1].role == ChatRole.USER
+    assert "Relevant note for: What is photosynthesis?" in provider.messages[-1].content
+    assert "<retrieved_context>" in provider.messages[-1].content
+    assert "<student_message>\nWhat is photosynthesis?" in provider.messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_llm_service_omits_retrieved_context_block_without_chunks() -> None:
+    provider = FakeProvider()
+    service = LLMService(
+        provider=provider,
+        guardrails=AllowGuardrails(),
+    )
+
+    result = await service.complete(_request("What is photosynthesis?"))
+
+    assert result.retrieved_context == []
+    assert provider.messages[-1].role == ChatRole.USER
+    assert "<retrieved_context>" not in provider.messages[-1].content
+    assert provider.messages[-1].content == (
+        "<student_message>\nWhat is photosynthesis?\n</student_message>"
+    )
+
+
+@pytest.mark.asyncio
+async def test_llm_service_system_prompt_is_static_across_retrievals() -> None:
+    provider = FakeProvider()
+    service = LLMService(
+        provider=provider,
+        guardrails=AllowGuardrails(),
+        retriever=FakeRetriever(),
+    )
+
+    await service.complete(_request("What is photosynthesis?"))
+    await service.complete(_request("What is the Krebs cycle?"))
+
+    assert provider.calls[0][0].content == BASE_SYSTEM_PROMPT
+    assert provider.calls[1][0].content == BASE_SYSTEM_PROMPT
+    assert provider.calls[0][-1].content != provider.calls[1][-1].content
 
 
 @pytest.mark.asyncio
@@ -183,8 +261,9 @@ async def test_llm_service_complete_starts_retrieval_before_input_guardrail_fini
     assert provider.complete_called
     assert (
         "Concurrent note for: What is concurrent retrieval?"
-        in provider.messages[0].content
+        in provider.messages[-1].content
     )
+    assert provider.messages[0].content == BASE_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
@@ -567,7 +646,8 @@ def _request(content: str) -> LLMRequest:
     return LLMRequest(
         user_id=uuid4(),
         conversation_id=uuid4(),
-        message_id=uuid4(),
+        user_message_id=uuid4(),
+        assistant_message_id=uuid4(),
         content=content,
     )
 

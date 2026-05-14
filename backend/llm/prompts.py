@@ -26,11 +26,26 @@ def build_context_block(chunks: list[RetrievedChunk]) -> str:
 
     sections = []
     for index, chunk in enumerate(chunks, start=1):
-        location = f", page {chunk.page}" if chunk.page is not None else ""
+        metadata_page = chunk.metadata.get("page")
+        page = chunk.page if chunk.page is not None else metadata_page
+        location = f", page {page}" if page is not None else ""
+        title = chunk.source_title or chunk.title or chunk.source_id
+        section = f" - {chunk.section_title}" if chunk.section_title else ""
+        rank = chunk.rank or index
         sections.append(
-            f"[{index}] {chunk.title} ({chunk.source_id}{location})\n{chunk.content}",
+            f"[{rank}] {title}{section} ({chunk.source_id}{location})\n{chunk.content}",
         )
     return "\n\n".join(sections)
+
+
+def build_user_message_content(*, user_input: str, chunks: list[RetrievedChunk]) -> str:
+    if not chunks:
+        return f"<student_message>\n{user_input}\n</student_message>"
+
+    return (
+        f"<retrieved_context>\n{build_context_block(chunks)}\n</retrieved_context>\n\n"
+        f"<student_message>\n{user_input}\n</student_message>"
+    )
 
 
 def build_messages(
@@ -39,13 +54,16 @@ def build_messages(
     history: list[ChatMessage],
     chunks: list[RetrievedChunk],
 ) -> list[ChatMessage]:
-    system_prompt = (
-        f"{BASE_SYSTEM_PROMPT}\n\nCourse context:\n{build_context_block(chunks)}"
-    )
     return [
-        ChatMessage(role=ChatRole.SYSTEM, content=system_prompt),
+        ChatMessage(role=ChatRole.SYSTEM, content=BASE_SYSTEM_PROMPT),
         *history,
-        ChatMessage(role=ChatRole.USER, content=user_input),
+        ChatMessage(
+            role=ChatRole.USER,
+            content=build_user_message_content(
+                user_input=user_input,
+                chunks=chunks,
+            ),
+        ),
     ]
 
 
@@ -58,15 +76,12 @@ def build_socratic_repair_messages(
     return [
         ChatMessage(
             role=ChatRole.SYSTEM,
-            content=(
-                f"{SOCRATIC_REPAIR_PROMPT}\n\n"
-                f"Course context:\n{build_context_block(chunks)}"
-            ),
+            content=SOCRATIC_REPAIR_PROMPT,
         ),
         ChatMessage(
             role=ChatRole.USER,
             content=(
-                f"Student message:\n{user_input}\n\n"
+                f"{build_user_message_content(user_input=user_input, chunks=chunks)}\n\n"
                 f"Draft assistant response to repair:\n{draft_response}"
             ),
         ),

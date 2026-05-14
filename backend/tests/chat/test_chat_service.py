@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -18,8 +18,11 @@ from backend.llm.schemas import (
     GuardrailResult,
     LLMResult,
     ProviderResponse,
+    RetrievalResult,
     RetrievedChunk,
 )
+
+RETRIEVAL_USER_MESSAGE_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest.mark.asyncio
@@ -30,11 +33,25 @@ async def test_create_conversation_message_completes_assistant_message() -> None
     llm_service = FakeLLMService(
         LLMResult(
             content="Cells are small units.",
+            retrieval_result=RetrievalResult(
+                user_message_id=RETRIEVAL_USER_MESSAGE_ID,
+                student_question="Explain cells.",
+                normalized_query="explain cells",
+                retrieval_status="success",
+                retrieval_confidence="high",
+                top_k=1,
+                retrieval_notes={"reason": "Strong match."},
+            ),
             retrieved_context=[
                 RetrievedChunk(
+                    chunk_id="chunk_1",
                     content="Cell note",
                     source_id="doc_1",
-                    title="Biology Notes",
+                    source_title="Biology Notes",
+                    source_type="lecture_notes",
+                    section_title="Cells",
+                    relevance_score=0.92,
+                    rank=1,
                 )
             ],
             provider_response=ProviderResponse(
@@ -64,16 +81,32 @@ async def test_create_conversation_message_completes_assistant_message() -> None
     assert response.blocked_reason is None
     assert llm_service.requests[0].history == []
     assert session.commit_count == 2
-    assert repository.messages[-1].retrieved_context == [
+    assert repository.messages[0].retrieved_context == [
         {
+            "chunkId": "chunk_1",
             "content": "Cell note",
             "sourceId": "doc_1",
-            "title": "Biology Notes",
+            "sourceTitle": "Biology Notes",
+            "sourceType": "lecture_notes",
+            "sectionTitle": "Cells",
+            "title": None,
+            "relevanceScore": 0.92,
+            "rank": 1,
             "page": None,
             "url": None,
             "metadata": {},
         }
     ]
+    assert repository.messages[0].extra_metadata["retrieval"] == {
+        "userMessageId": "00000000-0000-0000-0000-000000000001",
+        "studentQuestion": "Explain cells.",
+        "normalizedQuery": "explain cells",
+        "retrievalStatus": "success",
+        "retrievalConfidence": "high",
+        "topK": 1,
+        "retrievalNotes": {"reason": "Strong match."},
+    }
+    assert repository.messages[-1].retrieved_context in (None, [])
     assert repository.messages[-1].citations in (None, [])
 
 
@@ -135,6 +168,124 @@ async def test_create_message_uses_completed_history() -> None:
     assert llm_service.requests[0].history == [
         ChatMessage(role=ChatRole.USER, content="What is a cell?"),
         ChatMessage(role=ChatRole.ASSISTANT, content="A cell is a basic unit of life."),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_message_adds_stored_context_to_recent_user_history() -> None:
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    conversation = _conversation(user_id=user.id)
+    messages = []
+    for index in range(1, 6):
+        messages.append(
+            _message(
+                conversation=conversation,
+                user_id=user.id,
+                sequence=(index * 2) - 1,
+                role=MessageRole.USER,
+                status=MessageStatus.COMPLETED,
+                content=f"Question {index}?",
+                retrieved_context=[
+                    {
+                        "chunkId": f"chunk_{index}",
+                        "content": f"Stored note for chunk_{index}",
+                        "sourceId": "doc_1",
+                        "sourceTitle": "Biology Notes",
+                        "rank": 1,
+                        "metadata": {"page": index},
+                    }
+                ],
+            )
+        )
+        messages.append(
+            _message(
+                conversation=conversation,
+                user_id=user.id,
+                sequence=index * 2,
+                role=MessageRole.ASSISTANT,
+                status=MessageStatus.COMPLETED,
+                content=f"Answer {index}.",
+            )
+        )
+    repository = FakeChatRepository(
+        user_id=user.id,
+        conversations=[conversation],
+        messages=messages,
+    )
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="Follow-up answer.",
+            provider_response=ProviderResponse(content="Follow-up answer."),
+        )
+    )
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=llm_service,
+        repository=repository,
+    )
+
+    await service.create_message(conversation.id, "Follow up.")
+
+    history = llm_service.requests[0].history
+    user_history = [message for message in history if message.role == ChatRole.USER]
+    assert user_history[0].content == "Question 1?"
+    assert user_history[1].content == "Question 2?"
+    assert "<retrieved_context>" in user_history[2].content
+    assert "Stored note for chunk_3" in user_history[2].content
+    assert "<retrieved_context>" in user_history[3].content
+    assert "Stored note for chunk_4" in user_history[3].content
+    assert "<retrieved_context>" in user_history[4].content
+    assert "Stored note for chunk_5" in user_history[4].content
+    assert ChatMessage(role=ChatRole.ASSISTANT, content="Answer 5.") in history
+
+
+@pytest.mark.asyncio
+async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    conversation = _conversation(user_id=user.id)
+    repository = FakeChatRepository(
+        user_id=user.id,
+        conversations=[conversation],
+        messages=[
+            _message(
+                conversation=conversation,
+                user_id=user.id,
+                sequence=1,
+                role=MessageRole.USER,
+                status=MessageStatus.COMPLETED,
+                content="What is a cell?",
+                retrieved_context=[
+                    {
+                        "chunkId": "legacy_chunk",
+                        "sourceId": "doc_1",
+                        "sourceTitle": "Biology Notes",
+                    }
+                ],
+            ),
+        ],
+    )
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="A cell is a basic unit of life.",
+            provider_response=ProviderResponse(
+                content="A cell is a basic unit of life."
+            ),
+        )
+    )
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=llm_service,
+        repository=repository,
+    )
+
+    await service.create_message(conversation.id, "Tell me more.")
+
+    assert llm_service.requests[0].history == [
+        ChatMessage(role=ChatRole.USER, content="What is a cell?"),
     ]
 
 
@@ -331,6 +482,7 @@ def _message(
     role: MessageRole,
     status: MessageStatus,
     content: str,
+    retrieved_context: list[dict] | None = None,
 ) -> Message:
     return Message(
         id=uuid4(),
@@ -340,5 +492,7 @@ def _message(
         role=role.value,
         status=status.value,
         content=content,
+        retrieved_context=retrieved_context or [],
+        extra_metadata={},
         created_at=datetime.now(UTC),
     )

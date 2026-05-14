@@ -11,6 +11,7 @@ from backend.llm.schemas import (
     LLMRequest,
     LLMResult,
     ProviderResponse,
+    RetrievalResult,
     RetrievalProvider,
     RetrievedChunk,
 )
@@ -23,8 +24,14 @@ class EmptyRetrievalProvider:
         *,
         user_id,
         conversation_id,
-    ) -> list[RetrievedChunk]:
-        return []
+        user_message_id,
+    ) -> RetrievalResult:
+        return RetrievalResult(
+            user_message_id=user_message_id,
+            student_question=query,
+            retrieval_status="not_configured",
+            chunks=[],
+        )
 
 
 class LLMService:
@@ -52,6 +59,7 @@ class LLMService:
                 request.content,
                 user_id=request.user_id,
                 conversation_id=request.conversation_id,
+                user_message_id=request.user_message_id,
             ),
         )
 
@@ -72,27 +80,34 @@ class LLMService:
                 input_result=input_result,
                 output_result=output_result,
                 provider_response=provider_response,
-                retrieved_context=[],
+                retrieval_result=RetrievalResult(
+                    user_message_id=request.user_message_id,
+                    student_question=request.content,
+                    retrieval_status="skipped",
+                    retrieval_notes={
+                        "reason": "Input guardrail blocked retrieval use."
+                    },
+                ),
             )
 
-        retrieved_context = await retrieval_task
+        retrieval_result = _coerce_retrieval_result(await retrieval_task)
         provider_response = await self._provider.complete(
             build_messages(
                 user_input=request.content,
                 history=request.history,
-                chunks=retrieved_context,
+                chunks=retrieval_result.chunks,
             ),
         )
         output_result, provider_response = await self._check_output(
             request=request,
             provider_response=provider_response,
-            retrieved_context=retrieved_context,
+            retrieved_context=retrieval_result.chunks,
         )
         return _build_result(
             input_result=input_result,
             output_result=output_result,
             provider_response=provider_response,
-            retrieved_context=retrieved_context,
+            retrieval_result=retrieval_result,
         )
 
     async def _check_output(
@@ -161,7 +176,7 @@ def _build_result(
     input_result: GuardrailResult,
     output_result: GuardrailResult,
     provider_response: ProviderResponse,
-    retrieved_context: list[RetrievedChunk],
+    retrieval_result: RetrievalResult,
 ) -> LLMResult:
     content = provider_response.content
     if input_result.blocked:
@@ -171,7 +186,8 @@ def _build_result(
 
     return LLMResult(
         content=content,
-        retrieved_context=retrieved_context,
+        retrieval_result=retrieval_result,
+        retrieved_context=retrieval_result.chunks,
         input_guardrail_result=input_result,
         output_guardrail_result=output_result,
         provider_response=provider_response,
@@ -193,11 +209,25 @@ def _with_repair_metadata(
     return result.model_copy(update={"metadata": metadata})
 
 
-def _discard_task_result(task: asyncio.Task[list[RetrievedChunk]]) -> None:
+def _coerce_retrieval_result(
+    value: RetrievalResult | list[RetrievedChunk],
+) -> RetrievalResult:
+    if isinstance(value, RetrievalResult):
+        return value
+    return RetrievalResult(chunks=[_coerce_retrieved_chunk(chunk) for chunk in value])
+
+
+def _coerce_retrieved_chunk(value: RetrievedChunk | dict) -> RetrievedChunk:
+    if isinstance(value, RetrievedChunk):
+        return value
+    return RetrievedChunk.model_validate(value)
+
+
+def _discard_task_result(task: asyncio.Task[RetrievalResult]) -> None:
     task.add_done_callback(_consume_task_exception)
 
 
-def _consume_task_exception(task: asyncio.Task[list[RetrievedChunk]]) -> None:
+def _consume_task_exception(task: asyncio.Task[RetrievalResult]) -> None:
     try:
         task.exception()
     except asyncio.CancelledError:

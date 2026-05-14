@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import status
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.chat.models import Conversation, Message
@@ -23,8 +24,13 @@ from backend.llm.schemas import (
     ChatRole,
     LLMRequest,
     LLMResult,
+    RetrievedChunk,
 )
 from backend.llm.service import LLMService
+from backend.llm.prompts import build_user_message_content
+
+
+RECENT_RETRIEVED_CONTEXT_TURNS = 3
 
 
 class ChatService:
@@ -127,7 +133,8 @@ class ChatService:
         request = LLMRequest(
             user_id=self._current_user.id,
             conversation_id=conversation.id,
-            message_id=assistant_message.id,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
             content=content,
             history=history,
         )
@@ -146,8 +153,10 @@ class ChatService:
             result.input_guardrail_result.blocked
             or result.output_guardrail_result.blocked
         ):
+            await self._save_user_retrieval(user_message, result)
             await self._mark_blocked(assistant_message, result)
         else:
+            await self._save_user_retrieval(user_message, result)
             await self._mark_completed(assistant_message, result)
 
         finish_reason = None
@@ -184,10 +193,6 @@ class ChatService:
         provider_response = result.provider_response
         message.status = MessageStatus.COMPLETED.value
         message.content = result.content
-        message.retrieved_context = [
-            chunk.model_dump(mode="json", by_alias=True)
-            for chunk in result.retrieved_context
-        ]
         message.input_guardrail_result = result.input_guardrail_result.model_dump(
             mode="json",
             by_alias=True,
@@ -209,10 +214,6 @@ class ChatService:
         message.status = MessageStatus.BLOCKED.value
         message.content = reason
         message.blocked_reason = reason
-        message.retrieved_context = [
-            chunk.model_dump(mode="json", by_alias=True)
-            for chunk in result.retrieved_context
-        ]
         message.input_guardrail_result = result.input_guardrail_result.model_dump(
             mode="json",
             by_alias=True,
@@ -222,6 +223,23 @@ class ChatService:
             by_alias=True,
         )
         await self._session.commit()
+
+    async def _save_user_retrieval(
+        self,
+        message: Message,
+        result: LLMResult,
+    ) -> None:
+        message.retrieved_context = [
+            chunk.model_dump(mode="json", by_alias=True)
+            for chunk in result.retrieved_context
+        ]
+        metadata = dict(message.extra_metadata or {})
+        metadata["retrieval"] = result.retrieval_result.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude={"chunks"},
+        )
+        message.extra_metadata = metadata
 
     async def _mark_failed(self, message: Message, exc: Exception) -> None:
         message.status = MessageStatus.FAILED.value
@@ -250,15 +268,50 @@ class ChatService:
 
 def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
     history = []
+    recent_user_message_ids = _recent_user_message_ids(messages)
     for message in messages:
         if message.status != MessageStatus.COMPLETED.value:
             continue
         if message.role not in {MessageRole.USER.value, MessageRole.ASSISTANT.value}:
             continue
-        history.append(
-            ChatMessage(role=ChatRole(message.role), content=message.content or "")
-        )
+        content = message.content or ""
+        if (
+            message.role == MessageRole.USER.value
+            and message.id in recent_user_message_ids
+        ):
+            chunks = _chunks_from_stored_refs(message.retrieved_context or [])
+            content = _history_user_content(content, chunks)
+        history.append(ChatMessage(role=ChatRole(message.role), content=content))
     return history
+
+
+def _recent_user_message_ids(messages: list[Message]) -> set[UUID]:
+    completed_user_messages = [
+        message
+        for message in messages
+        if message.role == MessageRole.USER.value
+        and message.status == MessageStatus.COMPLETED.value
+    ]
+    return {
+        message.id
+        for message in completed_user_messages[-RECENT_RETRIEVED_CONTEXT_TURNS:]
+    }
+
+
+def _history_user_content(content: str, chunks: list[RetrievedChunk]) -> str:
+    if not chunks:
+        return content
+    return build_user_message_content(user_input=content, chunks=chunks)
+
+
+def _chunks_from_stored_refs(chunk_refs: list[dict]) -> list[RetrievedChunk]:
+    chunks = []
+    for chunk_ref in chunk_refs:
+        try:
+            chunks.append(RetrievedChunk.model_validate(chunk_ref))
+        except ValidationError:
+            continue
+    return chunks
 
 
 def _title_from_content(content: str) -> str:
