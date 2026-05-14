@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg18-trixie
+    container_name: capilearn-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-capilearn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-capilearn}
+      POSTGRES_DB: ${POSTGRES_DB:-capilearn}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - capilearn
+
+volumes:
+  postgres_data:
+
+networks:
+  capilearn:
+    name: capilearn
