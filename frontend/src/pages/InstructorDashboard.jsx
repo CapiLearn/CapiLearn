@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import "../styles/InstructorDashboard.css";
 
 const summaryStats = [
@@ -135,6 +136,10 @@ function InstructorDashboard() {
           <button>System Health</button>
           <button>Administration</button>
         </nav>
+
+        <Link className="instructor-logout-link" to="/">
+          Log out
+        </Link>
 
         <div className="instructor-profile-card">
           <div className="instructor-avatar">O</div>

@@ -162,6 +162,10 @@ body {
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Stats */

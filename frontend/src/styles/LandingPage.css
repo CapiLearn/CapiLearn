@@ -21,6 +21,12 @@ button {
   font-family: inherit;
 }
 
+.link-button {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 /* Whole browser page */
 
 .capilearn-page {

@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import "../styles/LandingPage.css";
 
 function LandingPage() {
@@ -38,8 +39,13 @@ function LandingPage() {
             </p>
 
             <div className="capilearn-actions">
-              <button className="capilearn-primary">Get started free</button>
-              <button className="capilearn-secondary">See how it works</button>
+              <Link className="capilearn-primary link-button" to="/workspace">
+                Student Workspace
+              </Link>
+
+              <Link className="capilearn-secondary link-button" to="/instructor-dashboard">
+                Instructor Dashboard
+              </Link>
             </div>
 
             <div className="capilearn-feature-row" id="features">

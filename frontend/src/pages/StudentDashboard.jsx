@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import "../styles/StudentDashboard.css";
 
 const statCards = [
@@ -95,7 +96,9 @@ function StudentDashboard() {
             </p>
           </div>
 
-          <button className="return-button">Return to workspace</button>
+          <Link className="return-button" to="/workspace">
+              Return to workspace
+          </Link>
         </header>
 
         <section className="dashboard-stat-grid">

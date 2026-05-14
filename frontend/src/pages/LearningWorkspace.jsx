@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import "../styles/LearningWorkspace.css";
 
 const recentChats = [
@@ -59,7 +60,9 @@ function LearningWorkspace() {
             </section>
           ))}
         </div>
-
+        <Link className="workspace-logout-link" to="/">
+          Log out
+        </Link>
         <div className="student-profile">
           <div className="student-avatar">J</div>
           <div>
@@ -76,7 +79,13 @@ function LearningWorkspace() {
             <h1>What would you like to learn today?</h1>
           </div>
 
-          <button className="workspace-help-button">Guided mode</button>
+          <div className="workspace-header-actions">
+            <button className="workspace-help-button">Guided mode</button>
+
+            <Link className="workspace-dashboard-link" to="/student-dashboard">
+              Dashboard
+            </Link>
+          </div>  
         </header>
 
         <section className="welcome-card">

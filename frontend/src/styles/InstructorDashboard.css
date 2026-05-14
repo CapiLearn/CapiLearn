@@ -77,7 +77,6 @@ body {
 }
 
 .instructor-profile-card {
-  margin-top: auto;
   border-top: 1px solid #e0d8bd;
   padding-top: 18px;
 
@@ -491,6 +490,24 @@ body {
   }
 }
 
+.instructor-logout-link {
+    width: 100%;
+    border: 1px solid #d8cfb1;
+    border-radius: 10px;
+    background: #fffdf0;
+    color: #557c38;
+
+    padding: 12px 14px;
+    margin-top: auto;
+    margin-bottom: 16px;
+
+    font-size: 14px;
+    font-weight: 800;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
 @media (max-width: 760px) {
   .instructor-page {
     grid-template-columns: 1fr;
@@ -515,4 +532,5 @@ body {
   .panel-header {
     flex-direction: column;
   }
+  
 }
