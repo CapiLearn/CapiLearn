@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.chat.schemas import ConversationStatus, MessageRole, MessageStatus
+from backend.chat.schemas import ConversationStatus, MessageStatus
 from backend.core.database import Base
 
 
@@ -105,15 +105,3 @@ class Message(Base):
     )
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
-
-
-def coerce_message_role(value: str) -> MessageRole:
-    return MessageRole(value)
-
-
-def coerce_message_status(value: str) -> MessageStatus:
-    return MessageStatus(value)
-
-
-def coerce_conversation_status(value: str) -> ConversationStatus:
-    return ConversationStatus(value)

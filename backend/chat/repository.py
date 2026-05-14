@@ -100,12 +100,6 @@ class ChatRepository:
         await session.flush()
         return message
 
-    async def save(self, session: AsyncSession) -> None:
-        await session.commit()
-
-    async def rollback(self, session: AsyncSession) -> None:
-        await session.rollback()
-
     async def _next_sequence(
         self, session: AsyncSession, *, conversation_id: UUID
     ) -> int:

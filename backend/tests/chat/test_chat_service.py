@@ -25,6 +25,7 @@ from backend.llm.schemas import (
 @pytest.mark.asyncio
 async def test_create_conversation_message_completes_assistant_message() -> None:
     user = CurrentUser(id=uuid4())
+    session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FakeLLMService(
         LLMResult(
@@ -47,7 +48,7 @@ async def test_create_conversation_message_completes_assistant_message() -> None
         )
     )
     service = ChatService(
-        session=object(),
+        session=session,
         current_user=user,
         llm_service=llm_service,
         repository=repository,
@@ -62,6 +63,7 @@ async def test_create_conversation_message_completes_assistant_message() -> None
     assert response.finish_reason == "stop"
     assert response.blocked_reason is None
     assert llm_service.requests[0].history == []
+    assert session.commit_count == 2
     assert repository.messages[-1].retrieved_context == [
         {
             "content": "Cell note",
@@ -78,6 +80,7 @@ async def test_create_conversation_message_completes_assistant_message() -> None
 @pytest.mark.asyncio
 async def test_create_message_uses_completed_history() -> None:
     user = CurrentUser(id=uuid4())
+    session = FakeSession()
     conversation = _conversation(user_id=user.id)
     repository = FakeChatRepository(
         user_id=user.id,
@@ -119,7 +122,7 @@ async def test_create_message_uses_completed_history() -> None:
         )
     )
     service = ChatService(
-        session=object(),
+        session=session,
         current_user=user,
         llm_service=llm_service,
         repository=repository,
@@ -128,6 +131,7 @@ async def test_create_message_uses_completed_history() -> None:
     response = await service.create_message(conversation.id, "Tell me more.")
 
     assert response.assistant_message.content == "Cells contain organelles."
+    assert session.commit_count == 2
     assert llm_service.requests[0].history == [
         ChatMessage(role=ChatRole.USER, content="What is a cell?"),
         ChatMessage(role=ChatRole.ASSISTANT, content="A cell is a basic unit of life."),
@@ -137,6 +141,7 @@ async def test_create_message_uses_completed_history() -> None:
 @pytest.mark.asyncio
 async def test_blocked_input_returns_blocked_assistant_message() -> None:
     user = CurrentUser(id=uuid4())
+    session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FakeLLMService(
         LLMResult(
@@ -149,7 +154,7 @@ async def test_blocked_input_returns_blocked_assistant_message() -> None:
         )
     )
     service = ChatService(
-        session=object(),
+        session=session,
         current_user=user,
         llm_service=llm_service,
         repository=repository,
@@ -161,11 +166,13 @@ async def test_blocked_input_returns_blocked_assistant_message() -> None:
     assert response.assistant_message.content == "Input blocked."
     assert response.blocked_reason == "Input blocked."
     assert repository.messages[-1].blocked_reason == "Input blocked."
+    assert session.commit_count == 2
 
 
 @pytest.mark.asyncio
 async def test_blocked_output_returns_blocked_assistant_message() -> None:
     user = CurrentUser(id=uuid4())
+    session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FakeLLMService(
         LLMResult(
@@ -182,7 +189,7 @@ async def test_blocked_output_returns_blocked_assistant_message() -> None:
         )
     )
     service = ChatService(
-        session=object(),
+        session=session,
         current_user=user,
         llm_service=llm_service,
         repository=repository,
@@ -193,14 +200,16 @@ async def test_blocked_output_returns_blocked_assistant_message() -> None:
     assert response.assistant_message.status == MessageStatus.BLOCKED
     assert response.assistant_message.content == "Output blocked."
     assert response.blocked_reason == "Output blocked."
+    assert session.commit_count == 2
 
 
 @pytest.mark.asyncio
 async def test_llm_exception_marks_assistant_failed_and_raises_api_error() -> None:
     user = CurrentUser(id=uuid4())
+    session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
-        session=object(),
+        session=session,
         current_user=user,
         llm_service=FailingLLMService(),
         repository=repository,
@@ -212,6 +221,15 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error() -> No
     assert exc_info.value.code == "llm_unavailable"
     assert repository.messages[-1].status == MessageStatus.FAILED.value
     assert repository.messages[-1].error == {"type": "RuntimeError"}
+    assert session.commit_count == 2
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.commit_count = 0
+
+    async def commit(self) -> None:
+        self.commit_count += 1
 
 
 class FakeChatRepository:
@@ -225,7 +243,6 @@ class FakeChatRepository:
         self.user_id = user_id
         self.conversations = conversations or []
         self.messages = messages or []
-        self.save_count = 0
 
     async def create_conversation(self, session, *, user_id, title):
         conversation = _conversation(user_id=user_id, title=title)
@@ -272,9 +289,6 @@ class FakeChatRepository:
         )
         self.messages.append(message)
         return message
-
-    async def save(self, session) -> None:
-        self.save_count += 1
 
 
 class FakeLLMService:

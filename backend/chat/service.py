@@ -69,7 +69,7 @@ class ChatService:
         conversation.status = ConversationStatus.DELETED.value
         conversation.deleted_at = datetime.now(UTC)
         conversation.updated_at = datetime.now(UTC)
-        await self._repository.save(self._session)
+        await self._session.commit()
 
     async def create_conversation_message(self, content: str) -> SendMessageResponse:
         title = _title_from_content(content)
@@ -123,7 +123,7 @@ class ChatService:
             status=MessageStatus.PENDING,
             content="",
         )
-        await self._repository.save(self._session)
+        await self._session.commit()
         request = LLMRequest(
             user_id=self._current_user.id,
             conversation_id=conversation.id,
@@ -142,16 +142,23 @@ class ChatService:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             ) from exc
 
-        if _is_blocked(result):
+        if (
+            result.input_guardrail_result.blocked
+            or result.output_guardrail_result.blocked
+        ):
             await self._mark_blocked(assistant_message, result)
         else:
             await self._mark_completed(assistant_message, result)
+
+        finish_reason = None
+        if result.provider_response is not None:
+            finish_reason = result.provider_response.finish_reason
 
         return SendMessageResponse(
             conversation=self._conversation_response(conversation),
             user_message=self._message_response(user_message),
             assistant_message=self._message_response(assistant_message),
-            finish_reason=_finish_reason(result),
+            finish_reason=finish_reason,
             blocked_reason=assistant_message.blocked_reason,
         )
 
@@ -195,7 +202,7 @@ class ChatService:
             message.completion_tokens = provider_response.completion_tokens
             message.total_tokens = provider_response.total_tokens
             message.provider_response = provider_response.raw_response
-        await self._repository.save(self._session)
+        await self._session.commit()
 
     async def _mark_blocked(self, message: Message, result: LLMResult) -> None:
         reason = result.content
@@ -214,12 +221,12 @@ class ChatService:
             mode="json",
             by_alias=True,
         )
-        await self._repository.save(self._session)
+        await self._session.commit()
 
     async def _mark_failed(self, message: Message, exc: Exception) -> None:
         message.status = MessageStatus.FAILED.value
         message.error = {"type": type(exc).__name__}
-        await self._repository.save(self._session)
+        await self._session.commit()
 
     def _conversation_response(
         self, conversation: Conversation
@@ -257,15 +264,3 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
 def _title_from_content(content: str) -> str:
     normalized = " ".join(content.split())
     return normalized[:80] or "New conversation"
-
-
-def _finish_reason(result: LLMResult) -> str | None:
-    if result.provider_response is None:
-        return None
-    return result.provider_response.finish_reason
-
-
-def _is_blocked(result: LLMResult) -> bool:
-    return (
-        result.input_guardrail_result.blocked or result.output_guardrail_result.blocked
-    )

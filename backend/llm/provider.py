@@ -26,11 +26,7 @@ class LiteLLMProvider:
 def _completion_kwargs(messages: list[ChatMessage]) -> dict[str, Any]:
     return {
         "model": llm_settings.model,
-        "messages": [
-            message.model_dump(mode="json")
-            for message in messages
-            if message.role.value != "context"
-        ],
+        "messages": [message.model_dump(mode="json") for message in messages],
         "temperature": llm_settings.temperature,
         "max_tokens": llm_settings.max_tokens,
         "timeout": llm_settings.request_timeout_seconds,
