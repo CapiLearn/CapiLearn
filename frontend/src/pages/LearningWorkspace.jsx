@@ -1,6 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { createConversation, createMessage } from "../services/conversationService";
+
+import { 
+  createConversation, 
+  createMessage, 
+  listConversations, 
+  listMessages,
+} from "../services/conversationService";
+
 import "../styles/LearningWorkspace.css";
 
 const recentChats = [
@@ -50,9 +57,32 @@ function LearningWorkspace() {
     },
   ]);
 
+  //State variables
+
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [conversations, setConversations] = useState([]);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+
+  useEffect(() => {
+    async function loadConversations() {
+      try {
+        setIsLoadingConversations(true);
+
+        const data = await listConversations();
+
+        setConversations(data.conversations || []);
+      } catch (error) {
+        setErrorMessage(error.message || "Unable to load conversations.");
+      } finally {
+        setIsLoadingConversations(false);
+      }
+    }
+
+    loadConversations();
+  }, []);
 
   async function handleSendMessage(event) {
     event.preventDefault();
@@ -71,11 +101,16 @@ function LearningWorkspace() {
 
       if (conversationId) {
         data = await createMessage(conversationId, trimmedMessage);
-      } else {
-        data = await createConversation(trimmedMessage);
-        setConversationId(data.conversation.id);
-      }
+        } else {
+          data = await createConversation(trimmedMessage);
+          setConversationId(data.conversation.id);
 
+          setConversations((currentConversations) => [
+            data.conversation,
+            ...currentConversations,
+          ]);
+        }
+        
       setChatMessages((currentMessages) => [
         ...currentMessages,
         data.userMessage,
@@ -89,6 +124,22 @@ function LearningWorkspace() {
       setIsSending(false);
     }
   }
+
+  async function handleSelectConversation(selectedConversationId) {
+    try {
+      setIsLoadingMessages(true);
+      setErrorMessage("");
+      setConversationId(selectedConversationId);
+
+      const data = await listMessages(selectedConversationId);
+
+      setChatMessages(data.messages || []);
+    } catch (error) {
+      setErrorMessage(error.message || "Unable to load conversation messages.");
+    } finally {
+      setIsLoadingMessages(false);
+    }
+  } 
 
   return (
     <main className="workspace-page">
@@ -106,17 +157,32 @@ function LearningWorkspace() {
         </div>
 
         <div className="chat-history">
-          {recentChats.map((group) => (
-            <section className="chat-group" key={group.label}>
-              <h3>{group.label}</h3>
+          <section className="chat-group">
+            <h3>Conversations</h3>
 
-              {group.items.map((item) => (
-                <button className="chat-history-item" key={item}>
-                  {item}
+            {isLoadingConversations && (
+              <p className="sidebar-helper-text">Loading conversations...</p>
+            )}
+
+            {!isLoadingConversations && conversations.length === 0 && (
+              <p className="sidebar-helper-text">No conversations yet.</p>
+            )}
+
+            {!isLoadingConversations &&
+              conversations.map((conversation) => (
+                <button
+                  className={`chat-history-item ${
+                    conversation.id === conversationId ? "active-conversation" : ""
+                  }`}
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => handleSelectConversation(conversation.id)}
+                >
+                  {conversation.title || "Untitled conversation"}
                 </button>
-              ))}
-            </section>
-          ))}
+            ))}
+             
+          </section>
         </div>
 
         <Link className="workspace-logout-link" to="/">
@@ -179,6 +245,10 @@ function LearningWorkspace() {
         </section>
 
         <section className="chat-preview">
+          {isLoadingMessages && (
+            <p className="workspace-loading-message">Loading conversation...</p>
+          )}
+
           {chatMessages.map((message) => (
             <div
               className={`message ${
