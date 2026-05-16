@@ -8,7 +8,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
-.python-version
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
