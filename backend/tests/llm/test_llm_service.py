@@ -6,13 +6,14 @@ import pytest
 from nemoguardrails import RailsConfig
 from pydantic import ValidationError
 
+from backend.llm import provider as llm_provider_module
+from backend.llm import service as llm_service_module
 from backend.llm.config import (
     InputGuardrailMode,
     LLMSettings,
     OutputGuardrailMode,
     llm_settings,
 )
-from backend.llm import service as llm_service_module
 from backend.llm.guardrails import NeMoGuardrailsProvider, NoopGuardrailsProvider
 from backend.llm.litellm_guardrails import (
     LiteLLMGuardrailsChatModel,
@@ -20,6 +21,7 @@ from backend.llm.litellm_guardrails import (
     _response_content,
     register_litellm_guardrails_provider,
 )
+from backend.llm.prompts import BASE_SYSTEM_PROMPT
 from backend.llm.provider import LiteLLMProvider
 from backend.llm.schemas import (
     ChatMessage,
@@ -31,7 +33,6 @@ from backend.llm.schemas import (
     RetrievedChunk,
 )
 from backend.llm.service import LLMService
-from backend.llm.prompts import BASE_SYSTEM_PROMPT
 
 
 class FakeProvider:
@@ -44,9 +45,7 @@ class FakeProvider:
         self.complete_called = True
         self.messages = messages
         self.calls.append(messages)
-        return ProviderResponse(
-            content="Plants turn light into energy.", finish_reason="stop"
-        )
+        return ProviderResponse(content="Plants turn light into energy.", finish_reason="stop")
 
 
 class SequenceProvider:
@@ -328,9 +327,7 @@ async def test_llm_service_system_prompt_is_static_across_retrievals() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_service_complete_starts_retrieval_before_input_guardrail_finishes() -> (
-    None
-):
+async def test_llm_service_complete_starts_retrieval_before_input_guardrail_finishes() -> None:
     provider = FakeProvider()
     retriever = CoordinatedRetriever()
     service = LLMService(
@@ -343,10 +340,7 @@ async def test_llm_service_complete_starts_retrieval_before_input_guardrail_fini
 
     assert result.retrieved_context[0].metadata["source_id"] == "doc_concurrent"
     assert provider.complete_called
-    assert (
-        "Concurrent note for: What is concurrent retrieval?"
-        in provider.messages[-1].content
-    )
+    assert "Concurrent note for: What is concurrent retrieval?" in provider.messages[-1].content
     assert provider.messages[0].content == BASE_SYSTEM_PROMPT
 
 
@@ -462,17 +456,12 @@ async def test_llm_service_repairs_blocked_direct_answer_output() -> None:
 
     result = await service.complete(_request("Solve this homework problem."))
 
-    assert result.content == (
-        "What is the first relationship you can write from the problem?"
-    )
+    assert result.content == ("What is the first relationship you can write from the problem?")
     assert not result.output_guardrail_result.blocked
     assert result.output_guardrail_result.metadata["repairAttempted"] is True
     assert result.output_guardrail_result.metadata["repairPassed"] is True
     assert (
-        result.output_guardrail_result.metadata["initialOutputGuardrailResult"][
-            "blocked"
-        ]
-        is True
+        result.output_guardrail_result.metadata["initialOutputGuardrailResult"]["blocked"] is True
     )
     assert len(provider.calls) == 2
     assert "Draft assistant response to repair" in provider.calls[1][-1].content
@@ -518,7 +507,26 @@ async def test_litellm_provider_uses_server_configured_model(monkeypatch) -> Non
 
     assert response.content == "Configured model response."
     assert captured_kwargs["model"] == llm_settings.model
+    assert "temperature" not in captured_kwargs
     assert "api_key" not in captured_kwargs
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_sends_configured_temperature(monkeypatch) -> None:
+    captured_kwargs = {}
+    settings = LLMSettings(_env_file=None, temperature=0.2)
+
+    async def fake_acompletion(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _FakeLiteLLMResponse()
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_provider_module, "llm_settings", settings)
+
+    provider = LiteLLMProvider()
+    await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert captured_kwargs["temperature"] == 0.2
 
 
 @pytest.mark.asyncio
@@ -598,6 +606,7 @@ def test_llm_settings_guardrails_defaults(monkeypatch) -> None:
     monkeypatch.delenv("LLM_GUARDRAILS_MODEL", raising=False)
     settings = LLMSettings(_env_file=None)
 
+    assert settings.temperature is None
     assert settings.guardrails_enabled is True
     assert settings.input_guardrail_mode == InputGuardrailMode.NEMO
     assert settings.output_guardrail_mode == OutputGuardrailMode.NEMO
@@ -643,12 +652,8 @@ def test_global_guardrails_disable_builds_noop_guardrails(monkeypatch) -> None:
     )
     monkeypatch.setattr(llm_service_module, "llm_settings", settings)
 
-    assert isinstance(
-        llm_service_module._build_input_guardrails(), NoopGuardrailsProvider
-    )
-    assert isinstance(
-        llm_service_module._build_output_guardrails(), NoopGuardrailsProvider
-    )
+    assert isinstance(llm_service_module._build_input_guardrails(), NoopGuardrailsProvider)
+    assert isinstance(llm_service_module._build_output_guardrails(), NoopGuardrailsProvider)
 
 
 def test_nemo_guardrails_provider_applies_configured_model(monkeypatch) -> None:
@@ -740,9 +745,7 @@ async def test_litellm_guardrails_chat_model_uses_litellm(monkeypatch) -> None:
 
     assert response.content == "No"
     assert captured_kwargs["model"] == "groq/llama-3.1-8b-instant"
-    assert captured_kwargs["messages"] == [
-        {"role": "user", "content": "Should this be blocked?"}
-    ]
+    assert captured_kwargs["messages"] == [{"role": "user", "content": "Should this be blocked?"}]
     assert captured_kwargs["temperature"] == 0
     assert captured_kwargs["max_tokens"] == 3
 
@@ -770,9 +773,7 @@ async def test_litellm_guardrails_llm_uses_litellm(monkeypatch) -> None:
 
     assert response == "No"
     assert captured_kwargs["model"] == "groq/llama-3.1-8b-instant"
-    assert captured_kwargs["messages"] == [
-        {"role": "user", "content": "Should this be blocked?"}
-    ]
+    assert captured_kwargs["messages"] == [{"role": "user", "content": "Should this be blocked?"}]
     assert captured_kwargs["temperature"] == 0
     assert captured_kwargs["max_tokens"] == 3
 

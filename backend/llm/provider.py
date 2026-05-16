@@ -24,16 +24,16 @@ class LiteLLMProvider:
 
 
 def _completion_kwargs(messages: list[ChatMessage]) -> dict[str, Any]:
-    return {
+    kwargs = {
         "model": llm_settings.model,
         "messages": [message.model_dump(mode="json") for message in messages],
-        "temperature": llm_settings.temperature,
         "max_tokens": llm_settings.max_tokens,
         "timeout": llm_settings.request_timeout_seconds,
-        "fallbacks": [llm_settings.fallback_model]
-        if llm_settings.fallback_model
-        else None,
+        "fallbacks": [llm_settings.fallback_model] if llm_settings.fallback_model else None,
     }
+    if llm_settings.temperature is not None:
+        kwargs["temperature"] = llm_settings.temperature
+    return kwargs
 
 
 def _first_choice(response: Any) -> Any:

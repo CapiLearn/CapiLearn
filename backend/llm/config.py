@@ -24,7 +24,7 @@ class LLMSettings(BaseSettings):
     model_profile_version: str = "2026-05-10"
     model: str = "openai/gpt-4o-mini"
     fallback_model: str | None = None
-    temperature: float = 0.2
+    temperature: float | None = None
     max_tokens: int = 8000
     request_timeout_seconds: float = 30.0
     guardrails_enabled: bool = True
