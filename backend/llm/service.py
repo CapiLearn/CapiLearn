@@ -11,8 +11,8 @@ from backend.llm.schemas import (
     LLMRequest,
     LLMResult,
     ProviderResponse,
-    RetrievalResult,
     RetrievalProvider,
+    RetrievalResult,
     RetrievedChunk,
 )
 
@@ -40,12 +40,8 @@ class LLMService:
         retriever: RetrievalProvider | None = None,
     ) -> None:
         self._provider = provider or LiteLLMProvider()
-        self._input_guardrails = (
-            guardrails or input_guardrails or _build_input_guardrails()
-        )
-        self._output_guardrails = (
-            guardrails or output_guardrails or _build_output_guardrails()
-        )
+        self._input_guardrails = guardrails or input_guardrails or _build_input_guardrails()
+        self._output_guardrails = guardrails or output_guardrails or _build_output_guardrails()
         self._retriever = retriever or EmptyRetrievalProvider()
 
     async def complete(self, request: LLMRequest) -> LLMResult:

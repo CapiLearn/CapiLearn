@@ -237,9 +237,7 @@ async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
     llm_service = FakeLLMService(
         LLMResult(
             content="A cell is a basic unit of life.",
-            provider_response=ProviderResponse(
-                content="A cell is a basic unit of life."
-            ),
+            provider_response=ProviderResponse(content="A cell is a basic unit of life."),
         )
     )
     service = ChatService(
@@ -424,11 +422,7 @@ class FakeChatRepository:
             conversation=conversation,
             user_id=user_id,
             sequence=len(
-                [
-                    item
-                    for item in self.messages
-                    if item.conversation_id == conversation.id
-                ]
+                [item for item in self.messages if item.conversation_id == conversation.id]
             )
             + 1,
             role=role,

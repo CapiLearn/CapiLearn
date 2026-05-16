@@ -4,10 +4,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     ForeignKey,
     Integer,
-    JSON,
     Numeric,
     String,
     Text,
@@ -40,12 +40,8 @@ class Conversation(Base):
     model_profile_version: Mapped[str | None] = mapped_column(String(120))
     guardrails_config_id: Mapped[str | None] = mapped_column(String(120))
     rag_index_version: Mapped[str | None] = mapped_column(String(120))
-    extra_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSON, default=dict
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
@@ -62,9 +58,7 @@ class Conversation(Base):
 class Message(Base):
     __tablename__ = "message"
     __table_args__ = (
-        UniqueConstraint(
-            "conversation_id", "sequence", name="message_conversation_sequence_key"
-        ),
+        UniqueConstraint("conversation_id", "sequence", name="message_conversation_sequence_key"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -97,11 +91,7 @@ class Message(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     provider_response: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    extra_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSON, default=dict
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")

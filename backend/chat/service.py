@@ -29,7 +29,6 @@ from backend.llm.schemas import (
 )
 from backend.llm.service import LLMService
 
-
 RECENT_RETRIEVED_CONTEXT_TURNS = 3
 
 
@@ -54,8 +53,7 @@ class ChatService:
         )
         return ConversationListResponse(
             conversations=[
-                self._conversation_response(conversation)
-                for conversation in conversations
+                self._conversation_response(conversation) for conversation in conversations
             ],
         )
 
@@ -85,9 +83,7 @@ class ChatService:
             user_id=self._current_user.id,
             title=title,
         )
-        return await self._create_message(
-            conversation=conversation, content=content, history=[]
-        )
+        return await self._create_message(conversation=conversation, content=content, history=[])
 
     async def create_message(
         self,
@@ -159,10 +155,7 @@ class ChatService:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             ) from exc
 
-        if (
-            result.input_guardrail_result.blocked
-            or result.output_guardrail_result.blocked
-        ):
+        if result.input_guardrail_result.blocked or result.output_guardrail_result.blocked:
             await self._save_user_retrieval(user_message, result)
             await self._mark_blocked(assistant_message, result)
         else:
@@ -249,9 +242,7 @@ class ChatService:
         message.error = {"type": type(exc).__name__}
         await self._session.commit()
 
-    def _conversation_response(
-        self, conversation: Conversation
-    ) -> ConversationResponse:
+    def _conversation_response(self, conversation: Conversation) -> ConversationResponse:
         return ConversationResponse(
             id=conversation.id,
             title=conversation.title,
@@ -278,10 +269,7 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
         if message.role not in {MessageRole.USER.value, MessageRole.ASSISTANT.value}:
             continue
         content = message.content or ""
-        if (
-            message.role == MessageRole.USER.value
-            and message.id in recent_user_message_ids
-        ):
+        if message.role == MessageRole.USER.value and message.id in recent_user_message_ids:
             chunks = _chunks_from_stored_refs(message.retrieved_context or [])
             content = _history_user_content(content, chunks)
         history.append(ChatMessage(role=ChatRole(message.role), content=content))
@@ -295,10 +283,7 @@ def _recent_user_message_ids(messages: list[Message]) -> set[UUID]:
         if message.role == MessageRole.USER.value
         and message.status == MessageStatus.COMPLETED.value
     ]
-    return {
-        message.id
-        for message in completed_user_messages[-RECENT_RETRIEVED_CONTEXT_TURNS:]
-    }
+    return {message.id for message in completed_user_messages[-RECENT_RETRIEVED_CONTEXT_TURNS:]}
 
 
 def _history_user_content(content: str, chunks: list[RetrievedChunk]) -> str:

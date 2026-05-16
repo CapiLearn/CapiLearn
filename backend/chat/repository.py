@@ -67,9 +67,7 @@ class ChatRepository:
     ) -> list[Message]:
         statement = (
             select(Message)
-            .where(
-                Message.conversation_id == conversation_id, Message.user_id == user_id
-            )
+            .where(Message.conversation_id == conversation_id, Message.user_id == user_id)
             .order_by(Message.sequence.asc())
         )
         return list((await session.scalars(statement)).all())
@@ -87,9 +85,7 @@ class ChatRepository:
         message = Message(
             conversation_id=conversation.id,
             user_id=user_id,
-            sequence=await self._next_sequence(
-                session, conversation_id=conversation.id
-            ),
+            sequence=await self._next_sequence(session, conversation_id=conversation.id),
             role=role.value,
             status=status.value,
             content=content,
@@ -99,9 +95,7 @@ class ChatRepository:
         await session.flush()
         return message
 
-    async def _next_sequence(
-        self, session: AsyncSession, *, conversation_id: UUID
-    ) -> int:
+    async def _next_sequence(self, session: AsyncSession, *, conversation_id: UUID) -> int:
         statement: Select[tuple[int | None]] = select(func.max(Message.sequence)).where(
             Message.conversation_id == conversation_id,
         )

@@ -40,22 +40,14 @@ def test_chat_openapi_uses_json_send_routes_without_streams_or_citations() -> No
 def test_chat_routes_have_stable_operation_ids() -> None:
     schema = app.openapi()
 
-    assert schema["paths"]["/api/conversations"]["get"]["operationId"] == (
-        "listConversations"
-    )
-    assert schema["paths"]["/api/conversations"]["post"]["operationId"] == (
-        "createConversation"
-    )
+    assert schema["paths"]["/api/conversations"]["get"]["operationId"] == ("listConversations")
+    assert schema["paths"]["/api/conversations"]["post"]["operationId"] == ("createConversation")
     assert (
-        schema["paths"]["/api/conversations/{conversation_id}/messages"]["get"][
-            "operationId"
-        ]
+        schema["paths"]["/api/conversations/{conversation_id}/messages"]["get"]["operationId"]
         == "listMessages"
     )
     assert (
-        schema["paths"]["/api/conversations/{conversation_id}/messages"]["post"][
-            "operationId"
-        ]
+        schema["paths"]["/api/conversations/{conversation_id}/messages"]["post"]["operationId"]
         == "createMessage"
     )
     assert "patch" not in schema["paths"]["/api/conversations/{conversation_id}"]
@@ -197,9 +189,7 @@ async def test_delete_conversation_returns_empty_204_response() -> None:
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        response = await client.delete(
-            f"/api/conversations/{FakeChatService.conversation_id}"
-        )
+        response = await client.delete(f"/api/conversations/{FakeChatService.conversation_id}")
 
     assert response.status_code == 204
     assert response.content == b""

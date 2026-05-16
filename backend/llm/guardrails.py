@@ -64,9 +64,7 @@ def _to_guardrail_result(result: Any) -> GuardrailResult:
     content = getattr(result, "content", None)
     return GuardrailResult(
         blocked=status == RailStatus.BLOCKED,
-        reason="Message blocked by guardrails."
-        if status == RailStatus.BLOCKED
-        else None,
+        reason="Message blocked by guardrails." if status == RailStatus.BLOCKED else None,
         rail=str(rail) if rail is not None else None,
         metadata={
             "status": str(status) if status is not None else None,
