@@ -18,16 +18,14 @@ class OutputGuardrailMode(StrEnum):
 
 
 class LLMSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_prefix="LLM_", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="LLM_", extra="ignore")
 
     model_profile_key: str = "default_tutor"
     model_profile_version: str = "2026-05-10"
     model: str = "openai/gpt-4o-mini"
     fallback_model: str | None = None
     temperature: float = 0.2
-    max_tokens: int = 800
+    max_tokens: int = 8000
     request_timeout_seconds: float = 30.0
     guardrails_enabled: bool = True
     input_guardrail_mode: InputGuardrailMode = InputGuardrailMode.NEMO

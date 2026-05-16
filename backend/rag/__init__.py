@@ -1,1 +1,1 @@
-"""RAG integration adapters."""
+"""RAG retrieval pipeline."""

@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
@@ -8,6 +9,8 @@ from backend.chat.service import ChatService
 from backend.core.config import settings
 from backend.core.database import DbSession
 from backend.core.exceptions import ApiError
+from backend.llm.retrieval import RagRetrievalProvider
+from backend.llm.schemas import RetrievalProvider
 from backend.llm.service import LLMService
 
 
@@ -33,8 +36,19 @@ async def get_current_user(
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 
-def get_llm_service() -> LLMService:
-    return LLMService()
+@lru_cache(maxsize=1)
+def get_rag_retrieval_provider() -> RetrievalProvider:
+    return RagRetrievalProvider()
+
+
+RagRetrievalProviderDep = Annotated[
+    RetrievalProvider,
+    Depends(get_rag_retrieval_provider),
+]
+
+
+def get_llm_service(retriever: RagRetrievalProviderDep) -> LLMService:
+    return LLMService(retriever=retriever)
 
 
 LLMServiceDep = Annotated[LLMService, Depends(get_llm_service)]
