@@ -1,18 +1,20 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { createConversation, createMessage } from "../services/conversationService";
 import "../styles/LearningWorkspace.css";
 
 const recentChats = [
   {
     label: "Today",
-    items: ["Ipsum Lorem", "Ipsum Lorem"],
+    items: ["Gradient descent confusion", "RAG evaluation questions"],
   },
   {
     label: "Yesterday",
-    items: ["Ipsum Lorem", "Ipsum Lorem"],
+    items: ["Python decorator review", "Model monitoring notes"],
   },
   {
     label: "Last week",
-    items: ["Ipsum Lorem", "Ipsum Lorem"]
+    items: ["FastAPI readiness probes", "Postgres vector search"],
   },
 ];
 
@@ -32,6 +34,62 @@ const calendarDays = [
 ];
 
 function LearningWorkspace() {
+  const [conversationId, setConversationId] = useState(null);
+
+  const [chatMessages, setChatMessages] = useState([
+    {
+      id: "mock-user-1",
+      role: "user",
+      content: "I’m stuck on the assignment. I don’t know where to start.",
+    },
+    {
+      id: "mock-assistant-1",
+      role: "assistant",
+      content:
+        "Let’s slow it down. What part feels unclear: the instructions, the code structure, or the concept being tested?",
+    },
+  ]);
+
+  const [inputValue, setInputValue] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function handleSendMessage(event) {
+    event.preventDefault();
+
+    const trimmedMessage = inputValue.trim();
+
+    if (!trimmedMessage) {
+      return;
+    }
+
+    try {
+      setIsSending(true);
+      setErrorMessage("");
+
+      let data;
+
+      if (conversationId) {
+        data = await createMessage(conversationId, trimmedMessage);
+      } else {
+        data = await createConversation(trimmedMessage);
+        setConversationId(data.conversation.id);
+      }
+
+      setChatMessages((currentMessages) => [
+        ...currentMessages,
+        data.userMessage,
+        data.assistantMessage,
+      ]);
+
+      setInputValue("");
+    } catch (error) {
+      setErrorMessage(error.message || "Unable to send message.");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   return (
     <main className="workspace-page">
       <aside className="workspace-sidebar">
@@ -60,9 +118,11 @@ function LearningWorkspace() {
             </section>
           ))}
         </div>
+
         <Link className="workspace-logout-link" to="/">
           Log out
         </Link>
+
         <div className="student-profile">
           <div className="student-avatar">J</div>
           <div>
@@ -85,7 +145,7 @@ function LearningWorkspace() {
             <Link className="workspace-dashboard-link" to="/student-dashboard">
               Dashboard
             </Link>
-          </div>  
+          </div>
         </header>
 
         <section className="welcome-card">
@@ -106,7 +166,12 @@ function LearningWorkspace() {
 
           <div className="prompt-grid">
             {suggestedPrompts.map((prompt) => (
-              <button className="prompt-card" key={prompt}>
+              <button
+                className="prompt-card"
+                key={prompt}
+                type="button"
+                onClick={() => setInputValue(prompt)}
+              >
                 {prompt}
               </button>
             ))}
@@ -114,22 +179,34 @@ function LearningWorkspace() {
         </section>
 
         <section className="chat-preview">
-          <div className="message student-message">
-            <p>I’m stuck on the assignment. I don’t know where to start.</p>
-          </div>
-
-          <div className="message tutor-message">
-            <p>
-              Let’s slow it down. What part feels unclear: the instructions, the
-              code structure, or the concept being tested?
-            </p>
-          </div>
+          {chatMessages.map((message) => (
+            <div
+              className={`message ${
+                message.role === "user" ? "student-message" : "tutor-message"
+              }`}
+              key={message.id}
+            >
+              <p>{message.content}</p>
+            </div>
+          ))}
         </section>
 
-        <form className="chat-input-bar">
-          <input type="text" placeholder="Ask about your lesson..." />
-          <button type="button">Send</button>
+        <form className="chat-input-bar" onSubmit={handleSendMessage}>
+          <input
+            type="text"
+            placeholder="Ask about your lesson..."
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+          />
+
+          <button type="submit" disabled={isSending}>
+            {isSending ? "Sending..." : "Send"}
+          </button>
         </form>
+
+        {errorMessage && (
+          <p className="workspace-error-message">{errorMessage}</p>
+        )}
       </section>
 
       <aside className="study-panel">
