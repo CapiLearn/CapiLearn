@@ -40,22 +40,19 @@ const calendarDays = [
   "26", "27", "28", "29", "30", "31", "",
 ];
 
+const initialChatMessages = [
+  {
+    id: "mock-assistant-welcome",
+    role: "assistant",
+    content:
+      "Hi, I’m Capi. What lesson, assignment, or concept would you like help thinking through?",
+  },
+];
+
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
 
-  const [chatMessages, setChatMessages] = useState([
-    {
-      id: "mock-user-1",
-      role: "user",
-      content: "I’m stuck on the assignment. I don’t know where to start.",
-    },
-    {
-      id: "mock-assistant-1",
-      role: "assistant",
-      content:
-        "Let’s slow it down. What part feels unclear: the instructions, the code structure, or the concept being tested?",
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState(initialChatMessages);
 
   //State variables
 
@@ -125,6 +122,13 @@ function LearningWorkspace() {
     }
   }
 
+  function handleNewConversation() {
+    setConversationId(null);
+    setChatMessages([...initialChatMessages]);
+    setInputValue("");
+    setErrorMessage("");
+  }
+
   async function handleSelectConversation(selectedConversationId) {
     try {
       setIsLoadingMessages(true);
@@ -149,7 +153,13 @@ function LearningWorkspace() {
           <span>CapiLearn</span>
         </div>
 
-        <button className="new-chat-button">+ New conversation</button>
+        <button
+          className="new-chat-button"
+          type="button"
+          onClick={handleNewConversation}
+        >
+          + New conversation
+        </button>
 
         <div className="search-box">
           <span>⌕</span>
