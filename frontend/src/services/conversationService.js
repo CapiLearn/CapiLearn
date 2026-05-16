@@ -3,6 +3,8 @@ const API_BASE_URL = "http://localhost:8000";
 // Set to true while backend branch is unavailable.
 // Change to false when backend is running locally.
 const USE_MOCK_API = true;
+const mockConversations = [];
+const mockMessagesByConversationId = {};
 
 const DEV_USER_HEADERS = {
   "X-User-Id": "00000000-0000-0000-0000-000000000001",
@@ -25,28 +27,37 @@ async function mockCreateConversation(content) {
   const conversationId = createMockId("conversation");
   const timestamp = createMockTimestamp();
 
+  const conversation = {
+    id: conversationId,
+    title: content,
+    updatedAt: timestamp,
+  };
+
+  const userMessage = {
+    id: createMockId("user-message"),
+    conversationId,
+    role: "user",
+    content,
+    status: "completed",
+    createdAt: timestamp,
+  };
+
+  const assistantMessage = {
+    id: createMockId("assistant-message"),
+    conversationId,
+    role: "assistant",
+    content: createMockAssistantReply(content),
+    status: "completed",
+    createdAt: createMockTimestamp(),
+  };
+
+  mockConversations.unshift(conversation);
+  mockMessagesByConversationId[conversationId] = [userMessage, assistantMessage];
+
   return {
-    conversation: {
-      id: conversationId,
-      title: content,
-      updatedAt: timestamp,
-    },
-    userMessage: {
-      id: createMockId("user-message"),
-      conversationId,
-      role: "user",
-      content,
-      status: "completed",
-      createdAt: timestamp,
-    },
-    assistantMessage: {
-      id: createMockId("assistant-message"),
-      conversationId,
-      role: "assistant",
-      content: createMockAssistantReply(content),
-      status: "completed",
-      createdAt: createMockTimestamp(),
-    },
+    conversation,
+    userMessage,
+    assistantMessage,
     finishReason: "mock",
     blockedReason: null,
   };
@@ -55,30 +66,54 @@ async function mockCreateConversation(content) {
 async function mockCreateMessage(conversationId, content) {
   const timestamp = createMockTimestamp();
 
+  const userMessage = {
+    id: createMockId("user-message"),
+    conversationId,
+    role: "user",
+    content,
+    status: "completed",
+    createdAt: timestamp,
+  };
+
+  const assistantMessage = {
+    id: createMockId("assistant-message"),
+    conversationId,
+    role: "assistant",
+    content: createMockAssistantReply(content),
+    status: "completed",
+    createdAt: createMockTimestamp(),
+  };
+
+  if (!mockMessagesByConversationId[conversationId]) {
+    mockMessagesByConversationId[conversationId] = [];
+  }
+
+  mockMessagesByConversationId[conversationId].push(userMessage, assistantMessage);
+
+  const conversation = mockConversations.find(
+    (item) => item.id === conversationId
+  );
+
+  if (conversation) {
+    conversation.updatedAt = createMockTimestamp();
+  }
+
   return {
-    conversation: {
+    conversation: conversation || {
       id: conversationId,
       title: null,
-      updatedAt: timestamp,
+      updatedAt: createMockTimestamp(),
     },
-    userMessage: {
-      id: createMockId("user-message"),
-      conversationId,
-      role: "user",
-      content,
-      status: "completed",
-      createdAt: timestamp,
-    },
-    assistantMessage: {
-      id: createMockId("assistant-message"),
-      conversationId,
-      role: "assistant",
-      content: createMockAssistantReply(content),
-      status: "completed",
-      createdAt: createMockTimestamp(),
-    },
+    userMessage,
+    assistantMessage,
     finishReason: "mock",
     blockedReason: null,
+  };
+}
+
+async function mockListMessages(conversationId) {
+  return {
+    messages: mockMessagesByConversationId[conversationId] || [],
   };
 }
 
@@ -105,11 +140,10 @@ async function handleResponse(response) {
 
   return response.json();
 }
-
 export async function listConversations() {
   if (USE_MOCK_API) {
     return {
-      conversations: [],
+      conversations: [...mockConversations],
     };
   }
 
@@ -122,7 +156,6 @@ export async function listConversations() {
 
   return handleResponse(response);
 }
-
 export async function createConversation(content) {
   if (USE_MOCK_API) {
     return mockCreateConversation(content);
@@ -144,9 +177,7 @@ export async function createConversation(content) {
 
 export async function listMessages(conversationId) {
   if (USE_MOCK_API) {
-    return {
-      messages: [],
-    };
+    return mockListMessages(conversationId);
   }
 
   const response = await fetch(
