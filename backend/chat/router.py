@@ -6,8 +6,8 @@ from backend.chat.dependencies import ChatServiceDep, get_current_user
 from backend.chat.schemas import (
     ConversationListResponse,
     MessageListResponse,
-    SendMessageResponse,
     SendMessageRequest,
+    SendMessageResponse,
 )
 
 router = APIRouter(

@@ -8,7 +8,6 @@ from sqlalchemy.orm import DeclarativeBase
 
 from backend.core.config import settings
 
-
 POSTGRES_INDEXES_NAMING_CONVENTION = {
     "ix": "%(column_0_label)s_idx",
     "uq": "%(table_name)s_%(column_0_name)s_key",
