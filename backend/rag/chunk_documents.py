@@ -192,7 +192,8 @@ def chunk_documents(
 
     english_documents = [doc for doc in documents if is_english_source(doc)]
     print(
-        f"Selected {len(english_documents)} English document(s) (filtered by '/en/' in source_path)."
+        f"Selected {len(english_documents)} English document(s) "
+        "(filtered by '/en/' in source_path)."
     )
 
     all_chunks: list[dict] = []

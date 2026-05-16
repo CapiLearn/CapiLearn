@@ -15,7 +15,6 @@ This module does not:
 """
 
 from retriever import (
-    format_context,
     get_collection,
     get_embedding_model,
     retrieve_context,
@@ -99,9 +98,7 @@ def run_evaluation(
     model = get_embedding_model(model_name)
     collection = get_collection(persist_path, collection_name)
 
-    print(
-        f"\nRunning retrieval evaluation — {len(questions)} question(s), top_k={top_k}\n"
-    )
+    print(f"\nRunning retrieval evaluation — {len(questions)} question(s), top_k={top_k}\n")
 
     for question in questions:
         results = retrieve_context(question, collection, model, top_k=top_k)
