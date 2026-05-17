@@ -16,7 +16,7 @@ The goal is to create a more engaging and ethical homework help experience that 
     - React.js
     - python
     - LLM
-    - NeMo guardrails
+    - in-repo policy guardrails
     - RAG
     - Postgres DB with VectorDB extension
 
@@ -64,8 +64,9 @@ frontend/
 1. Install Python dependencies:
 
     ```bash
-    uv sync --all-groups
+    uv sync
     ```
+
 
 2. Create a local environment file:
 
@@ -76,10 +77,13 @@ frontend/
     The default local database URL is:
 
     ```bash
-    postgresql+psycopg://capilearn:capilearn@localhost:5432/capilearn
+    postgresql+asyncpg://capilearn:capilearn@localhost:55432/capilearn
     ```
 
-    If port `5432` is already in use, set `POSTGRES_PORT` in `.env` and update
+    If you already have a local `.env`, change the database URL prefix from
+    `postgresql+psycopg://` to `postgresql+asyncpg://`.
+
+    If port `55432` is already in use, set `POSTGRES_PORT` in `.env` and update
     the port in `DATABASE_URL` to match.
 
 3. Configure LLM access in `.env`.
@@ -90,9 +94,9 @@ frontend/
     OPENROUTER_API_KEY=...
     LLM_MODEL=openrouter/openai/gpt-4o-mini
     LLM_GUARDRAILS_ENABLED=true
-    LLM_GUARDRAILS_CONFIG_PATH=backend/llm/guardrails/default
-    LLM_GUARDRAILS_MODEL_ENGINE=litellm
-    LLM_GUARDRAILS_MODEL=openrouter/openai/gpt-4o-mini
+    LLM_INPUT_GUARDRAIL_MODE=policy
+    LLM_OUTPUT_GUARDRAIL_MODE=policy
+    LLM_GUARDRAILS_JUDGE_MODEL=openrouter/openai/gpt-4o-mini
     ```
 
 4. Start Postgres with pgvector:
