@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     environment: str = "local"
     api_prefix: str = "/api"
     database_url: str = Field(
-        default="postgresql+psycopg://capilearn:capilearn@localhost:5432/capilearn",
+        default="postgresql+asyncpg://capilearn:capilearn@localhost:5432/capilearn",
         validation_alias="DATABASE_URL",
     )
     cors_origins: list[str] = Field(default_factory=list)

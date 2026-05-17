@@ -77,10 +77,13 @@ frontend/
     The default local database URL is:
 
     ```bash
-    postgresql+psycopg://capilearn:capilearn@localhost:5432/capilearn
+    postgresql+asyncpg://capilearn:capilearn@localhost:55432/capilearn
     ```
 
-    If port `5432` is already in use, set `POSTGRES_PORT` in `.env` and update
+    If you already have a local `.env`, change the database URL prefix from
+    `postgresql+psycopg://` to `postgresql+asyncpg://`.
+
+    If port `55432` is already in use, set `POSTGRES_PORT` in `.env` and update
     the port in `DATABASE_URL` to match.
 
 3. Configure LLM access in `.env`.

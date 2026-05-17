@@ -7,7 +7,7 @@ compose.yaml
 SQLAlchemy
 
 # Database connector
-psycopg3
+asyncpg
 
 # migrations
 alembic
