@@ -122,6 +122,20 @@ body {
   background: #f1ebd4;
 }
 
+.active-conversation,
+.active-conversation:hover {
+  background: #dfe8c1;
+  color: #557c38;
+  font-weight: 900;
+}
+
+.sidebar-helper-text {
+  margin: 8px 10px;
+  color: #867a69;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .student-profile {
   border-top: 1px solid #e0d8bd;
   padding-top: 18px;
@@ -298,6 +312,13 @@ body {
   margin-bottom: 22px;
 }
 
+.workspace-loading-message {
+  margin: 0;
+  color: #867a69;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .message {
   max-width: 76%;
   border-radius: 18px;
@@ -356,6 +377,18 @@ body {
   padding: 12px 22px;
   font-weight: 800;
   cursor: pointer;
+}
+
+.workspace-error-message {
+  margin: 12px 0 0;
+  color: #8a3d21;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chat-input-bar button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 /* Right panel */

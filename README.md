@@ -86,9 +86,22 @@ frontend/
     If port `55432` is already in use, set `POSTGRES_PORT` in `.env` and update
     the port in `DATABASE_URL` to match.
 
+    If you already have a local `.env`, make sure it also allows the Vite
+    frontend origin for browser requests:
+
+    ```env
+    CORS_ORIGINS=["http://localhost:5173","http://127.0.0.1:5173"]
+    ```
+
+    Restart Uvicorn after changing `CORS_ORIGINS`; the FastAPI settings are
+    loaded when the server starts.
+
 3. Configure LLM access in `.env`.
 
-    For OpenRouter through LiteLLM, use the OpenRouter provider prefix:
+    For OpenRouter through LiteLLM, set `OPENROUTER_API_KEY` and prefix model
+    names with `openrouter/`. The prefix tells LiteLLM to route the request
+    through OpenRouter; without it, the model can be sent to the wrong provider
+    or fail provider resolution.
 
     ```env
     OPENROUTER_API_KEY=...
@@ -98,6 +111,9 @@ frontend/
     LLM_OUTPUT_GUARDRAIL_MODE=policy
     LLM_GUARDRAILS_JUDGE_MODEL=openrouter/openai/gpt-4o-mini
     ```
+
+    Use the same `openrouter/` prefix for any other OpenRouter model, for
+    example `openrouter/anthropic/claude-3.5-sonnet`.
 
 4. Start Postgres with pgvector:
 
@@ -150,6 +166,9 @@ frontend/
     ```bash
     npm run dev
     ```
+
+    The frontend runs on `http://localhost:5173` by default. That origin must be
+    present in the backend `.env` `CORS_ORIGINS` value.
 
 ## Common Development Commands
 
