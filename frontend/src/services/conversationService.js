@@ -1,8 +1,8 @@
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "http://localhost:8001";
 
 // Set to true while backend branch is unavailable.
 // Change to false when backend is running locally.
-const USE_MOCK_API = true;
+const USE_MOCK_API = false;
 const mockConversations = [];
 const mockMessagesByConversationId = {};
 
