@@ -2,12 +2,14 @@ from typing import Any
 
 from litellm import acompletion
 
+from backend.core.observability import elapsed_ms, timer_start
 from backend.llm.config import llm_settings
 from backend.llm.schemas import ChatMessage, ProviderResponse
 
 
 class LiteLLMProvider:
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
+        started_at = timer_start()
         response = await acompletion(**_completion_kwargs(messages))
 
         choice = _first_choice(response)
@@ -19,6 +21,7 @@ class LiteLLMProvider:
             prompt_tokens=getattr(usage, "prompt_tokens", None),
             completion_tokens=getattr(usage, "completion_tokens", None),
             total_tokens=getattr(usage, "total_tokens", None),
+            latency_ms=elapsed_ms(started_at),
             raw_response=_serialize_response(response),
         )
 

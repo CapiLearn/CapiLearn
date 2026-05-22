@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from uuid import UUID, uuid4
 
 import pytest
@@ -231,7 +232,8 @@ class RepairableOutputGuardrails(AllowGuardrails):
 
 
 @pytest.mark.asyncio
-async def test_llm_service_adds_retrieved_context_to_user_message() -> None:
+async def test_llm_service_adds_retrieved_context_to_user_message(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -251,6 +253,11 @@ async def test_llm_service_adds_retrieved_context_to_user_message() -> None:
     assert "Biology Notes - doc_1 - page 3" in provider.messages[-1].content
     assert "<retrieved_context>" in provider.messages[-1].content
     assert "<student_message>\nWhat is photosynthesis?" in provider.messages[-1].content
+    assert _events(caplog.records, "guardrail.check.completed")
+    retrieval_events = _events(caplog.records, "rag.retrieve.completed")
+    assert retrieval_events[-1].chunk_count == 1
+    assert "Relevant note for" not in caplog.text
+    assert _events(caplog.records, "llm.generation.completed")
 
 
 @pytest.mark.asyncio
@@ -342,7 +349,8 @@ async def test_llm_service_complete_starts_retrieval_before_input_guardrail_fini
 
 
 @pytest.mark.asyncio
-async def test_llm_service_blocks_unsafe_input_before_provider_call() -> None:
+async def test_llm_service_blocks_unsafe_input_before_provider_call(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -356,6 +364,9 @@ async def test_llm_service_blocks_unsafe_input_before_provider_call() -> None:
     assert result.content == "Input blocked."
     assert provider.messages == []
     assert not provider.complete_called
+    guardrail_events = _events(caplog.records, "guardrail.check.completed")
+    assert guardrail_events[-1].guardrail_stage == "input"
+    assert guardrail_events[-1].blocked is True
 
 
 @pytest.mark.asyncio
@@ -438,7 +449,8 @@ async def test_llm_service_can_skip_output_guardrail() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_service_repairs_blocked_direct_answer_output() -> None:
+async def test_llm_service_repairs_blocked_direct_answer_output(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
     provider = SequenceProvider(
         [
             "The direct answer is 42.",
@@ -462,6 +474,9 @@ async def test_llm_service_repairs_blocked_direct_answer_output() -> None:
     )
     assert len(provider.calls) == 2
     assert "Draft assistant response to repair" in provider.calls[1][-1].content
+    repair_events = _events(caplog.records, "chat.repair.completed")
+    assert repair_events
+    assert repair_events[-1].repair_passed is True
 
 
 @pytest.mark.asyncio
@@ -892,6 +907,10 @@ def test_policy_output_mode_without_judge_builds_noop_guardrails(monkeypatch) ->
     monkeypatch.setattr(llm_service_module, "llm_settings", settings)
 
     assert isinstance(llm_service_module._build_output_guardrails(), NoopGuardrailsProvider)
+
+
+def _events(records, event: str):
+    return [record for record in records if getattr(record, "event", None) == event]
 
 
 def _request(content: str) -> LLMRequest:

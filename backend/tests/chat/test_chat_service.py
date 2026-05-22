@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -25,7 +26,8 @@ from backend.llm.schemas import (
 
 
 @pytest.mark.asyncio
-async def test_create_conversation_message_completes_assistant_message() -> None:
+async def test_create_conversation_message_completes_assistant_message(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.chat.service")
     user = CurrentUser(id=uuid4())
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
@@ -72,9 +74,17 @@ async def test_create_conversation_message_completes_assistant_message() -> None
             "metadata": {"source_id": "doc_1", "title": "Biology Notes"},
         }
     ]
-    assert repository.messages[0].extra_metadata == {}
+    request_id = repository.messages[0].extra_metadata["requestId"]
+    assert request_id
+    assert repository.messages[-1].extra_metadata["requestId"] == request_id
+    assert repository.messages[-1].latency_ms is not None
+    assert repository.messages[-1].latency_ms >= 0
     assert repository.messages[-1].retrieved_context in (None, [])
     assert repository.messages[-1].citations in (None, [])
+    assert _events(caplog.records, "chat.turn.started")
+    completed_events = _events(caplog.records, "chat.turn.completed")
+    assert completed_events
+    assert completed_events[-1].assistant_message_id == str(repository.messages[-1].id)
 
 
 @pytest.mark.asyncio
@@ -255,7 +265,8 @@ async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_blocked_input_returns_blocked_assistant_message() -> None:
+async def test_blocked_input_returns_blocked_assistant_message(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.chat.service")
     user = CurrentUser(id=uuid4())
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
@@ -282,6 +293,8 @@ async def test_blocked_input_returns_blocked_assistant_message() -> None:
     assert response.assistant_message.content == "Input blocked."
     assert response.blocked_reason == "Input blocked."
     assert repository.messages[-1].blocked_reason == "Input blocked."
+    assert repository.messages[-1].latency_ms is not None
+    assert _events(caplog.records, "chat.turn.blocked")
     assert session.commit_count == 2
 
 
@@ -320,7 +333,8 @@ async def test_blocked_output_returns_blocked_assistant_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_exception_marks_assistant_failed_and_raises_api_error() -> None:
+async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.chat.service")
     user = CurrentUser(id=uuid4())
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
@@ -337,6 +351,10 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error() -> No
     assert exc_info.value.code == "llm_unavailable"
     assert repository.messages[-1].status == MessageStatus.FAILED.value
     assert repository.messages[-1].error == {"type": "RuntimeError"}
+    assert repository.messages[-1].latency_ms is not None
+    failed_events = _events(caplog.records, "chat.turn.failed")
+    assert failed_events
+    assert failed_events[-1].error_type == "RuntimeError"
     assert session.commit_count == 2
 
 
@@ -464,6 +482,10 @@ class FakeLLMService:
 class FailingLLMService:
     async def complete(self, request):
         raise RuntimeError("provider unavailable")
+
+
+def _events(records, event: str):
+    return [record for record in records if getattr(record, "event", None) == event]
 
 
 def _conversation(
