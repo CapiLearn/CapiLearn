@@ -196,6 +196,104 @@ async def test_cost_component_repository_applies_limit_and_offset() -> None:
 
 
 @pytest.mark.asyncio
+async def test_usage_metrics_uses_component_tokens_plus_legacy_fallback() -> None:
+    session = SequencedSession(
+        execute_results=[
+            [
+                (
+                    2,
+                    5,
+                    4,
+                    1,
+                    2,
+                    Decimal("1830.2"),
+                )
+            ],
+        ],
+        scalar_results=[
+            3,
+            Decimal("1.2"),
+            12,
+            7,
+        ],
+    )
+    repository = AdminUsageRepository()
+
+    metrics = await repository.get_usage_metrics(
+        session,
+        range_start=datetime(2026, 5, 1, tzinfo=UTC),
+        range_end=datetime(2026, 5, 2, tzinfo=UTC),
+    )
+
+    assert metrics.total_users == 2
+    assert metrics.total_conversations == 3
+    assert metrics.user_queries == 5
+    assert metrics.assistant_responses == 4
+    assert metrics.failed_responses == 1
+    assert metrics.blocked_responses == 2
+    assert metrics.total_tokens == 19
+    assert metrics.estimated_cost_usd == Decimal("1.2")
+    assert metrics.average_latency_ms == Decimal("1830.2")
+    assert len(session.scalar_statements) == 4
+
+
+@pytest.mark.asyncio
+async def test_daily_usage_uses_pipeline_tokens_and_zeroes_nulls() -> None:
+    session = SequencedSession(
+        execute_results=[
+            [
+                (date(2026, 5, 1), 2, 1),
+                (date(2026, 5, 2), 0, 1),
+            ],
+            [
+                (date(2026, 5, 1), 12),
+                (date(2026, 5, 3), 5),
+                (date(2026, 5, 4), None),
+            ],
+            [
+                (date(2026, 5, 1), 7),
+                (date(2026, 5, 2), None),
+            ],
+        ],
+    )
+    repository = AdminUsageRepository()
+
+    daily_usage = await repository.list_daily_usage(
+        session,
+        range_start=datetime(2026, 5, 1, tzinfo=UTC),
+        range_end=datetime(2026, 5, 5, tzinfo=UTC),
+    )
+
+    assert daily_usage == [
+        DailyUsageAggregate(
+            date=date(2026, 5, 1),
+            user_queries=2,
+            assistant_responses=1,
+            total_tokens=19,
+        ),
+        DailyUsageAggregate(
+            date=date(2026, 5, 2),
+            user_queries=0,
+            assistant_responses=1,
+            total_tokens=0,
+        ),
+        DailyUsageAggregate(
+            date=date(2026, 5, 3),
+            user_queries=0,
+            assistant_responses=0,
+            total_tokens=5,
+        ),
+        DailyUsageAggregate(
+            date=date(2026, 5, 4),
+            user_queries=0,
+            assistant_responses=0,
+            total_tokens=0,
+        ),
+    ]
+    assert len(session.execute_statements) == 3
+
+
+@pytest.mark.asyncio
 async def test_usage_summary_rejects_non_iso_calendar_dates() -> None:
     service = AdminUsageService(
         session=object(),
@@ -333,3 +431,35 @@ class CapturingScalarSession:
 class EmptyScalarResult:
     def all(self):
         return []
+
+
+class SequencedSession:
+    def __init__(
+        self,
+        *,
+        execute_results: list[list[tuple]] | None = None,
+        scalar_results: list | None = None,
+    ) -> None:
+        self.execute_results = execute_results or []
+        self.scalar_results = scalar_results or []
+        self.execute_statements = []
+        self.scalar_statements = []
+
+    async def execute(self, statement):
+        self.execute_statements.append(statement)
+        return SequencedExecuteResult(self.execute_results.pop(0))
+
+    async def scalar(self, statement):
+        self.scalar_statements.append(statement)
+        return self.scalar_results.pop(0)
+
+
+class SequencedExecuteResult:
+    def __init__(self, rows: list[tuple]) -> None:
+        self.rows = rows
+
+    def one(self):
+        return self.rows[0]
+
+    def all(self):
+        return self.rows
