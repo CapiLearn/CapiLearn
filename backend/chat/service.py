@@ -22,7 +22,6 @@ from backend.chat.schemas import (
 from backend.core.exceptions import ApiError
 from backend.core.observability import (
     LLMTraceSink,
-    NoopLLMTraceSink,
     elapsed_ms,
     get_request_id,
     log_event,
@@ -57,7 +56,7 @@ class ChatService:
         self._current_user = current_user
         self._llm_service = llm_service
         self._repository = repository or ChatRepository()
-        self._trace_sink = trace_sink or NoopLLMTraceSink()
+        self._trace_sink = trace_sink or LLMTraceSink()
 
     async def list_conversations(self) -> ConversationListResponse:
         conversations = await self._repository.list_conversations(

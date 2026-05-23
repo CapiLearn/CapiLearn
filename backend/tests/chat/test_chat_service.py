@@ -14,6 +14,7 @@ from backend.chat.schemas import (
 )
 from backend.chat.service import ChatService
 from backend.core.exceptions import ApiError
+from backend.core.observability import LLMTraceSink
 from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
@@ -359,6 +360,86 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog)
 
 
 @pytest.mark.asyncio
+async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="backend.core.observability.tracing")
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    repository = FakeChatRepository(user_id=user.id)
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=FakeLLMService(
+            LLMResult(
+                content="Cells are small units.",
+                provider_response=ProviderResponse(content="Cells are small units."),
+            )
+        ),
+        repository=repository,
+        trace_sink=FailingTraceSink(),
+    )
+
+    response = await service.create_conversation_message("Explain cells.")
+
+    assert response.assistant_message.status == MessageStatus.COMPLETED
+    assert repository.messages[-1].status == MessageStatus.COMPLETED.value
+    assert repository.messages[-1].content == "Cells are small units."
+    assert session.commit_count == 2
+    assert _events(caplog.records, "llm.trace_sink.failed")
+
+
+@pytest.mark.asyncio
+async def test_trace_sink_failure_does_not_block_blocked_message() -> None:
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    repository = FakeChatRepository(user_id=user.id)
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=FakeLLMService(
+            LLMResult(
+                content="Input blocked.",
+                input_guardrail_result=GuardrailResult(
+                    blocked=True,
+                    reason="Input blocked.",
+                    rail="input",
+                ),
+            )
+        ),
+        repository=repository,
+        trace_sink=FailingTraceSink(),
+    )
+
+    response = await service.create_conversation_message("unsafe")
+
+    assert response.assistant_message.status == MessageStatus.BLOCKED
+    assert repository.messages[-1].status == MessageStatus.BLOCKED.value
+    assert repository.messages[-1].blocked_reason == "Input blocked."
+    assert session.commit_count == 2
+
+
+@pytest.mark.asyncio
+async def test_trace_sink_failure_preserves_llm_unavailable_error() -> None:
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    repository = FakeChatRepository(user_id=user.id)
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=FailingLLMService(),
+        repository=repository,
+        trace_sink=FailingTraceSink(),
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.create_conversation_message("Explain cells.")
+
+    assert exc_info.value.code == "llm_unavailable"
+    assert repository.messages[-1].status == MessageStatus.FAILED.value
+    assert repository.messages[-1].error == {"type": "RuntimeError"}
+    assert session.commit_count == 2
+
+
+@pytest.mark.asyncio
 async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
     user = CurrentUser(id=uuid4())
     session = FakeSession()
@@ -482,6 +563,17 @@ class FakeLLMService:
 class FailingLLMService:
     async def complete(self, request):
         raise RuntimeError("provider unavailable")
+
+
+class FailingTraceSink(LLMTraceSink):
+    async def _start_chat_turn(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _record_error(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _finish_chat_turn(self, metadata):
+        raise RuntimeError("trace sink unavailable")
 
 
 def _events(records, event: str):

@@ -3,7 +3,6 @@ import logging
 
 from backend.core.observability import (
     LLMTraceSink,
-    NoopLLMTraceSink,
     elapsed_ms,
     log_event,
     timer_start,
@@ -60,7 +59,7 @@ class LLMService:
         self._input_guardrails = guardrails or input_guardrails or _build_input_guardrails()
         self._output_guardrails = guardrails or output_guardrails or _build_output_guardrails()
         self._retriever = retriever or EmptyRetrievalProvider()
-        self._trace_sink = trace_sink or NoopLLMTraceSink()
+        self._trace_sink = trace_sink or LLMTraceSink()
 
     async def complete(self, request: LLMRequest) -> LLMResult:
         retrieval_started_at = timer_start()

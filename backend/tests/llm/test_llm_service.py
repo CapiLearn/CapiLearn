@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
+from backend.core.observability import LLMTraceSink
 from backend.llm import provider as llm_provider_module
 from backend.llm import service as llm_service_module
 from backend.llm.config import (
@@ -261,6 +262,30 @@ async def test_llm_service_adds_retrieved_context_to_user_message(caplog) -> Non
 
 
 @pytest.mark.asyncio
+async def test_llm_service_trace_sink_failures_do_not_change_result(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="backend.core.observability.tracing")
+    provider = FakeProvider()
+    service = LLMService(
+        provider=provider,
+        guardrails=AllowGuardrails(),
+        retriever=FakeRetriever(),
+        trace_sink=FailingTraceSink(),
+    )
+
+    result = await service.complete(_request("What is photosynthesis?"))
+
+    assert result.content == "Plants turn light into energy."
+    assert result.retrieved_context[0].metadata["source_id"] == "doc_1"
+    assert provider.complete_called
+    failed_events = _events(caplog.records, "llm.trace_sink.failed")
+    assert {record.trace_operation for record in failed_events} >= {
+        "record_guardrail",
+        "record_retrieval",
+        "record_generation",
+    }
+
+
+@pytest.mark.asyncio
 async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
     provider = FakeProvider()
     service = LLMService(
@@ -477,6 +502,29 @@ async def test_llm_service_repairs_blocked_direct_answer_output(caplog) -> None:
     repair_events = _events(caplog.records, "chat.repair.completed")
     assert repair_events
     assert repair_events[-1].repair_passed is True
+
+
+@pytest.mark.asyncio
+async def test_llm_service_trace_sink_failures_do_not_block_repair_result() -> None:
+    provider = SequenceProvider(
+        [
+            "The direct answer is 42.",
+            "What is the first relationship you can write from the problem?",
+        ]
+    )
+    service = LLMService(
+        provider=provider,
+        guardrails=RepairableOutputGuardrails(),
+        retriever=FakeRetriever(),
+        trace_sink=FailingTraceSink(),
+    )
+
+    result = await service.complete(_request("Solve this homework problem."))
+
+    assert result.content == ("What is the first relationship you can write from the problem?")
+    assert not result.output_guardrail_result.blocked
+    assert result.output_guardrail_result.metadata["repairPassed"] is True
+    assert len(provider.calls) == 2
 
 
 @pytest.mark.asyncio
@@ -911,6 +959,20 @@ def test_policy_output_mode_without_judge_builds_noop_guardrails(monkeypatch) ->
 
 def _events(records, event: str):
     return [record for record in records if getattr(record, "event", None) == event]
+
+
+class FailingTraceSink(LLMTraceSink):
+    async def _record_guardrail(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _record_retrieval(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _record_generation(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _record_error(self, metadata):
+        raise RuntimeError("trace sink unavailable")
 
 
 def _request(content: str) -> LLMRequest:
