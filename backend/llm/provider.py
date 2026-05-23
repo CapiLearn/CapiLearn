@@ -4,13 +4,20 @@ from litellm import acompletion
 
 from backend.core.observability import elapsed_ms, timer_start
 from backend.llm.config import llm_settings
+from backend.llm.costing import current_generation_component_type, tracked_acompletion
 from backend.llm.schemas import ChatMessage, ProviderResponse
 
 
 class LiteLLMProvider:
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
         started_at = timer_start()
-        response = await acompletion(**_completion_kwargs(messages))
+        kwargs = _completion_kwargs(messages)
+        response = await tracked_acompletion(
+            component_type=current_generation_component_type(),
+            configured_model=llm_settings.model,
+            completion=acompletion,
+            **kwargs,
+        )
 
         choice = _first_choice(response)
         usage = getattr(response, "usage", None)

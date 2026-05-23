@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.chat.models import Conversation, Message
+from backend.chat.models import Conversation, LLMCostComponent, Message
 from backend.chat.schemas import MessageRole, MessageStatus
 
 
@@ -28,6 +29,31 @@ class DailyUsageAggregate:
     user_queries: int
     assistant_responses: int
     total_tokens: int
+
+
+@dataclass(frozen=True)
+class CostComponentAggregate:
+    id: UUID
+    user_id: UUID
+    conversation_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID
+    component_order: int
+    component_type: str
+    attempt_index: int
+    provider: str | None
+    configured_model: str | None
+    response_model: str | None
+    finish_reason: str | None
+    status: str
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    estimated_cost_usd: Decimal | None
+    latency_ms: int | None
+    error_type: str | None
+    metadata: dict
+    created_at: datetime
 
 
 class AdminUsageRepository:
@@ -75,7 +101,6 @@ class AdminUsageRepository:
                 0,
             ),
             func.coalesce(func.sum(Message.total_tokens), 0),
-            func.coalesce(func.sum(Message.estimated_cost_usd), Decimal("0")),
             func.avg(Message.latency_ms),
         ).where(
             Message.created_at >= range_start,
@@ -89,6 +114,14 @@ class AdminUsageRepository:
         )
         total_conversations = await session.scalar(conversation_statement)
 
+        cost_statement = select(
+            func.coalesce(func.sum(LLMCostComponent.estimated_cost_usd), Decimal("0"))
+        ).where(
+            LLMCostComponent.created_at >= range_start,
+            LLMCostComponent.created_at < range_end,
+        )
+        estimated_cost_usd = await session.scalar(cost_statement)
+
         return UsageMetricsAggregate(
             total_users=int(row[0] or 0),
             total_conversations=int(total_conversations or 0),
@@ -97,8 +130,8 @@ class AdminUsageRepository:
             failed_responses=int(row[3] or 0),
             blocked_responses=int(row[4] or 0),
             total_tokens=int(row[5] or 0),
-            estimated_cost_usd=Decimal(row[6] or 0),
-            average_latency_ms=row[7],
+            estimated_cost_usd=Decimal(estimated_cost_usd or 0),
+            average_latency_ms=row[6],
         )
 
     async def list_daily_usage(
@@ -137,6 +170,67 @@ class AdminUsageRepository:
                 user_queries=int(row[1] or 0),
                 assistant_responses=int(row[2] or 0),
                 total_tokens=int(row[3] or 0),
+            )
+            for row in rows
+        ]
+
+    async def list_cost_components(
+        self,
+        session: AsyncSession,
+        *,
+        range_start: datetime,
+        range_end: datetime,
+        conversation_id: UUID | None = None,
+        assistant_message_id: UUID | None = None,
+        component_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[CostComponentAggregate]:
+        statement = select(LLMCostComponent).where(
+            LLMCostComponent.created_at >= range_start,
+            LLMCostComponent.created_at < range_end,
+        )
+        if conversation_id is not None:
+            statement = statement.where(LLMCostComponent.conversation_id == conversation_id)
+        if assistant_message_id is not None:
+            statement = statement.where(
+                LLMCostComponent.assistant_message_id == assistant_message_id
+            )
+        if component_type is not None:
+            statement = statement.where(LLMCostComponent.component_type == component_type)
+        statement = (
+            statement.order_by(
+                LLMCostComponent.created_at.asc(),
+                LLMCostComponent.component_order.asc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+
+        rows = (await session.scalars(statement)).all()
+        return [
+            CostComponentAggregate(
+                id=row.id,
+                user_id=row.user_id,
+                conversation_id=row.conversation_id,
+                user_message_id=row.user_message_id,
+                assistant_message_id=row.assistant_message_id,
+                component_order=row.component_order,
+                component_type=row.component_type,
+                attempt_index=row.attempt_index,
+                provider=row.provider,
+                configured_model=row.configured_model,
+                response_model=row.response_model,
+                finish_reason=row.finish_reason,
+                status=row.status,
+                prompt_tokens=row.prompt_tokens,
+                completion_tokens=row.completion_tokens,
+                total_tokens=row.total_tokens,
+                estimated_cost_usd=row.estimated_cost_usd,
+                latency_ms=row.latency_ms,
+                error_type=row.error_type,
+                metadata=row.extra_metadata or {},
+                created_at=row.created_at,
             )
             for row in rows
         ]

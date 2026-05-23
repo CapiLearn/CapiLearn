@@ -19,11 +19,13 @@ from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
     GuardrailResult,
+    LLMCostComponent,
     LLMResult,
     ProviderResponse,
     RetrievalResult,
     RetrievedChunk,
 )
+from backend.llm.service import LLMServiceError
 
 
 @pytest.mark.asyncio
@@ -80,6 +82,7 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
     assert repository.messages[-1].extra_metadata["requestId"] == request_id
     assert repository.messages[-1].latency_ms is not None
     assert repository.messages[-1].latency_ms >= 0
+    assert repository.cost_components == []
     assert repository.messages[-1].retrieved_context in (None, [])
     assert repository.messages[-1].citations in (None, [])
     assert _events(caplog.records, "chat.turn.started")
@@ -147,6 +150,45 @@ async def test_create_message_uses_completed_history() -> None:
         ChatMessage(role=ChatRole.USER, content="What is a cell?"),
         ChatMessage(role=ChatRole.ASSISTANT, content="A cell is a basic unit of life."),
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_message_persists_llm_cost_components() -> None:
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    repository = FakeChatRepository(user_id=user.id)
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+            cost_components=[
+                LLMCostComponent(
+                    user_id=user.id,
+                    conversation_id=uuid4(),
+                    user_message_id=uuid4(),
+                    assistant_message_id=uuid4(),
+                    component_order=1,
+                    component_type="main_generation",
+                    status="completed",
+                    estimated_cost_usd="0.001000000000",
+                )
+            ],
+        )
+    )
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=llm_service,
+        repository=repository,
+    )
+
+    await service.create_conversation_message("Explain cells.")
+
+    assert repository.cost_components == llm_service.result.cost_components
+    assert (
+        repository.messages[-1].estimated_cost_usd
+        == llm_service.result.cost_components[0].estimated_cost_usd
+    )
 
 
 @pytest.mark.asyncio
@@ -360,6 +402,30 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog)
 
 
 @pytest.mark.asyncio
+async def test_llm_service_error_persists_failed_cost_components() -> None:
+    user = CurrentUser(id=uuid4())
+    session = FakeSession()
+    repository = FakeChatRepository(user_id=user.id)
+    llm_service = FailingCostedLLMService()
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=llm_service,
+        repository=repository,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.create_conversation_message("Explain cells.")
+
+    assert exc_info.value.code == "llm_unavailable"
+    assert repository.messages[-1].status == MessageStatus.FAILED.value
+    assert repository.messages[-1].error == {"type": "RuntimeError"}
+    assert repository.cost_components == llm_service.cost_components
+    assert repository.cost_components[0].assistant_message_id == repository.messages[-1].id
+    assert session.commit_count == 2
+
+
+@pytest.mark.asyncio
 async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="backend.core.observability.tracing")
     user = CurrentUser(id=uuid4())
@@ -488,6 +554,7 @@ class FakeChatRepository:
         self.user_id = user_id
         self.conversations = conversations or []
         self.messages = messages or []
+        self.cost_components = []
 
     async def create_conversation(self, session, *, user_id, title):
         conversation = _conversation(user_id=user_id, title=title)
@@ -531,6 +598,9 @@ class FakeChatRepository:
         self.messages.append(message)
         return message
 
+    async def create_llm_cost_components(self, session, *, components):
+        self.cost_components.extend(components)
+
 
 class ConflictingChatRepository(FakeChatRepository):
     async def create_message(
@@ -563,6 +633,29 @@ class FakeLLMService:
 class FailingLLMService:
     async def complete(self, request):
         raise RuntimeError("provider unavailable")
+
+
+class FailingCostedLLMService:
+    def __init__(self) -> None:
+        self.cost_components = []
+
+    async def complete(self, request):
+        self.cost_components = [
+            LLMCostComponent(
+                user_id=request.user_id,
+                conversation_id=request.conversation_id,
+                user_message_id=request.user_message_id,
+                assistant_message_id=request.assistant_message_id,
+                component_order=1,
+                component_type="main_generation",
+                status="failed",
+                error_type="RuntimeError",
+            )
+        ]
+        raise LLMServiceError(
+            RuntimeError("provider unavailable"),
+            cost_components=self.cost_components,
+        )
 
 
 class FailingTraceSink(LLMTraceSink):

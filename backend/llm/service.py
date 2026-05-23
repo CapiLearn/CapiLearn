@@ -8,6 +8,12 @@ from backend.core.observability import (
     timer_start,
 )
 from backend.llm.config import InputGuardrailMode, OutputGuardrailMode, llm_settings
+from backend.llm.costing import (
+    LLMCostRecorder,
+    cost_recorder_context,
+    generation_component_context,
+    guardrail_component_context,
+)
 from backend.llm.guardrails import (
     CompositeGuardrailsProvider,
     LLMJudgeGuardrailsProvider,
@@ -20,6 +26,7 @@ from backend.llm.schemas import (
     ChatMessage,
     GuardrailResult,
     GuardrailsProvider,
+    LLMCostComponent,
     LLMProvider,
     LLMRequest,
     LLMResult,
@@ -30,6 +37,18 @@ from backend.llm.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class LLMServiceError(Exception):
+    def __init__(
+        self,
+        original_exception: Exception,
+        *,
+        cost_components: list[LLMCostComponent],
+    ) -> None:
+        super().__init__(str(original_exception))
+        self.original_exception = original_exception
+        self.cost_components = cost_components
 
 
 class EmptyRetrievalProvider:
@@ -62,6 +81,25 @@ class LLMService:
         self._trace_sink = trace_sink or LLMTraceSink()
 
     async def complete(self, request: LLMRequest) -> LLMResult:
+        recorder = LLMCostRecorder(
+            user_id=str(request.user_id),
+            conversation_id=str(request.conversation_id),
+            user_message_id=str(request.user_message_id),
+            assistant_message_id=(
+                str(request.assistant_message_id) if request.assistant_message_id else None
+            ),
+        )
+        with cost_recorder_context(recorder):
+            try:
+                result = await self._complete(request)
+            except Exception as exc:
+                raise LLMServiceError(
+                    exc,
+                    cost_components=recorder.components,
+                ) from exc
+        return result.model_copy(update={"cost_components": recorder.components})
+
+    async def _complete(self, request: LLMRequest) -> LLMResult:
         retrieval_started_at = timer_start()
         retrieval_task = asyncio.create_task(
             self._retriever.retrieve(
@@ -153,10 +191,11 @@ class LLMService:
     ) -> tuple[GuardrailResult, ProviderResponse]:
         output_guardrail_started_at = timer_start()
         try:
-            output_result = await self._output_guardrails.check_output(
-                provider_response.content,
-                user_input=request.content,
-            )
+            with guardrail_component_context("output_guardrail"):
+                output_result = await self._output_guardrails.check_output(
+                    provider_response.content,
+                    user_input=request.content,
+                )
         except Exception as exc:
             await self._record_guardrail_error(
                 request=request,
@@ -186,10 +225,11 @@ class LLMService:
         )
         repair_guardrail_started_at = timer_start()
         try:
-            repair_result = await self._output_guardrails.check_output(
-                repair_response.content,
-                user_input=request.content,
-            )
+            with guardrail_component_context("output_repair_guardrail"):
+                repair_result = await self._output_guardrails.check_output(
+                    repair_response.content,
+                    user_input=request.content,
+                )
         except Exception as exc:
             await self._record_guardrail_error(
                 request=request,
@@ -228,7 +268,9 @@ class LLMService:
     ) -> ProviderResponse:
         started_at = timer_start()
         try:
-            provider_response = await self._provider.complete(messages)
+            component_type = "repair_generation" if stage == "repair" else "main_generation"
+            with generation_component_context(component_type):
+                provider_response = await self._provider.complete(messages)
         except Exception as exc:
             fields = {
                 **_request_event_fields(request),

@@ -2,15 +2,19 @@ import re
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.admin.repository import AdminUsageRepository, DailyUsageAggregate
 from backend.admin.schemas import (
     AdminUsageSummaryResponse,
+    CostComponentResponse,
+    CostComponentsResponse,
     DailyUsagePoint,
     UsageMetrics,
     UsageRange,
+    format_component_cost,
     format_cost,
 )
 from backend.core.exceptions import ApiError
@@ -74,6 +78,63 @@ class AdminUsageService:
                 to_date=usage_range.to_date,
                 aggregates=daily_usage,
             ),
+        )
+
+    async def list_cost_components(
+        self,
+        *,
+        from_date: str | None,
+        to_date: str | None,
+        conversation_id: UUID | None = None,
+        assistant_message_id: UUID | None = None,
+        component_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> CostComponentsResponse:
+        usage_range = self._resolve_range(from_date=from_date, to_date=to_date)
+        range_start = datetime.combine(usage_range.from_date, time.min, tzinfo=UTC)
+        range_end = datetime.combine(usage_range.to_date, time.min, tzinfo=UTC)
+        components = await self._repository.list_cost_components(
+            self._session,
+            range_start=range_start,
+            range_end=range_end,
+            conversation_id=conversation_id,
+            assistant_message_id=assistant_message_id,
+            component_type=component_type,
+            limit=limit,
+            offset=offset,
+        )
+        return CostComponentsResponse(
+            range=UsageRange(
+                from_date=usage_range.from_date,
+                to_date=usage_range.to_date,
+            ),
+            cost_components=[
+                CostComponentResponse(
+                    id=component.id,
+                    user_id=component.user_id,
+                    conversation_id=component.conversation_id,
+                    user_message_id=component.user_message_id,
+                    assistant_message_id=component.assistant_message_id,
+                    component_order=component.component_order,
+                    component_type=component.component_type,
+                    attempt_index=component.attempt_index,
+                    provider=component.provider,
+                    configured_model=component.configured_model,
+                    response_model=component.response_model,
+                    finish_reason=component.finish_reason,
+                    status=component.status,
+                    prompt_tokens=component.prompt_tokens,
+                    completion_tokens=component.completion_tokens,
+                    total_tokens=component.total_tokens,
+                    estimated_cost_usd=format_component_cost(component.estimated_cost_usd),
+                    latency_ms=component.latency_ms,
+                    error_type=component.error_type,
+                    metadata=component.metadata,
+                    created_at=component.created_at,
+                )
+                for component in components
+            ],
         )
 
     def _resolve_range(self, *, from_date: str | None, to_date: str | None) -> UsageRange:

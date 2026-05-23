@@ -107,3 +107,55 @@ class Message(Base):
     )
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
+class LLMCostComponent(Base):
+    __tablename__ = "llm_cost_component"
+    __table_args__ = (
+        Index("llm_cost_component_assistant_message_id_idx", "assistant_message_id"),
+        Index(
+            "llm_cost_component_conversation_created_at_idx",
+            "conversation_id",
+            "created_at",
+        ),
+        Index("llm_cost_component_created_at_idx", "created_at"),
+        Index(
+            "llm_cost_component_component_type_created_at_idx",
+            "component_type",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("conversation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("message.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("message.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    component_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    component_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    attempt_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    provider: Mapped[str | None] = mapped_column(String(120))
+    configured_model: Mapped[str | None] = mapped_column(String(255))
+    response_model: Mapped[str | None] = mapped_column(String(255))
+    finish_reason: Mapped[str | None] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 12))
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    error_type: Mapped[str | None] = mapped_column(String(120))
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+    )

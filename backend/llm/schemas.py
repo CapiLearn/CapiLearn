@@ -1,3 +1,4 @@
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -61,6 +62,28 @@ class ProviderResponse(LLMBaseModel):
     raw_response: dict[str, Any] | None = None
 
 
+class LLMCostComponent(LLMBaseModel):
+    user_id: UUID
+    conversation_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID | None = None
+    component_order: int
+    component_type: str
+    attempt_index: int = 1
+    provider: str | None = None
+    configured_model: str | None = None
+    response_model: str | None = None
+    finish_reason: str | None = None
+    status: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    estimated_cost_usd: Decimal | None = None
+    latency_ms: int | None = None
+    error_type: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class LLMResult(LLMBaseModel):
     content: str
     retrieval_result: RetrievalResult = Field(default_factory=RetrievalResult)
@@ -68,6 +91,7 @@ class LLMResult(LLMBaseModel):
     input_guardrail_result: GuardrailResult = Field(default_factory=GuardrailResult)
     output_guardrail_result: GuardrailResult = Field(default_factory=GuardrailResult)
     provider_response: ProviderResponse | None = None
+    cost_components: list[LLMCostComponent] = Field(default_factory=list)
 
 
 class RetrievalProvider(Protocol):

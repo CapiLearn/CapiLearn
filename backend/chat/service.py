@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import status
@@ -36,7 +37,7 @@ from backend.llm.schemas import (
     LLMResult,
     RetrievedChunk,
 )
-from backend.llm.service import LLMService
+from backend.llm.service import LLMService, LLMServiceError
 
 RECENT_RETRIEVED_CONTEXT_TURNS = 3
 logger = logging.getLogger(__name__)
@@ -175,12 +176,19 @@ class ChatService:
             result = await self._llm_service.complete(request)
         except Exception as exc:
             latency_ms = elapsed_ms(turn_started_at)
-            await self._mark_failed(assistant_message, exc, latency_ms=latency_ms)
+            original_exc = _original_llm_exception(exc)
+            cost_components = exc.cost_components if isinstance(exc, LLMServiceError) else []
+            await self._mark_failed(
+                assistant_message,
+                original_exc,
+                latency_ms=latency_ms,
+                cost_components=cost_components,
+            )
             failed_fields = {
                 **event_fields,
                 "status": MessageStatus.FAILED.value,
                 "latency_ms": latency_ms,
-                "error_type": type(exc).__name__,
+                "error_type": type(original_exc).__name__,
             }
             await self._trace_sink.record_error(failed_fields)
             await self._trace_sink.finish_chat_turn(failed_fields)
@@ -263,6 +271,11 @@ class ChatService:
             by_alias=True,
         )
         _apply_provider_response(message, result)
+        _apply_legacy_estimated_cost(message, result)
+        await self._repository.create_llm_cost_components(
+            self._session,
+            components=result.cost_components,
+        )
         await self._session.commit()
 
     async def _mark_blocked(
@@ -286,6 +299,11 @@ class ChatService:
             by_alias=True,
         )
         _apply_provider_response(message, result)
+        _apply_legacy_estimated_cost(message, result)
+        await self._repository.create_llm_cost_components(
+            self._session,
+            components=result.cost_components,
+        )
         await self._session.commit()
 
     async def _save_user_retrieval(
@@ -304,10 +322,15 @@ class ChatService:
         exc: Exception,
         *,
         latency_ms: int,
+        cost_components=None,
     ) -> None:
         message.status = MessageStatus.FAILED.value
         message.latency_ms = latency_ms
         message.error = {"type": type(exc).__name__}
+        await self._repository.create_llm_cost_components(
+            self._session,
+            components=cost_components or [],
+        )
         await self._session.commit()
 
     def _conversation_response(self, conversation: Conversation) -> ConversationResponse:
@@ -359,6 +382,22 @@ def _apply_provider_response(message: Message, result: LLMResult) -> None:
     message.completion_tokens = provider_response.completion_tokens
     message.total_tokens = provider_response.total_tokens
     message.provider_response = provider_response.raw_response
+
+
+def _apply_legacy_estimated_cost(message: Message, result: LLMResult) -> None:
+    component_costs = [
+        component.estimated_cost_usd
+        for component in result.cost_components
+        if component.estimated_cost_usd is not None
+    ]
+    if component_costs:
+        message.estimated_cost_usd = sum(component_costs, Decimal("0"))
+
+
+def _original_llm_exception(exc: Exception) -> Exception:
+    if isinstance(exc, LLMServiceError):
+        return exc.original_exception
+    return exc
 
 
 def _chat_event_fields(
