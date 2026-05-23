@@ -1,0 +1,32 @@
+<svg width="320" height="320" viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg">
+  <rect width="320" height="320" fill="none"></rect>
+
+  <!-- Blackboard -->
+  <rect x="165" y="70" width="110" height="75" rx="8" fill="#557c38" opacity="0.9"></rect>
+  <line x1="178" y1="98" x2="260" y2="98" stroke="#fff7e3" stroke-width="5" stroke-linecap="round"></line>
+  <line x1="178" y1="120" x2="238" y2="120" stroke="#fff7e3" stroke-width="5" stroke-linecap="round"></line>
+
+  <!-- Capi body -->
+  <ellipse cx="130" cy="185" rx="72" ry="54" fill="#8a6f4d"></ellipse>
+  <circle cx="92" cy="142" r="32" fill="#8a6f4d"></circle>
+  <circle cx="69" cy="135" r="12" fill="#8a6f4d"></circle>
+
+  <!-- Face -->
+  <circle cx="84" cy="140" r="4" fill="#2b1d15"></circle>
+  <circle cx="103" cy="143" r="4" fill="#2b1d15"></circle>
+  <ellipse cx="94" cy="153" rx="8" ry="5" fill="#2b1d15"></ellipse>
+
+  <!-- Cap -->
+  <polygon points="55,112 128,92 184,118 108,139" fill="#2b1d15"></polygon>
+  <rect x="86" y="122" width="46" height="14" rx="3" fill="#2b1d15"></rect>
+  <line x1="165" y1="120" x2="185" y2="150" stroke="#2b1d15" stroke-width="4"></line>
+  <circle cx="187" cy="153" r="5" fill="#b88428"></circle>
+
+  <!-- Gown -->
+  <path d="M80 185 L55 270 H190 L165 185 Z" fill="#2b1d15" opacity="0.9"></path>
+  <path d="M120 190 L110 270" stroke="#fff7e3" stroke-width="5"></path>
+  <path d="M128 190 L145 270" stroke="#fff7e3" stroke-width="5"></path>
+
+  <!-- Pointer -->
+  <line x1="160" y1="160" x2="250" y2="90" stroke="#b88428" stroke-width="6" stroke-linecap="round"></line>
+</svg>
