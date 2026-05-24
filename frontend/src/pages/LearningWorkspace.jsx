@@ -11,21 +11,6 @@ import {
 
 import "../styles/LearningWorkspace.css";
 
-const recentChats = [
-  {
-    label: "Today",
-    items: ["Gradient descent confusion", "RAG evaluation questions"],
-  },
-  {
-    label: "Yesterday",
-    items: ["Python decorator review", "Model monitoring notes"],
-  },
-  {
-    label: "Last week",
-    items: ["FastAPI readiness probes", "Postgres vector search"],
-  },
-];
-
 const suggestedPrompts = [
   "Help me understand this lesson",
   "Ask me a guiding question",

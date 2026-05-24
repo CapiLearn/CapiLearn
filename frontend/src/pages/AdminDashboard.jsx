@@ -3,51 +3,6 @@ import { useEffect, useState } from "react";
 import { getAdminUsageSummary } from "../services/adminService";
 import "../styles/AdminDashboard.css";
 
-const systemStats = [
-  {
-    label: "Backend API",
-    value: "Online",
-    helper: "Responding normally",
-    status: "healthy",
-  },
-  {
-    label: "Database",
-    value: "Connected",
-    helper: "Postgres connection active",
-    status: "healthy",
-  },
-  {
-    label: "LLM Provider",
-    value: "Available",
-    helper: "OpenRouter configured",
-    status: "healthy",
-  },
-  {
-    label: "Guardrails",
-    value: "Enabled",
-    helper: "Guided learning rules active",
-    status: "healthy",
-  },
-];
-
-const ingestionStats = [
-  {
-    label: "Documents uploaded",
-    value: "124",
-    helper: "Curriculum files in corpus",
-  },
-  {
-    label: "Documents processed",
-    value: "118",
-    helper: "Ready for retrieval",
-  },
-  {
-    label: "Failed files",
-    value: "6",
-    helper: "Need admin review",
-  },
-];
-
 const serviceChecks = [
   {
     service: "FastAPI Backend",

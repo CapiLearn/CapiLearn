@@ -42,19 +42,14 @@ const mockAdminUsageSummary = {
 
 async function handleResponse(response) {
   if (!response.ok) {
-    let errorData = null;
-
     try {
-      errorData = await response.json();
+      const errorData = await response.json();
+      throw new Error(
+        errorData.message || "Unable to load admin usage summary."
+      );
     } catch {
-      errorData = {
-        code: "unknown_error",
-        message: "Unable to load admin usage summary.",
-        details: null,
-      };
+      throw new Error("Unable to load admin usage summary.");
     }
-
-    throw new Error(errorData.message || "Unable to load admin usage summary.");
   }
 
   return response.json();
