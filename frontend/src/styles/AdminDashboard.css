@@ -192,6 +192,20 @@ body {
   line-height: 1.6;
 }
 
+.admin-helper-message {
+  margin: 0 0 18px;
+  color: #867a69;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.admin-error-message {
+  margin: 0 0 18px;
+  color: #8a3d21;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .admin-secondary-link {
   border: 1px solid #d8cfb1;
   border-radius: 999px;
@@ -378,14 +392,14 @@ body {
   gap: 20px;
 }
 
-.ingestion-list {
+.usage-detail-list {
   display: flex;
   flex-direction: column;
   gap: 14px;
   margin-top: 18px;
 }
 
-.ingestion-item {
+.usage-detail-item {
   background: #fffdf0;
   border: 1px solid #e0d8bd;
   border-radius: 16px;
