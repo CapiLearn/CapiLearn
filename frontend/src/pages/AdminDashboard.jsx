@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { getAdminUsageSummary } from "../services/adminService";
 import "../styles/AdminDashboard.css";
 
 const systemStats = [
@@ -110,6 +112,91 @@ function getStatusClass(status) {
 }
 
 function AdminDashboard() {
+  const [usageSummary, setUsageSummary] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    async function loadUsageSummary() {
+      try {
+        setIsLoading(true);
+        setErrorMessage("");
+
+        const data = await getAdminUsageSummary();
+
+        setUsageSummary(data);
+      } catch (error) {
+        setErrorMessage(error.message || "Unable to load admin usage data.");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadUsageSummary();
+  }, []);
+
+  const metrics = usageSummary?.metrics;
+
+  const usageStats = [
+  {
+    label: "Total users",
+    value: metrics?.totalUsers ?? "--",
+    helper: "Users active in selected range",
+    status: "healthy",
+  },
+  {
+    label: "Conversations",
+    value: metrics?.totalConversations ?? "--",
+    helper: "Conversation sessions created",
+    status: "healthy",
+  },
+  {
+    label: "User queries",
+    value: metrics?.userQueries ?? "--",
+    helper: "Student messages submitted",
+    status: "healthy",
+  },
+  {
+    label: "Assistant responses",
+    value: metrics?.assistantResponses ?? "--",
+    helper: "Responses returned by assistant",
+    status: "healthy",
+  },
+];
+
+  const operationalStats = [
+  {
+    label: "Failed responses",
+    value: metrics?.failedResponses ?? "--",
+    helper: "Assistant responses marked as failed",
+  },
+  {
+    label: "Blocked responses",
+    value: metrics?.blockedResponses ?? "--",
+    helper: "Assistant responses blocked by safety rules",
+  },
+  {
+    label: "Total tokens",
+    value: metrics?.totalTokens?.toLocaleString() ?? "--",
+    helper: "Total token usage in selected range",
+  },
+  {
+    label: "Estimated cost",
+    value: metrics?.estimatedCostUsd
+      ? `$${Number(metrics.estimatedCostUsd).toFixed(4)}`
+      : "--",
+    helper: "Estimated provider cost",
+  },
+  {
+    label: "Average latency",
+    value:
+      metrics?.averageLatencyMs !== null && metrics?.averageLatencyMs !== undefined
+        ? `${metrics.averageLatencyMs} ms`
+        : "Unavailable",
+    helper: "Average response latency",
+  },
+];
+
   return (
     <main className="admin-page">
       <aside className="admin-sidebar">
@@ -155,8 +242,16 @@ function AdminDashboard() {
           </Link>
         </header>
 
+        {isLoading && (
+          <p className="admin-helper-message">Loading admin usage data...</p>
+        )}
+
+        {errorMessage && (
+          <p className="admin-error-message">{errorMessage}</p>
+        )}
+
         <section className="admin-stat-grid">
-          {systemStats.map((stat) => (
+          {usageStats.map((stat) => (
             <article className="admin-stat-card" key={stat.label}>
               <div className={`admin-status-dot ${stat.status}`}></div>
               <p>{stat.label}</p>
@@ -194,12 +289,12 @@ function AdminDashboard() {
 
           <aside className="admin-side-stack">
             <article className="admin-panel">
-              <p className="admin-panel-label">Ingestion Summary</p>
-              <h2>Curriculum corpus</h2>
+              <p className="admin-panel-label">Usage Details</p>
+              <h2>Response and cost metrics</h2>
 
-              <div className="ingestion-list">
-                {ingestionStats.map((item) => (
-                  <div className="ingestion-item" key={item.label}>
+              <div className="usage-detail-list">
+                {operationalStats.map((item) => (
+                  <div className="usage-detail-item" key={item.label}>
                     <p>{item.label}</p>
                     <h3>{item.value}</h3>
                     <span>{item.helper}</span>
