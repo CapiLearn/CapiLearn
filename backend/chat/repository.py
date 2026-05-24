@@ -3,9 +3,10 @@ from uuid import UUID
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.chat.models import Conversation, Message, utc_now
+from backend.chat.models import Conversation, LLMCostComponent, Message, utc_now
 from backend.chat.schemas import ConversationStatus, MessageRole, MessageStatus
 from backend.llm.config import llm_settings
+from backend.llm.schemas import LLMCostComponent as LLMCostComponentRecord
 
 
 class ChatRepository:
@@ -94,6 +95,40 @@ class ChatRepository:
         session.add(message)
         await session.flush()
         return message
+
+    async def create_llm_cost_components(
+        self,
+        session: AsyncSession,
+        *,
+        components: list[LLMCostComponentRecord],
+    ) -> None:
+        for component in components:
+            if component.assistant_message_id is None:
+                continue
+            session.add(
+                LLMCostComponent(
+                    user_id=component.user_id,
+                    conversation_id=component.conversation_id,
+                    user_message_id=component.user_message_id,
+                    assistant_message_id=component.assistant_message_id,
+                    component_order=component.component_order,
+                    component_type=component.component_type,
+                    attempt_index=component.attempt_index,
+                    provider=component.provider,
+                    configured_model=component.configured_model,
+                    response_model=component.response_model,
+                    finish_reason=component.finish_reason,
+                    status=component.status,
+                    prompt_tokens=component.prompt_tokens,
+                    completion_tokens=component.completion_tokens,
+                    total_tokens=component.total_tokens,
+                    estimated_cost_usd=component.estimated_cost_usd,
+                    latency_ms=component.latency_ms,
+                    error_type=component.error_type,
+                    extra_metadata=component.metadata,
+                )
+            )
+        await session.flush()
 
     async def _next_sequence(self, session: AsyncSession, *, conversation_id: UUID) -> int:
         statement: Select[tuple[int | None]] = select(func.max(Message.sequence)).where(

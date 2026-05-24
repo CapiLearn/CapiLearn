@@ -1,12 +1,19 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.admin.dependencies import get_admin_usage_service
 from backend.admin.repository import UsageMetricsAggregate
-from backend.admin.schemas import AdminUsageSummaryResponse, UsageMetrics, UsageRange
+from backend.admin.schemas import (
+    AdminUsageSummaryResponse,
+    CostComponentResponse,
+    CostComponentsResponse,
+    UsageMetrics,
+    UsageRange,
+)
 from backend.admin.service import AdminUsageService
 from backend.main import app
 
@@ -21,8 +28,13 @@ def test_admin_openapi_exposes_usage_summary_route() -> None:
     schema = app.openapi()
 
     assert "/api/admin/usage/summary" in schema["paths"]
+    assert "/api/admin/usage/cost-components" in schema["paths"]
     assert (
         schema["paths"]["/api/admin/usage/summary"]["get"]["operationId"] == "getAdminUsageSummary"
+    )
+    assert (
+        schema["paths"]["/api/admin/usage/cost-components"]["get"]["operationId"]
+        == "listAdminUsageCostComponents"
     )
 
 
@@ -137,7 +149,68 @@ async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_cost_components_endpoint_requires_admin_header() -> None:
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/admin/usage/cost-components")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "admin_required"
+
+
+@pytest.mark.asyncio
+async def test_cost_components_endpoint_returns_granular_rows() -> None:
+    service = FakeAdminUsageService()
+    app.dependency_overrides[get_admin_usage_service] = lambda: service
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/cost-components?fromDate=2026-05-01&toDate=2026-05-04"
+            "&componentType=main_generation&limit=25&offset=50",
+            headers={"X-Admin-User": "true"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["range"] == {
+        "fromDate": "2026-05-01",
+        "toDate": "2026-05-04",
+    }
+    assert payload["costComponents"][0]["componentType"] == "main_generation"
+    assert payload["costComponents"][0]["estimatedCostUsd"] == "0.001000000000"
+    assert service.limit == 25
+    assert service.offset == 50
+
+
+@pytest.mark.asyncio
+async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/cost-components?limit=501",
+            headers={"X-Admin-User": "true"},
+        )
+
+    assert response.status_code == 422
+
+
 class FakeAdminUsageService:
+    def __init__(self) -> None:
+        self.limit = None
+        self.offset = None
+
     async def get_usage_summary(
         self,
         *,
@@ -163,6 +236,51 @@ class FakeAdminUsageService:
             daily_usage=[],
         )
 
+    async def list_cost_components(
+        self,
+        *,
+        from_date: str | None,
+        to_date: str | None,
+        conversation_id=None,
+        assistant_message_id=None,
+        component_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> CostComponentsResponse:
+        self.limit = limit
+        self.offset = offset
+        return CostComponentsResponse(
+            range=UsageRange(
+                from_date=from_date or "2026-05-01",
+                to_date=to_date or "2026-05-04",
+            ),
+            cost_components=[
+                CostComponentResponse(
+                    id=uuid4(),
+                    user_id=uuid4(),
+                    conversation_id=conversation_id or uuid4(),
+                    user_message_id=uuid4(),
+                    assistant_message_id=assistant_message_id or uuid4(),
+                    component_order=1,
+                    component_type=component_type or "main_generation",
+                    attempt_index=1,
+                    provider="openai",
+                    configured_model="openai/gpt-4o-mini",
+                    response_model="gpt-4o-mini",
+                    finish_reason="stop",
+                    status="completed",
+                    prompt_tokens=4,
+                    completion_tokens=5,
+                    total_tokens=9,
+                    estimated_cost_usd="0.001000000000",
+                    latency_ms=120,
+                    error_type=None,
+                    metadata={},
+                    created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
+                )
+            ],
+        )
+
 
 class EmptyUsageRepository:
     async def get_usage_metrics(self, session, *, range_start, range_end):
@@ -179,4 +297,7 @@ class EmptyUsageRepository:
         )
 
     async def list_daily_usage(self, session, *, range_start, range_end):
+        return []
+
+    async def list_cost_components(self, session, **kwargs):
         return []

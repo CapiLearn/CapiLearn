@@ -1,9 +1,14 @@
 import asyncio
+import json
+import logging
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
 
+from backend.core.observability import LLMTraceSink
+from backend.llm import costing as llm_costing_module
 from backend.llm import provider as llm_provider_module
 from backend.llm import service as llm_service_module
 from backend.llm.config import (
@@ -12,6 +17,7 @@ from backend.llm.config import (
     OutputGuardrailMode,
     llm_settings,
 )
+from backend.llm.costing import LLMCostRecorder, cost_recorder_context
 from backend.llm.guardrails import (
     CompositeGuardrailsProvider,
     LLMJudgeGuardrailsProvider,
@@ -29,7 +35,7 @@ from backend.llm.schemas import (
     RetrievalResult,
     RetrievedChunk,
 )
-from backend.llm.service import LLMService
+from backend.llm.service import LLMService, LLMServiceError
 
 
 class FakeProvider:
@@ -231,7 +237,8 @@ class RepairableOutputGuardrails(AllowGuardrails):
 
 
 @pytest.mark.asyncio
-async def test_llm_service_adds_retrieved_context_to_user_message() -> None:
+async def test_llm_service_adds_retrieved_context_to_user_message(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -251,6 +258,35 @@ async def test_llm_service_adds_retrieved_context_to_user_message() -> None:
     assert "Biology Notes - doc_1 - page 3" in provider.messages[-1].content
     assert "<retrieved_context>" in provider.messages[-1].content
     assert "<student_message>\nWhat is photosynthesis?" in provider.messages[-1].content
+    assert _events(caplog.records, "guardrail.check.completed")
+    retrieval_events = _events(caplog.records, "rag.retrieve.completed")
+    assert retrieval_events[-1].chunk_count == 1
+    assert "Relevant note for" not in caplog.text
+    assert _events(caplog.records, "llm.generation.completed")
+
+
+@pytest.mark.asyncio
+async def test_llm_service_trace_sink_failures_do_not_change_result(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="backend.core.observability.tracing")
+    provider = FakeProvider()
+    service = LLMService(
+        provider=provider,
+        guardrails=AllowGuardrails(),
+        retriever=FakeRetriever(),
+        trace_sink=FailingTraceSink(),
+    )
+
+    result = await service.complete(_request("What is photosynthesis?"))
+
+    assert result.content == "Plants turn light into energy."
+    assert result.retrieved_context[0].metadata["source_id"] == "doc_1"
+    assert provider.complete_called
+    failed_events = _events(caplog.records, "llm.trace_sink.failed")
+    assert {record.trace_operation for record in failed_events} >= {
+        "record_guardrail",
+        "record_retrieval",
+        "record_generation",
+    }
 
 
 @pytest.mark.asyncio
@@ -342,7 +378,8 @@ async def test_llm_service_complete_starts_retrieval_before_input_guardrail_fini
 
 
 @pytest.mark.asyncio
-async def test_llm_service_blocks_unsafe_input_before_provider_call() -> None:
+async def test_llm_service_blocks_unsafe_input_before_provider_call(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -356,6 +393,9 @@ async def test_llm_service_blocks_unsafe_input_before_provider_call() -> None:
     assert result.content == "Input blocked."
     assert provider.messages == []
     assert not provider.complete_called
+    guardrail_events = _events(caplog.records, "guardrail.check.completed")
+    assert guardrail_events[-1].guardrail_stage == "input"
+    assert guardrail_events[-1].blocked is True
 
 
 @pytest.mark.asyncio
@@ -438,7 +478,8 @@ async def test_llm_service_can_skip_output_guardrail() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_service_repairs_blocked_direct_answer_output() -> None:
+async def test_llm_service_repairs_blocked_direct_answer_output(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
     provider = SequenceProvider(
         [
             "The direct answer is 42.",
@@ -462,6 +503,100 @@ async def test_llm_service_repairs_blocked_direct_answer_output() -> None:
     )
     assert len(provider.calls) == 2
     assert "Draft assistant response to repair" in provider.calls[1][-1].content
+    repair_events = _events(caplog.records, "chat.repair.completed")
+    assert repair_events
+    assert repair_events[-1].repair_passed is True
+
+
+@pytest.mark.asyncio
+async def test_llm_service_records_repair_flow_cost_components(monkeypatch) -> None:
+    responses = [
+        _judge_response(blocked=False, rail="input_policy"),
+        _FakeLiteLLMResponse(content="The direct answer is 42."),
+        _judge_response(blocked=True, rail="output_policy", reason="Direct answer."),
+        _FakeLiteLLMResponse(
+            content="What is the first relationship you can write from the problem?"
+        ),
+        _judge_response(blocked=False, rail="output_policy"),
+    ]
+
+    async def fake_acompletion(**kwargs):
+        return responses.pop(0)
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_costing_module, "completion_cost", lambda **kwargs: 0.0001)
+    service = LLMService(
+        provider=LiteLLMProvider(),
+        input_guardrails=LLMJudgeGuardrailsProvider(
+            model="openai/gpt-4o-mini",
+            completion=fake_acompletion,
+        ),
+        output_guardrails=LLMJudgeGuardrailsProvider(
+            model="openai/gpt-4o-mini",
+            completion=fake_acompletion,
+        ),
+        retriever=FakeRetriever(),
+    )
+
+    result = await service.complete(_request("Solve this homework problem."))
+
+    assert result.content == "What is the first relationship you can write from the problem?"
+    assert [component.component_type for component in result.cost_components] == [
+        "input_guardrail",
+        "main_generation",
+        "output_guardrail",
+        "repair_generation",
+        "output_repair_guardrail",
+    ]
+    assert [component.component_order for component in result.cost_components] == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.asyncio
+async def test_llm_service_error_exposes_failed_cost_components(monkeypatch) -> None:
+    async def fake_acompletion(**kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    service = LLMService(
+        provider=LiteLLMProvider(),
+        input_guardrails=AllowGuardrails(),
+        output_guardrails=NoopGuardrailsProvider(),
+        retriever=FakeRetriever(),
+    )
+
+    with pytest.raises(LLMServiceError) as exc_info:
+        await service.complete(_request("What is photosynthesis?"))
+
+    assert isinstance(exc_info.value.original_exception, RuntimeError)
+    assert len(exc_info.value.cost_components) == 1
+    component = exc_info.value.cost_components[0]
+    assert component.component_type == "main_generation"
+    assert component.status == "failed"
+    assert component.error_type == "RuntimeError"
+    assert component.estimated_cost_usd is None
+
+
+@pytest.mark.asyncio
+async def test_llm_service_trace_sink_failures_do_not_block_repair_result() -> None:
+    provider = SequenceProvider(
+        [
+            "The direct answer is 42.",
+            "What is the first relationship you can write from the problem?",
+        ]
+    )
+    service = LLMService(
+        provider=provider,
+        guardrails=RepairableOutputGuardrails(),
+        retriever=FakeRetriever(),
+        trace_sink=FailingTraceSink(),
+    )
+
+    result = await service.complete(_request("Solve this homework problem."))
+
+    assert result.content == ("What is the first relationship you can write from the problem?")
+    assert not result.output_guardrail_result.blocked
+    assert result.output_guardrail_result.metadata["repairPassed"] is True
+    assert len(provider.calls) == 2
 
 
 @pytest.mark.asyncio
@@ -506,6 +641,64 @@ async def test_litellm_provider_uses_server_configured_model(monkeypatch) -> Non
     assert captured_kwargs["model"] == llm_settings.model
     assert "temperature" not in captured_kwargs
     assert "api_key" not in captured_kwargs
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_records_generation_cost_component(monkeypatch) -> None:
+    async def fake_acompletion(**kwargs):
+        return _FakeLiteLLMResponse()
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_costing_module, "completion_cost", lambda **kwargs: 0.001)
+
+    request = _request("hello")
+    recorder = LLMCostRecorder(
+        user_id=str(request.user_id),
+        conversation_id=str(request.conversation_id),
+        user_message_id=str(request.user_message_id),
+        assistant_message_id=str(request.assistant_message_id),
+    )
+    provider = LiteLLMProvider()
+    with cost_recorder_context(recorder):
+        await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert len(recorder.components) == 1
+    component = recorder.components[0]
+    assert component.component_type == "main_generation"
+    assert component.prompt_tokens == 3
+    assert component.completion_tokens == 4
+    assert component.total_tokens == 7
+    assert component.estimated_cost_usd == Decimal("0.001")
+    assert component.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_records_cost_unavailable_component(monkeypatch) -> None:
+    async def fake_acompletion(**kwargs):
+        return _FakeLiteLLMResponse()
+
+    def fake_completion_cost(**kwargs):
+        raise RuntimeError("unknown model")
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_costing_module, "completion_cost", fake_completion_cost)
+
+    request = _request("hello")
+    recorder = LLMCostRecorder(
+        user_id=str(request.user_id),
+        conversation_id=str(request.conversation_id),
+        user_message_id=str(request.user_message_id),
+        assistant_message_id=str(request.assistant_message_id),
+    )
+    provider = LiteLLMProvider()
+    with cost_recorder_context(recorder):
+        response = await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert response.content == "Configured model response."
+    component = recorder.components[0]
+    assert component.status == "cost_unavailable"
+    assert component.estimated_cost_usd is None
+    assert component.metadata["costError"] == "RuntimeError"
 
 
 @pytest.mark.asyncio
@@ -650,6 +843,81 @@ async def test_llm_judge_guardrail_parses_allowed_json() -> None:
     assert result.reason is None
     assert result.rail == "input_policy"
     assert result.metadata["provider"] == "llm_judge"
+
+
+@pytest.mark.asyncio
+async def test_llm_judge_guardrail_records_input_cost_component(monkeypatch) -> None:
+    async def fake_completion(**kwargs):
+        return {
+            "model": "gpt-4o-mini",
+            "usage": {
+                "prompt_tokens": 8,
+                "completion_tokens": 3,
+                "total_tokens": 11,
+            },
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": (
+                            '{"blocked": false, "reason": null, '
+                            '"rail": "input_policy", "confidence": 0.1}'
+                        ),
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(llm_costing_module, "completion_cost", lambda **kwargs: 0.0002)
+    request = _request("hello")
+    recorder = LLMCostRecorder(
+        user_id=str(request.user_id),
+        conversation_id=str(request.conversation_id),
+        user_message_id=str(request.user_message_id),
+        assistant_message_id=str(request.assistant_message_id),
+    )
+    provider = LLMJudgeGuardrailsProvider(
+        model="openai/gpt-4o-mini",
+        completion=fake_completion,
+    )
+
+    with cost_recorder_context(recorder):
+        result = await provider.check_input("hello")
+
+    assert result.blocked is False
+    assert recorder.components[0].component_type == "input_guardrail"
+    assert recorder.components[0].prompt_tokens == 8
+    assert recorder.components[0].estimated_cost_usd == Decimal("0.0002")
+
+
+@pytest.mark.asyncio
+async def test_llm_judge_guardrail_records_failed_component_on_fail_open(
+    monkeypatch,
+) -> None:
+    async def fake_completion(**kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(llm_costing_module, "completion_cost", lambda **kwargs: 0.0002)
+    request = _request("hello")
+    recorder = LLMCostRecorder(
+        user_id=str(request.user_id),
+        conversation_id=str(request.conversation_id),
+        user_message_id=str(request.user_message_id),
+        assistant_message_id=str(request.assistant_message_id),
+    )
+    provider = LLMJudgeGuardrailsProvider(
+        model="openai/gpt-4o-mini",
+        completion=fake_completion,
+        fail_open_on_error=True,
+    )
+
+    with cost_recorder_context(recorder):
+        result = await provider.check_input("hello")
+
+    assert result.blocked is False
+    assert recorder.components[0].component_type == "input_guardrail"
+    assert recorder.components[0].status == "failed"
+    assert recorder.components[0].error_type == "RuntimeError"
 
 
 @pytest.mark.asyncio
@@ -894,6 +1162,24 @@ def test_policy_output_mode_without_judge_builds_noop_guardrails(monkeypatch) ->
     assert isinstance(llm_service_module._build_output_guardrails(), NoopGuardrailsProvider)
 
 
+def _events(records, event: str):
+    return [record for record in records if getattr(record, "event", None) == event]
+
+
+class FailingTraceSink(LLMTraceSink):
+    async def _record_guardrail(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _record_retrieval(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _record_generation(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+    async def _record_error(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
+
 def _request(content: str) -> LLMRequest:
     return LLMRequest(
         user_id=uuid4(),
@@ -904,6 +1190,37 @@ def _request(content: str) -> LLMRequest:
     )
 
 
+def _judge_response(
+    *,
+    blocked: bool,
+    rail: str,
+    reason: str | None = None,
+) -> dict:
+    return {
+        "model": "gpt-4o-mini",
+        "usage": {
+            "prompt_tokens": 3,
+            "completion_tokens": 1,
+            "total_tokens": 4,
+        },
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "blocked": blocked,
+                            "reason": reason,
+                            "rail": rail,
+                            "confidence": 0.8,
+                        }
+                    )
+                },
+            }
+        ],
+    }
+
+
 class _FakeLiteLLMUsage:
     prompt_tokens = 3
     completion_tokens = 4
@@ -911,18 +1228,22 @@ class _FakeLiteLLMUsage:
 
 
 class _FakeLiteLLMMessage:
-    content = "Configured model response."
+    def __init__(self, content: str = "Configured model response.") -> None:
+        self.content = content
 
 
 class _FakeLiteLLMChoice:
-    message = _FakeLiteLLMMessage()
-    finish_reason = "stop"
+    def __init__(self, content: str = "Configured model response.") -> None:
+        self.message = _FakeLiteLLMMessage(content)
+        self.finish_reason = "stop"
 
 
 class _FakeLiteLLMResponse:
-    choices = [_FakeLiteLLMChoice()]
     usage = _FakeLiteLLMUsage()
-    model = "provider/model"
+
+    def __init__(self, content: str = "Configured model response.") -> None:
+        self.choices = [_FakeLiteLLMChoice(content)]
+        self.model = "provider/model"
 
     def model_dump(self, mode: str):
         return {"model": self.model, "mode": mode}
