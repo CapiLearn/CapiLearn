@@ -12,21 +12,25 @@ a. Login
     - Send session ID to...
     - Authentication - Later. Use a standard library
 
-2. Student Workspace
+2.Student Workspace
 
     - 
 
 
 
 
-3. Student Dashboard
+3.Student Dashboard
 
 
 
-4. Instructor Dashboard
+4.Instructor Dashboard
 
-Langing Page
-|-> Student Workspace
+To Do:
+Remove Review Queue section:
+Remove System Health
+From Student Roster, remove Status Column
+Work on Admin dashboard.
 
-
-
+Add Pie Chart for Students active this week vs. total students
+Student Roster should be a list of all students on a separate page
+Start working on Vercel deployment for the frontend

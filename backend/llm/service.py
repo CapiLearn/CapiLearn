@@ -1,6 +1,19 @@
 import asyncio
+import logging
 
+from backend.core.observability import (
+    LLMTraceSink,
+    elapsed_ms,
+    log_event,
+    timer_start,
+)
 from backend.llm.config import InputGuardrailMode, OutputGuardrailMode, llm_settings
+from backend.llm.costing import (
+    LLMCostRecorder,
+    cost_recorder_context,
+    generation_component_context,
+    guardrail_component_context,
+)
 from backend.llm.guardrails import (
     CompositeGuardrailsProvider,
     LLMJudgeGuardrailsProvider,
@@ -10,8 +23,10 @@ from backend.llm.guardrails import (
 from backend.llm.prompts import build_messages, build_socratic_repair_messages
 from backend.llm.provider import LiteLLMProvider
 from backend.llm.schemas import (
+    ChatMessage,
     GuardrailResult,
     GuardrailsProvider,
+    LLMCostComponent,
     LLMProvider,
     LLMRequest,
     LLMResult,
@@ -20,6 +35,20 @@ from backend.llm.schemas import (
     RetrievalResult,
     RetrievedChunk,
 )
+
+logger = logging.getLogger(__name__)
+
+
+class LLMServiceError(Exception):
+    def __init__(
+        self,
+        original_exception: Exception,
+        *,
+        cost_components: list[LLMCostComponent],
+    ) -> None:
+        super().__init__(str(original_exception))
+        self.original_exception = original_exception
+        self.cost_components = cost_components
 
 
 class EmptyRetrievalProvider:
@@ -43,13 +72,35 @@ class LLMService:
         input_guardrails: GuardrailsProvider | None = None,
         output_guardrails: GuardrailsProvider | None = None,
         retriever: RetrievalProvider | None = None,
+        trace_sink: LLMTraceSink | None = None,
     ) -> None:
         self._provider = provider or LiteLLMProvider()
         self._input_guardrails = guardrails or input_guardrails or _build_input_guardrails()
         self._output_guardrails = guardrails or output_guardrails or _build_output_guardrails()
         self._retriever = retriever or EmptyRetrievalProvider()
+        self._trace_sink = trace_sink or LLMTraceSink()
 
     async def complete(self, request: LLMRequest) -> LLMResult:
+        recorder = LLMCostRecorder(
+            user_id=str(request.user_id),
+            conversation_id=str(request.conversation_id),
+            user_message_id=str(request.user_message_id),
+            assistant_message_id=(
+                str(request.assistant_message_id) if request.assistant_message_id else None
+            ),
+        )
+        with cost_recorder_context(recorder):
+            try:
+                result = await self._complete(request)
+            except Exception as exc:
+                raise LLMServiceError(
+                    exc,
+                    cost_components=recorder.components,
+                ) from exc
+        return result.model_copy(update={"cost_components": recorder.components})
+
+    async def _complete(self, request: LLMRequest) -> LLMResult:
+        retrieval_started_at = timer_start()
         retrieval_task = asyncio.create_task(
             self._retriever.retrieve(
                 request.content,
@@ -59,14 +110,27 @@ class LLMService:
             ),
         )
 
+        input_guardrail_started_at = timer_start()
         try:
             input_result = await self._input_guardrails.check_input(request.content)
         except asyncio.CancelledError:
             _discard_task_result(retrieval_task)
             raise
-        except Exception:
+        except Exception as exc:
             _discard_task_result(retrieval_task)
+            await self._record_guardrail_error(
+                request=request,
+                stage="input",
+                started_at=input_guardrail_started_at,
+                exc=exc,
+            )
             raise
+        await self._record_guardrail_result(
+            request=request,
+            stage="input",
+            started_at=input_guardrail_started_at,
+            result=input_result,
+        )
 
         if input_result.blocked:
             _discard_task_result(retrieval_task)
@@ -79,13 +143,32 @@ class LLMService:
                 retrieval_result=RetrievalResult(chunks=[]),
             )
 
-        retrieval_result = _coerce_retrieval_result(await retrieval_task)
-        provider_response = await self._provider.complete(
-            build_messages(
+        try:
+            retrieval_result = _coerce_retrieval_result(await retrieval_task)
+        except Exception as exc:
+            latency_ms = elapsed_ms(retrieval_started_at)
+            fields = {
+                **_request_event_fields(request),
+                "latency_ms": latency_ms,
+                "error_type": type(exc).__name__,
+            }
+            await self._trace_sink.record_error(fields)
+            log_event(logger, "rag.retrieve.failed", level=logging.ERROR, **fields)
+            raise
+        await self._record_retrieval_result(
+            request=request,
+            started_at=retrieval_started_at,
+            result=retrieval_result,
+        )
+
+        provider_response = await self._generate(
+            request=request,
+            messages=build_messages(
                 user_input=request.content,
                 history=request.history,
                 chunks=retrieval_result.chunks,
             ),
+            stage="primary",
         )
         output_result, provider_response = await self._check_output(
             request=request,
@@ -106,28 +189,165 @@ class LLMService:
         provider_response: ProviderResponse,
         retrieved_context: list[RetrievedChunk],
     ) -> tuple[GuardrailResult, ProviderResponse]:
-        output_result = await self._output_guardrails.check_output(
-            provider_response.content,
-            user_input=request.content,
+        output_guardrail_started_at = timer_start()
+        try:
+            with guardrail_component_context("output_guardrail"):
+                output_result = await self._output_guardrails.check_output(
+                    provider_response.content,
+                    user_input=request.content,
+                )
+        except Exception as exc:
+            await self._record_guardrail_error(
+                request=request,
+                stage="output",
+                started_at=output_guardrail_started_at,
+                exc=exc,
+            )
+            raise
+        await self._record_guardrail_result(
+            request=request,
+            stage="output",
+            started_at=output_guardrail_started_at,
+            result=output_result,
         )
         if not output_result.blocked:
             return output_result, provider_response
 
-        repair_response = await self._provider.complete(
-            build_socratic_repair_messages(
+        repair_started_at = timer_start()
+        repair_response = await self._generate(
+            request=request,
+            messages=build_socratic_repair_messages(
                 user_input=request.content,
                 draft_response=provider_response.content,
                 chunks=retrieved_context,
             ),
+            stage="repair",
         )
-        repair_result = await self._output_guardrails.check_output(
-            repair_response.content,
-            user_input=request.content,
+        repair_guardrail_started_at = timer_start()
+        try:
+            with guardrail_component_context("output_repair_guardrail"):
+                repair_result = await self._output_guardrails.check_output(
+                    repair_response.content,
+                    user_input=request.content,
+                )
+        except Exception as exc:
+            await self._record_guardrail_error(
+                request=request,
+                stage="output_repair",
+                started_at=repair_guardrail_started_at,
+                exc=exc,
+            )
+            raise
+        await self._record_guardrail_result(
+            request=request,
+            stage="output_repair",
+            started_at=repair_guardrail_started_at,
+            result=repair_result,
         )
+        repair_fields = {
+            **_request_event_fields(request),
+            "latency_ms": elapsed_ms(repair_started_at),
+            "repair_passed": not repair_result.blocked,
+            "initial_blocked": output_result.blocked,
+            "initial_rail": output_result.rail,
+            "final_rail": repair_result.rail,
+        }
+        await self._trace_sink.record_generation(repair_fields)
+        log_event(logger, "chat.repair.completed", **repair_fields)
         return (
             _with_repair_metadata(repair_result, initial_result=output_result),
             repair_response,
         )
+
+    async def _generate(
+        self,
+        *,
+        request: LLMRequest,
+        messages: list[ChatMessage],
+        stage: str,
+    ) -> ProviderResponse:
+        started_at = timer_start()
+        try:
+            component_type = "repair_generation" if stage == "repair" else "main_generation"
+            with generation_component_context(component_type):
+                provider_response = await self._provider.complete(messages)
+        except Exception as exc:
+            fields = {
+                **_request_event_fields(request),
+                "generation_stage": stage,
+                "latency_ms": elapsed_ms(started_at),
+                "error_type": type(exc).__name__,
+            }
+            await self._trace_sink.record_error(fields)
+            log_event(logger, "llm.generation.failed", level=logging.ERROR, **fields)
+            raise
+
+        measured_latency_ms = elapsed_ms(started_at)
+        if provider_response.latency_ms is None:
+            provider_response.latency_ms = measured_latency_ms
+        fields = {
+            **_request_event_fields(request),
+            "generation_stage": stage,
+            "model": provider_response.model,
+            "finish_reason": provider_response.finish_reason,
+            "prompt_tokens": provider_response.prompt_tokens,
+            "completion_tokens": provider_response.completion_tokens,
+            "total_tokens": provider_response.total_tokens,
+            "latency_ms": provider_response.latency_ms,
+        }
+        await self._trace_sink.record_generation(fields)
+        log_event(logger, "llm.generation.completed", **fields)
+        return provider_response
+
+    async def _record_guardrail_result(
+        self,
+        *,
+        request: LLMRequest,
+        stage: str,
+        started_at: float,
+        result: GuardrailResult,
+    ) -> None:
+        fields = {
+            **_request_event_fields(request),
+            **_guardrail_event_fields(result),
+            "guardrail_stage": stage,
+            "latency_ms": elapsed_ms(started_at),
+        }
+        await self._trace_sink.record_guardrail(fields)
+        log_event(logger, "guardrail.check.completed", **fields)
+
+    async def _record_guardrail_error(
+        self,
+        *,
+        request: LLMRequest,
+        stage: str,
+        started_at: float,
+        exc: Exception,
+    ) -> None:
+        fields = {
+            **_request_event_fields(request),
+            "guardrail_stage": stage,
+            "latency_ms": elapsed_ms(started_at),
+            "error_type": type(exc).__name__,
+        }
+        await self._trace_sink.record_error(fields)
+        log_event(logger, "guardrail.check.failed", level=logging.ERROR, **fields)
+
+    async def _record_retrieval_result(
+        self,
+        *,
+        request: LLMRequest,
+        started_at: float,
+        result: RetrievalResult,
+    ) -> None:
+        fields = {
+            **_request_event_fields(request),
+            "latency_ms": elapsed_ms(started_at),
+            "chunk_count": len(result.chunks),
+            "chunks": [_chunk_observability_metadata(chunk) for chunk in result.chunks[:5]],
+        }
+        await self._trace_sink.record_retrieval(fields)
+        log_event(logger, "rag.retrieve.completed", **fields)
 
 
 def _build_input_guardrails() -> GuardrailsProvider:
@@ -216,6 +436,56 @@ def _coerce_retrieved_chunk(value: RetrievedChunk | dict) -> RetrievedChunk:
     if isinstance(value, RetrievedChunk):
         return value
     return RetrievedChunk.model_validate(value)
+
+
+def _request_event_fields(request: LLMRequest) -> dict:
+    return {
+        "user_id": str(request.user_id),
+        "conversation_id": str(request.conversation_id),
+        "user_message_id": str(request.user_message_id),
+        "assistant_message_id": (
+            str(request.assistant_message_id) if request.assistant_message_id else None
+        ),
+    }
+
+
+def _guardrail_event_fields(result: GuardrailResult) -> dict:
+    metadata = result.metadata or {}
+    return {
+        "blocked": result.blocked,
+        "rail": result.rail,
+        "reason": _reason_code(result.reason),
+        "guardrail_provider": metadata.get("provider"),
+        "category": metadata.get("category"),
+        "confidence": metadata.get("confidence"),
+        "fail_open": metadata.get("failOpen"),
+        "judge_error": metadata.get("judgeError"),
+    }
+
+
+def _reason_code(reason: str | None) -> str | None:
+    if reason is None:
+        return None
+    return "_".join(reason.lower().split())[:80]
+
+
+def _chunk_observability_metadata(chunk: RetrievedChunk) -> dict:
+    metadata = chunk.metadata or {}
+    allowed_keys = {
+        "source_id",
+        "sourceId",
+        "chunk_id",
+        "chunkId",
+        "document_id",
+        "documentId",
+        "title",
+        "source_path",
+        "sourcePath",
+        "page",
+        "score",
+        "distance",
+    }
+    return {key: metadata[key] for key in allowed_keys if key in metadata}
 
 
 def _discard_task_result(task: asyncio.Task[RetrievalResult]) -> None:

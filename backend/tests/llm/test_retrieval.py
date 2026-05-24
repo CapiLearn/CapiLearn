@@ -62,7 +62,7 @@ async def test_rag_retrieval_provider_degrades_to_empty_context_on_error(
     )
 
     assert result.chunks == []
-    assert "RAG retrieval failed; continuing without retrieved context." in caplog.text
+    assert "rag.retrieve.failed" in caplog.text
 
 
 class FakeRagQueryEngine:

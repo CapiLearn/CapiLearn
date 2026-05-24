@@ -47,78 +47,43 @@ const topicDistribution = [
   },
 ];
 
-const reviewQueue = [
-  {
-    name: "John Carter",
-    issue: "Repeated questions about RAG evaluation",
-    status: "High priority",
-  },
-  {
-    name: "Maya Singh",
-    issue: "Low activity after assignment release",
-    status: "Check in",
-  },
-  {
-    name: "Luis Rivera",
-    issue: "Multiple stuck messages in one session",
-    status: "Needs review",
-  },
-];
-
 const studentRoster = [
   {
     name: "John Carter",
     topTopic: "Ipsum Lorem",
     questions: 18,
-    streak: "4 days",
-    status: "Needs support",
+    streak: "4 days",    
     lastActive: "Today",
   },
   {
     name: "Maya Singh",
     topTopic: "Ipsum Lorem",
     questions: 9,
-    streak: "1 day",
-    status: "Watch",
+    streak: "1 day",   
     lastActive: "Yesterday",
   },
   {
     name: "Luis Rivera",
     topTopic: "Ipsum Lorem",
     questions: 14,
-    streak: "5 days",
-    status: "Needs support",
+    streak: "5 days",   
     lastActive: "Today",
   },
   {
     name: "Ava Thompson",
     topTopic: "Ipsum Lorem",
     questions: 6,
-    streak: "6 days",
-    status: "On track",
+    streak: "6 days",    
     lastActive: "Today",
   },
   {
     name: "Noah Kim",
     topTopic: "Ipsum Lorem",
     questions: 7,
-    streak: "3 days",
-    status: "On track",
+    streak: "3 days",    
     lastActive: "2 days ago",
   },
 ];
-
-function getStatusClass(status) {
-  if (status === "Needs support") {
-    return "status-danger";
-  }
-
-  if (status === "Watch") {
-    return "status-warning";
-  }
-
-  return "status-good";
-}
 
 function InstructorDashboard() {
   return (
@@ -132,9 +97,7 @@ function InstructorDashboard() {
         <nav className="instructor-nav">
           <button className="active">Dashboard</button>
           <button>Students</button>
-          <button>Question Trends</button>
-          <button>System Health</button>
-          <button>Administration</button>
+          <button>Question Trends</button>          
         </nav>
 
         <Link className="instructor-logout-link" to="/">
@@ -144,7 +107,7 @@ function InstructorDashboard() {
         <div className="instructor-profile-card">
           <div className="instructor-avatar">O</div>
           <div>
-            <h3>Olivia</h3>
+            <h3>Trogdor (He/Him/Burninator)</h3>
             <p>FCF Instructor</p>
           </div>
         </div>
@@ -205,45 +168,7 @@ function InstructorDashboard() {
               ))}
             </div>
           </article>
-
-          <aside className="instructor-side-stack">
-            <article className="instructor-panel review-panel">
-              <p className="panel-label">Review Queue</p>
-              <h2>Students needing attention</h2>
-
-              <div className="review-list">
-                {reviewQueue.map((student) => (
-                  <div className="review-item" key={student.name}>
-                    <div>
-                      <h3>{student.name}</h3>
-                      <p>{student.issue}</p>
-                    </div>
-                    <span>{student.status}</span>
-                  </div>
-                ))}
-              </div>
-            </article>
-
-            <article className="instructor-panel health-panel">
-              <p className="panel-label">System Health</p>
-              <h2>All systems available</h2>
-
-              <div className="health-row">
-                <span className="health-dot"></span>
-                <p>Learning assistant online</p>
-              </div>
-
-              <div className="health-row">
-                <span className="health-dot"></span>
-                <p>Course retrieval available</p>
-              </div>
-
-              <div className="health-row">
-                <span className="health-dot"></span>
-                <p>Guardrails active</p>
-              </div>
-            </article>
-          </aside>
+          
         </section>
 
         <section className="instructor-panel roster-panel">
@@ -262,8 +187,7 @@ function InstructorDashboard() {
                   <th>Student</th>
                   <th>Top topic</th>
                   <th>Questions</th>
-                  <th>Streak</th>
-                  <th>Status</th>
+                  <th>Streak</th>                  
                   <th>Last active</th>
                 </tr>
               </thead>
@@ -282,11 +206,6 @@ function InstructorDashboard() {
                     <td>{student.topTopic}</td>
                     <td>{student.questions}</td>
                     <td>{student.streak}</td>
-                    <td>
-                      <span className={`status-pill ${getStatusClass(student.status)}`}>
-                        {student.status}
-                      </span>
-                    </td>
                     <td>{student.lastActive}</td>
                   </tr>
                 ))}

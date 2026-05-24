@@ -6,6 +6,7 @@ from typing import Any
 
 from litellm import acompletion
 
+from backend.llm.costing import guardrail_component_type, tracked_acompletion
 from backend.llm.schemas import ChatMessage, ChatRole, GuardrailResult, GuardrailsProvider
 
 CompletionCallable = Callable[..., Awaitable[Any]]
@@ -218,7 +219,11 @@ class LLMJudgeGuardrailsProvider:
         default_rail: str,
     ) -> GuardrailResult:
         try:
-            response = await self._completion(
+            response = await tracked_acompletion(
+                component_type=guardrail_component_type(check_type),
+                configured_model=self._model,
+                completion=self._completion,
+                metadata={"checkType": check_type, "provider": "llm_judge"},
                 model=self._model,
                 messages=[message.model_dump(mode="json") for message in messages],
                 temperature=self._temperature,

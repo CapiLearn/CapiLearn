@@ -111,8 +111,9 @@ body {
 }
 
 /* Main */
-
 .instructor-main {
+  position: relative;
+  overflow: hidden;
   padding: 34px 42px;
   min-width: 0;
 }
@@ -124,6 +125,27 @@ body {
   gap: 24px;
 
   margin-bottom: 30px;
+}
+
+.instructor-main::after {
+  content: "";
+  position: fixed;
+  right: 32px;
+  bottom: 24px;
+  width: 300px;
+  height: 300px;
+  background-image: url("../assets/capi-instructor.svg");
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.instructor-main > * {
+  position: relative;
+  z-index: 1;
 }
 
 .instructor-kicker {
@@ -206,7 +228,7 @@ body {
 
 .instructor-content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
+  grid-template-columns: 1.4fr;
   gap: 20px;
   margin-bottom: 20px;
 }
@@ -308,83 +330,6 @@ body {
   text-align: right;
 }
 
-/* Side stack */
-
-.instructor-side-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.review-list {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 18px;
-}
-
-.review-item {
-  background: #fffdf0;
-  border: 1px solid #e0d8bd;
-  border-radius: 16px;
-  padding: 16px;
-}
-
-.review-item h3 {
-  margin: 0 0 6px;
-  font-size: 16px;
-}
-
-.review-item p {
-  margin: 0 0 12px;
-  color: #5f554b;
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.review-item span {
-  display: inline-flex;
-  border-radius: 999px;
-  background: #f4e6c1;
-  color: #846021;
-  padding: 7px 10px;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.health-panel {
-  background: #557c38;
-  color: #fff7e3;
-}
-
-.health-panel .panel-label {
-  color: rgba(255, 247, 227, 0.78);
-}
-
-.health-panel h2 {
-  margin-bottom: 18px;
-}
-
-.health-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.health-row p {
-  margin: 0;
-  font-size: 14px;
-}
-
-.health-dot {
-  width: 10px;
-  height: 10px;
-  background: #dfe8c1;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
 /* Roster */
 
 .roster-panel {
@@ -453,29 +398,6 @@ body {
   justify-content: center;
 
   font-weight: 900;
-}
-
-.status-pill {
-  display: inline-flex;
-  border-radius: 999px;
-  padding: 7px 10px;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.status-danger {
-  background: #f3d3c4;
-  color: #8a3d21;
-}
-
-.status-warning {
-  background: #f4e6c1;
-  color: #846021;
-}
-
-.status-good {
-  background: #dfe8c1;
-  color: #557c38;
 }
 
 /* Responsive */
