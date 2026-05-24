@@ -1,7 +1,12 @@
 import asyncio
 
 from backend.llm.config import InputGuardrailMode, OutputGuardrailMode, llm_settings
-from backend.llm.guardrails import NeMoGuardrailsProvider, NoopGuardrailsProvider
+from backend.llm.guardrails import (
+    CompositeGuardrailsProvider,
+    LLMJudgeGuardrailsProvider,
+    NoopGuardrailsProvider,
+    RegexGuardrailsProvider,
+)
 from backend.llm.prompts import build_messages, build_socratic_repair_messages
 from backend.llm.provider import LiteLLMProvider
 from backend.llm.schemas import (
@@ -131,13 +136,14 @@ def _build_input_guardrails() -> GuardrailsProvider:
     if llm_settings.input_guardrail_mode == InputGuardrailMode.OFF:
         return NoopGuardrailsProvider()
     if llm_settings.input_guardrail_mode == InputGuardrailMode.REGEX:
-        return NeMoGuardrailsProvider(llm_settings.regex_guardrails_config_path)
-    if llm_settings.guardrails_config_path is None:
-        return NoopGuardrailsProvider()
-    return NeMoGuardrailsProvider(
-        llm_settings.guardrails_config_path,
-        model_engine=llm_settings.guardrails_model_engine,
-        model=llm_settings.guardrails_model,
+        return RegexGuardrailsProvider()
+    if not llm_settings.guardrails_judge_enabled:
+        return RegexGuardrailsProvider()
+    return CompositeGuardrailsProvider(
+        [
+            RegexGuardrailsProvider(),
+            _build_llm_judge_guardrails(),
+        ]
     )
 
 
@@ -145,13 +151,18 @@ def _build_output_guardrails() -> GuardrailsProvider:
     if (
         not llm_settings.guardrails_enabled
         or llm_settings.output_guardrail_mode == OutputGuardrailMode.OFF
-        or llm_settings.guardrails_config_path is None
+        or not llm_settings.guardrails_judge_enabled
     ):
         return NoopGuardrailsProvider()
-    return NeMoGuardrailsProvider(
-        llm_settings.guardrails_config_path,
-        model_engine=llm_settings.guardrails_model_engine,
-        model=llm_settings.guardrails_model,
+    return _build_llm_judge_guardrails()
+
+
+def _build_llm_judge_guardrails() -> LLMJudgeGuardrailsProvider:
+    return LLMJudgeGuardrailsProvider(
+        model=llm_settings.guardrails_judge_model,
+        temperature=llm_settings.guardrails_judge_temperature,
+        timeout=llm_settings.request_timeout_seconds,
+        fail_open_on_error=llm_settings.guardrails_fail_open_on_judge_error,
     )
 
 

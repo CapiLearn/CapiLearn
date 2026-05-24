@@ -1,19 +1,18 @@
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class InputGuardrailMode(StrEnum):
-    NEMO = "nemo"
+    POLICY = "policy"
     REGEX = "regex"
     OFF = "off"
 
 
 class OutputGuardrailMode(StrEnum):
-    NEMO = "nemo"
+    POLICY = "policy"
     OFF = "off"
 
 
@@ -28,14 +27,21 @@ class LLMSettings(BaseSettings):
     max_tokens: int = 8000
     request_timeout_seconds: float = 30.0
     guardrails_enabled: bool = True
-    input_guardrail_mode: InputGuardrailMode = InputGuardrailMode.NEMO
-    output_guardrail_mode: OutputGuardrailMode = OutputGuardrailMode.NEMO
+    input_guardrail_mode: InputGuardrailMode = InputGuardrailMode.POLICY
+    output_guardrail_mode: OutputGuardrailMode = OutputGuardrailMode.POLICY
     guardrails_config_id: str = "default"
-    guardrails_config_path: Path | None = Path("backend/llm/guardrails/default")
-    regex_guardrails_config_path: Path = Path("backend/llm/guardrails/regex")
-    guardrails_model_engine: str = "litellm"
-    guardrails_model: str = "openai/gpt-4o-mini"
+    guardrails_judge_enabled: bool = True
+    guardrails_judge_model: str = "openai/gpt-4o-mini"
+    guardrails_judge_temperature: float = 0
+    guardrails_fail_open_on_judge_error: bool = True
     rag_index_version: str | None = Field(default=None)
+
+    @field_validator("input_guardrail_mode", "output_guardrail_mode", mode="before")
+    @classmethod
+    def _map_legacy_guardrail_mode(cls, value: object) -> object:
+        if isinstance(value, str) and value.lower() == "nemo":
+            return "policy"
+        return value
 
 
 @lru_cache

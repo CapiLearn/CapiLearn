@@ -1,18 +1,27 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+
+import { 
+  createConversation, 
+  createMessage, 
+  listConversations, 
+  listMessages,
+} from "../services/conversationService";
+
 import "../styles/LearningWorkspace.css";
 
 const recentChats = [
   {
     label: "Today",
-    items: ["Ipsum Lorem", "Ipsum Lorem"],
+    items: ["Gradient descent confusion", "RAG evaluation questions"],
   },
   {
     label: "Yesterday",
-    items: ["Ipsum Lorem", "Ipsum Lorem"],
+    items: ["Python decorator review", "Model monitoring notes"],
   },
   {
     label: "Last week",
-    items: ["Ipsum Lorem", "Ipsum Lorem"]
+    items: ["FastAPI readiness probes", "Postgres vector search"],
   },
 ];
 
@@ -31,7 +40,111 @@ const calendarDays = [
   "26", "27", "28", "29", "30", "31", "",
 ];
 
+const initialChatMessages = [
+  {
+    id: "mock-assistant-welcome",
+    role: "assistant",
+    content:
+      "Hi, I’m Capi. What lesson, assignment, or concept would you like help thinking through?",
+  },
+];
+
 function LearningWorkspace() {
+  const [conversationId, setConversationId] = useState(null);
+
+  const [chatMessages, setChatMessages] = useState(initialChatMessages);
+
+  //State variables
+
+  const [inputValue, setInputValue] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [conversations, setConversations] = useState([]);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+
+  useEffect(() => {
+    async function loadConversations() {
+      try {
+        setIsLoadingConversations(true);
+
+        const data = await listConversations();
+
+        setConversations(data.conversations || []);
+      } catch (error) {
+        setErrorMessage(error.message || "Unable to load conversations.");
+      } finally {
+        setIsLoadingConversations(false);
+      }
+    }
+
+    loadConversations();
+  }, []);
+
+  async function handleSendMessage(event) {
+    event.preventDefault();
+
+    const trimmedMessage = inputValue.trim();
+
+    if (!trimmedMessage) {
+      return;
+    }
+
+    try {
+      setIsSending(true);
+      setErrorMessage("");
+
+      let data;
+
+      if (conversationId) {
+        data = await createMessage(conversationId, trimmedMessage);
+        } else {
+          data = await createConversation(trimmedMessage);
+          setConversationId(data.conversation.id);
+
+          setConversations((currentConversations) => [
+            data.conversation,
+            ...currentConversations,
+          ]);
+        }
+        
+      setChatMessages((currentMessages) => [
+        ...currentMessages,
+        data.userMessage,
+        data.assistantMessage,
+      ]);
+
+      setInputValue("");
+    } catch (error) {
+      setErrorMessage(error.message || "Unable to send message.");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  function handleNewConversation() {
+    setConversationId(null);
+    setChatMessages([...initialChatMessages]);
+    setInputValue("");
+    setErrorMessage("");
+  }
+
+  async function handleSelectConversation(selectedConversationId) {
+    try {
+      setIsLoadingMessages(true);
+      setErrorMessage("");
+      setConversationId(selectedConversationId);
+
+      const data = await listMessages(selectedConversationId);
+
+      setChatMessages(data.messages || []);
+    } catch (error) {
+      setErrorMessage(error.message || "Unable to load conversation messages.");
+    } finally {
+      setIsLoadingMessages(false);
+    }
+  } 
+
   return (
     <main className="workspace-page">
       <aside className="workspace-sidebar">
@@ -40,7 +153,13 @@ function LearningWorkspace() {
           <span>CapiLearn</span>
         </div>
 
-        <button className="new-chat-button">+ New conversation</button>
+        <button
+          className="new-chat-button"
+          type="button"
+          onClick={handleNewConversation}
+        >
+          + New conversation
+        </button>
 
         <div className="search-box">
           <span>⌕</span>
@@ -48,21 +167,38 @@ function LearningWorkspace() {
         </div>
 
         <div className="chat-history">
-          {recentChats.map((group) => (
-            <section className="chat-group" key={group.label}>
-              <h3>{group.label}</h3>
+          <section className="chat-group">
+            <h3>Conversations</h3>
 
-              {group.items.map((item) => (
-                <button className="chat-history-item" key={item}>
-                  {item}
+            {isLoadingConversations && (
+              <p className="sidebar-helper-text">Loading conversations...</p>
+            )}
+
+            {!isLoadingConversations && conversations.length === 0 && (
+              <p className="sidebar-helper-text">No conversations yet.</p>
+            )}
+
+            {!isLoadingConversations &&
+              conversations.map((conversation) => (
+                <button
+                  className={`chat-history-item ${
+                    conversation.id === conversationId ? "active-conversation" : ""
+                  }`}
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => handleSelectConversation(conversation.id)}
+                >
+                  {conversation.title || "Untitled conversation"}
                 </button>
-              ))}
-            </section>
-          ))}
+            ))}
+             
+          </section>
         </div>
+
         <Link className="workspace-logout-link" to="/">
           Log out
         </Link>
+
         <div className="student-profile">
           <div className="student-avatar">J</div>
           <div>
@@ -85,7 +221,7 @@ function LearningWorkspace() {
             <Link className="workspace-dashboard-link" to="/student-dashboard">
               Dashboard
             </Link>
-          </div>  
+          </div>
         </header>
 
         <section className="welcome-card">
@@ -106,7 +242,12 @@ function LearningWorkspace() {
 
           <div className="prompt-grid">
             {suggestedPrompts.map((prompt) => (
-              <button className="prompt-card" key={prompt}>
+              <button
+                className="prompt-card"
+                key={prompt}
+                type="button"
+                onClick={() => setInputValue(prompt)}
+              >
                 {prompt}
               </button>
             ))}
@@ -114,22 +255,38 @@ function LearningWorkspace() {
         </section>
 
         <section className="chat-preview">
-          <div className="message student-message">
-            <p>I’m stuck on the assignment. I don’t know where to start.</p>
-          </div>
+          {isLoadingMessages && (
+            <p className="workspace-loading-message">Loading conversation...</p>
+          )}
 
-          <div className="message tutor-message">
-            <p>
-              Let’s slow it down. What part feels unclear: the instructions, the
-              code structure, or the concept being tested?
-            </p>
-          </div>
+          {chatMessages.map((message) => (
+            <div
+              className={`message ${
+                message.role === "user" ? "student-message" : "tutor-message"
+              }`}
+              key={message.id}
+            >
+              <p>{message.content}</p>
+            </div>
+          ))}
         </section>
 
-        <form className="chat-input-bar">
-          <input type="text" placeholder="Ask about your lesson..." />
-          <button type="button">Send</button>
+        <form className="chat-input-bar" onSubmit={handleSendMessage}>
+          <input
+            type="text"
+            placeholder="Ask about your lesson..."
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+          />
+
+          <button type="submit" disabled={isSending}>
+            {isSending ? "Sending..." : "Send"}
+          </button>
         </form>
+
+        {errorMessage && (
+          <p className="workspace-error-message">{errorMessage}</p>
+        )}
       </section>
 
       <aside className="study-panel">

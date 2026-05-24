@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -41,11 +42,16 @@ class Conversation(Base):
     guardrails_config_id: Mapped[str | None] = mapped_column(String(120))
     rag_index_version: Mapped[str | None] = mapped_column(String(120))
     extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        index=True,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
         onupdate=utc_now,
+        index=True,
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -59,6 +65,8 @@ class Message(Base):
     __tablename__ = "message"
     __table_args__ = (
         UniqueConstraint("conversation_id", "sequence", name="message_conversation_sequence_key"),
+        Index("message_role_created_at_idx", "role", "created_at"),
+        Index("message_status_created_at_idx", "status", "created_at"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -92,6 +100,10 @@ class Message(Base):
     provider_response: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        index=True,
+    )
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
