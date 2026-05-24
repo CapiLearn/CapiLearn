@@ -1,0 +1,33 @@
+<svg width="320" height="320" viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg">
+  <rect width="320" height="320" fill="none"></rect>
+
+  <!-- Desk -->
+  <rect x="50" y="220" width="220" height="35" rx="8" fill="#8a6f4d"></rect>
+  <rect x="70" y="250" width="20" height="45" rx="4" fill="#5f554b"></rect>
+  <rect x="230" y="250" width="20" height="45" rx="4" fill="#5f554b"></rect>
+
+  <!-- Laptop -->
+  <rect x="120" y="145" width="105" height="70" rx="8" fill="#2b1d15"></rect>
+  <rect x="132" y="157" width="81" height="45" rx="4" fill="#dfe8c1"></rect>
+  <rect x="105" y="215" width="135" height="10" rx="5" fill="#2b1d15"></rect>
+
+  <!-- Capi body -->
+  <ellipse cx="115" cy="185" rx="68" ry="50" fill="#8a6f4d"></ellipse>
+  <circle cx="92" cy="135" r="34" fill="#8a6f4d"></circle>
+  <circle cx="68" cy="127" r="12" fill="#8a6f4d"></circle>
+
+  <!-- Hoodie -->
+  <path d="M60 175 C75 145 150 145 175 178 L190 230 H55 Z" fill="#557c38"></path>
+  <path d="M88 170 C95 185 125 185 132 170" fill="none" stroke="#fff7e3" stroke-width="5" stroke-linecap="round"></path>
+  <line x1="103" y1="176" x2="100" y2="205" stroke="#fff7e3" stroke-width="4"></line>
+  <line x1="122" y1="176" x2="128" y2="205" stroke="#fff7e3" stroke-width="4"></line>
+
+  <!-- Face -->
+  <circle cx="84" cy="134" r="4" fill="#2b1d15"></circle>
+  <circle cx="104" cy="137" r="4" fill="#2b1d15"></circle>
+  <ellipse cx="94" cy="148" rx="8" ry="5" fill="#2b1d15"></ellipse>
+
+  <!-- Coffee mug -->
+  <rect x="235" y="188" width="28" height="32" rx="6" fill="#fff7e3"></rect>
+  <path d="M263 197 C278 197 278 213 263 213" fill="none" stroke="#fff7e3" stroke-width="5"></path>
+</svg>
