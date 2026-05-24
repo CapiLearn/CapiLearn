@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import MarkdownMessage from "../components/MarkdownMessage";
 
 import { 
   createConversation, 
@@ -266,7 +267,11 @@ function LearningWorkspace() {
               }`}
               key={message.id}
             >
-              <p>{message.content}</p>
+              {message.role === "assistant" ? (
+                <MarkdownMessage content={message.content} />
+              ) : (
+                <p>{message.content}</p>
+              )}
             </div>
           ))}
         </section>
