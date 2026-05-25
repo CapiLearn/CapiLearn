@@ -119,19 +119,12 @@ async function mockListMessages(conversationId) {
 
 async function handleResponse(response) {
   if (!response.ok) {
-    let errorData = null;
-
     try {
-      errorData = await response.json();
+      const errorData = await response.json();
+      throw new Error(errorData.message || "Request failed.");
     } catch {
-      errorData = {
-        code: "unknown_error",
-        message: "Something went wrong.",
-        details: null,
-      };
+      throw new Error("Request failed.");
     }
-
-    throw new Error(errorData.message || "Request failed.");
   }
 
   if (response.status === 204) {
@@ -140,6 +133,7 @@ async function handleResponse(response) {
 
   return response.json();
 }
+
 export async function listConversations() {
   if (USE_MOCK_API) {
     return {

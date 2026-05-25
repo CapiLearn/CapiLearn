@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import MarkdownMessage from "../components/MarkdownMessage";
 
 import { 
   createConversation, 
@@ -9,21 +10,6 @@ import {
 } from "../services/conversationService";
 
 import "../styles/LearningWorkspace.css";
-
-const recentChats = [
-  {
-    label: "Today",
-    items: ["Gradient descent confusion", "RAG evaluation questions"],
-  },
-  {
-    label: "Yesterday",
-    items: ["Python decorator review", "Model monitoring notes"],
-  },
-  {
-    label: "Last week",
-    items: ["FastAPI readiness probes", "Postgres vector search"],
-  },
-];
 
 const suggestedPrompts = [
   "Help me understand this lesson",
@@ -266,7 +252,11 @@ function LearningWorkspace() {
               }`}
               key={message.id}
             >
-              <p>{message.content}</p>
+              {message.role === "assistant" ? (
+                <MarkdownMessage content={message.content} />
+              ) : (
+                <p>{message.content}</p>
+              )}
             </div>
           ))}
         </section>
