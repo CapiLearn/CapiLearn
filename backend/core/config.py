@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -11,6 +12,11 @@ class Settings(BaseSettings):
     app_name: str = "CapiLearn API"
     environment: str = "local"
     api_prefix: str = "/api"
+    log_level: str = "INFO"
+    log_format: Literal["json", "plain"] = "json"
+    request_id_header: str = "X-Request-Id"
+    observability_enabled: bool = True
+    observability_capture_content: bool = False
     database_url: str = Field(
         default="postgresql+asyncpg://capilearn:capilearn@localhost:5432/capilearn",
         validation_alias="DATABASE_URL",

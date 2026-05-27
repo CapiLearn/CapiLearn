@@ -210,4 +210,4 @@ npm run build
 
     Jose - UI/UX, endpoints
     Stephan - LLM, guardrails
-    Lizzy - RAG, ingestion
+    Lizzie - RAG, ingestion

@@ -46,6 +46,11 @@ function LandingPage() {
               <Link className="capilearn-secondary link-button" to="/instructor-dashboard">
                 Instructor Dashboard
               </Link>
+              
+              <Link className="capilearn-secondary link-button" to="/admin-dashboard">
+                Administrator Dashboard
+              </Link>
+
             </div>
 
             <div className="capilearn-feature-row" id="features">

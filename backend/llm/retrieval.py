@@ -3,6 +3,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from backend.core.observability import log_event
 from backend.llm.schemas import RetrievalProvider, RetrievalResult, RetrievedChunk
 from backend.rag.query import RagQueryEngine, get_default_query_engine
 
@@ -38,14 +39,16 @@ class RagRetrievalProvider(RetrievalProvider):
             return RetrievalResult(
                 chunks=[_retrieved_chunk_from_raw(item) for item in raw_chunks],
             )
-        except Exception:
-            logger.exception(
-                "RAG retrieval failed; continuing without retrieved context.",
-                extra={
-                    "user_id": str(user_id),
-                    "conversation_id": str(conversation_id),
-                    "user_message_id": str(user_message_id),
-                },
+        except Exception as exc:
+            log_event(
+                logger,
+                "rag.retrieve.failed",
+                level=logging.ERROR,
+                user_id=str(user_id),
+                conversation_id=str(conversation_id),
+                user_message_id=str(user_message_id),
+                error_type=type(exc).__name__,
+                exc_info=True,
             )
             return RetrievalResult(chunks=[])
 
