@@ -35,6 +35,13 @@ const initialChatMessages = [
   },
 ];
 
+/**
+ * Learning workspace page for student chat.
+ *
+ * Handles conversation creation, follow-up messages, sidebar conversation
+ * selection, new conversation reset behavior, and assistant response display.
+ */
+
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
 

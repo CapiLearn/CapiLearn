@@ -66,6 +66,14 @@ function getStatusClass(status) {
   return "admin-status-danger";
 }
 
+/**
+ * Admin dashboard page for operational usage metrics.
+ *
+ * Loads aggregate platform usage data from the admin API and displays
+ * high-level metrics such as users, conversations, queries, responses,
+ * failures, blocked responses, token usage, cost, and latency.
+ */
+
 function AdminDashboard() {
   const [usageSummary, setUsageSummary] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
