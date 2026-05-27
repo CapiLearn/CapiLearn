@@ -134,6 +134,14 @@ async function handleResponse(response) {
   return response.json();
 }
 
+/**
+ * Parses a fetch response and raises a readable error when the API fails.
+ *
+ * @param {Response} response - Fetch API response object.
+ * @returns {Promise<Object>} Parsed JSON response body.
+ * @throws {Error} When the response status is not successful.
+ */
+
 export async function listConversations() {
   if (USE_MOCK_API) {
     return {
@@ -149,6 +157,17 @@ export async function listConversations() {
   });
 
   return handleResponse(response);
+
+/**
+ * Starts a new conversation with the student's first message.
+ *
+ * The backend response includes the created conversation, saved user message,
+ * and generated assistant message.
+ *
+ * @param {string} content - First message submitted by the student.
+ * @returns {Promise<Object>} Conversation creation response.
+ */
+
 }
 export async function createConversation(content) {
   if (USE_MOCK_API) {
@@ -169,6 +188,13 @@ export async function createConversation(content) {
   return handleResponse(response);
 }
 
+/**
+ * Loads all messages for a selected conversation.
+ *
+ * @param {string} conversationId - ID of the conversation to load.
+ * @returns {Promise<Object>} Object containing a messages array.
+ */
+
 export async function listMessages(conversationId) {
   if (USE_MOCK_API) {
     return mockListMessages(conversationId);
@@ -186,6 +212,17 @@ export async function listMessages(conversationId) {
 
   return handleResponse(response);
 }
+
+/**
+ * Sends a follow-up message in an existing conversation.
+ *
+ * The backend response includes the saved user message and generated
+ * assistant message for the active conversation.
+ *
+ * @param {string} conversationId - ID of the active conversation.
+ * @param {string} content - Message submitted by the student.
+ * @returns {Promise<Object>} Message creation response.
+ */
 
 export async function createMessage(conversationId, content) {
   if (USE_MOCK_API) {
