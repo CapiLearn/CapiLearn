@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Index, String, Uuid
+from sqlalchemy import CheckConstraint, DateTime, Index, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.database import Base
@@ -14,6 +14,10 @@ def utc_now() -> datetime:
 class UserAccount(Base):
     __tablename__ = "user_account"
     __table_args__ = (
+        CheckConstraint(
+            "role IN ('student', 'instructor', 'admin')",
+            name="role",
+        ),
         Index("user_account_clerk_id_idx", "clerk_id", unique=True),
         Index("user_account_role_idx", "role"),
     )

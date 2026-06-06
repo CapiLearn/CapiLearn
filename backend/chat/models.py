@@ -29,7 +29,12 @@ class Conversation(Base):
     __tablename__ = "conversation"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
     title: Mapped[str | None] = mapped_column(String(160))
     status: Mapped[str] = mapped_column(
         String(32),
@@ -75,7 +80,12 @@ class Message(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(
