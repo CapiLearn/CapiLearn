@@ -132,6 +132,8 @@ frontend/
     uv run alembic current
     ```
 
+    The migration graph should have one head; verify it with `uv run alembic heads`.
+
     If you already created tables locally with the old manual Python command,
     stamp the database instead of rerunning the initial migration:
 
