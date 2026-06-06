@@ -113,6 +113,33 @@ async def test_auth_claim_role_payload_does_not_seed_local_role() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auth_claim_role_payload_does_not_override_existing_local_role() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_role_claim",
+        role=UserRole.STUDENT.value,
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+
+    current_user = await AuthUserService(repository).get_or_create_current_user(
+        session,
+        ClerkAuthClaims(
+            clerk_id="user_role_claim",
+            claims={"sub": "user_role_claim", "role": "admin"},
+        ),
+    )
+
+    assert current_user.role == UserRole.STUDENT
+    assert user.role == UserRole.STUDENT.value
+    assert session.commits == 0
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_role_claim"),
+        ("apply_profile_claims", None, None),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_explicit_initial_role_seeds_new_local_user() -> None:
     session = FakeSession()
     repository = FakeUserRepository()
@@ -137,6 +164,67 @@ async def test_explicit_initial_role_seeds_new_local_user() -> None:
 
 
 @pytest.mark.asyncio
+async def test_role_override_updates_existing_active_user_role() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_test_admin",
+        role=UserRole.STUDENT.value,
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+
+    current_user = await AuthUserService(repository).get_or_create_current_user(
+        session,
+        ClerkAuthClaims(clerk_id="user_test_admin", claims={"sub": "user_test_admin"}),
+        initial_role=UserRole.ADMIN,
+        role_override=UserRole.ADMIN,
+    )
+
+    assert current_user.role == UserRole.ADMIN
+    assert user.role == UserRole.ADMIN.value
+    assert session.commits == 1
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_test_admin"),
+        ("apply_profile_claims", None, None),
+        ("apply_role", UserRole.ADMIN),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_role_override_changes_are_reflected_across_requests() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_test_mode",
+        role=UserRole.STUDENT.value,
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+    service = AuthUserService(repository)
+    claims = ClerkAuthClaims(
+        clerk_id="user_test_mode",
+        claims={"sub": "user_test_mode"},
+    )
+
+    admin_user = await service.get_or_create_current_user(
+        session,
+        claims,
+        initial_role=UserRole.ADMIN,
+        role_override=UserRole.ADMIN,
+    )
+    instructor_user = await service.get_or_create_current_user(
+        session,
+        claims,
+        initial_role=UserRole.INSTRUCTOR,
+        role_override=UserRole.INSTRUCTOR,
+    )
+
+    assert admin_user.role == UserRole.ADMIN
+    assert instructor_user.role == UserRole.INSTRUCTOR
+    assert user.role == UserRole.INSTRUCTOR.value
+    assert session.commits == 2
+
+
+@pytest.mark.asyncio
 async def test_soft_deleted_user_is_rejected() -> None:
     user = UserAccount(
         id=uuid4(),
@@ -156,6 +244,41 @@ async def test_soft_deleted_user_is_rejected() -> None:
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert exc_info.value.code == "forbidden"
     assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_role_override_does_not_reactivate_or_mutate_soft_deleted_user() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_deleted",
+        email="old@example.com",
+        display_name="Old Name",
+        role=UserRole.STUDENT.value,
+        deleted_at=datetime.now(UTC),
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+
+    with pytest.raises(ApiError) as exc_info:
+        await AuthUserService(repository).get_or_create_current_user(
+            session,
+            ClerkAuthClaims(
+                clerk_id="user_deleted",
+                email="new@example.com",
+                display_name="New Name",
+                claims={"sub": "user_deleted"},
+            ),
+            initial_role=UserRole.ADMIN,
+            role_override=UserRole.ADMIN,
+        )
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    assert exc_info.value.code == "forbidden"
+    assert user.email == "old@example.com"
+    assert user.display_name == "Old Name"
+    assert user.role == UserRole.STUDENT.value
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_deleted")]
 
 
 @pytest.mark.asyncio
@@ -183,6 +306,7 @@ async def test_concurrent_first_request_conflict_rolls_back_and_returns_existing
         ("get_by_clerk_id", "user_race"),
         ("create", "user_race", None, None, UserRole.STUDENT),
         ("get_by_clerk_id", "user_race"),
+        ("apply_profile_claims", None, None),
     ]
 
 
@@ -275,3 +399,7 @@ class FakeUserRepository(UserAccountRepository):
             email=email,
             display_name=display_name,
         )
+
+    def apply_role(self, user: UserAccount, role: UserRole) -> bool:
+        self.calls.append(("apply_role", role))
+        return super().apply_role(user, role)

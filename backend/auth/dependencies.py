@@ -116,13 +116,19 @@ async def get_current_user(
     service: AuthUserServiceDep,
     settings: SettingsDep,
 ) -> CurrentUser:
-    initial_role = (
-        UserRole(settings.test_auth_role) if settings.auth_mode == "test" else UserRole.STUDENT
-    )
+    if settings.auth_mode == "test":
+        test_role = UserRole(settings.test_auth_role)
+        return await service.get_or_create_current_user(
+            session,
+            auth_claims,
+            initial_role=test_role,
+            role_override=test_role,
+        )
+
     return await service.get_or_create_current_user(
         session,
         auth_claims,
-        initial_role=initial_role,
+        initial_role=UserRole.STUDENT,
     )
 
 

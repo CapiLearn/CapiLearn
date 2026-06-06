@@ -49,3 +49,9 @@ class UserAccountRepository:
             user.display_name = display_name
             changed = True
         return changed
+
+    def apply_role(self, user: UserAccount, role: UserRole) -> bool:
+        if user.role == role.value:
+            return False
+        user.role = role.value
+        return True

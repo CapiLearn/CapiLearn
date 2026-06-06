@@ -135,6 +135,93 @@ async def test_test_auth_mode_creates_local_user_with_configured_claims() -> Non
     ]
 
 
+@pytest.mark.asyncio
+async def test_test_auth_mode_updates_existing_local_user_with_configured_claims() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_test_mode",
+        email="old@example.com",
+        display_name="Old Name",
+        role=UserRole.STUDENT.value,
+    )
+    repository = FakeUserRepository(user=user)
+    session = FakeSession()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_mode="test",
+        test_auth_clerk_id="user_test_mode",
+        test_auth_email="dev@example.com",
+        test_auth_display_name="Local Dev",
+        test_auth_role="admin",
+    )
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/me",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "id": str(user.id),
+        "clerkId": "user_test_mode",
+        "email": "dev@example.com",
+        "displayName": "Local Dev",
+        "role": "admin",
+    }
+    assert user.email == "dev@example.com"
+    assert user.display_name == "Local Dev"
+    assert user.role == UserRole.ADMIN.value
+    assert session.commits == 1
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_test_mode"),
+        ("apply_profile_claims", "dev@example.com", "Local Dev"),
+        ("apply_role", UserRole.ADMIN),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_me_keeps_existing_local_role_when_clerk_claim_has_role() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_clerk_mode",
+        role=UserRole.STUDENT.value,
+    )
+    repository = FakeUserRepository(user=user)
+    session = FakeSession()
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
+        ClerkAuthClaims(
+            clerk_id="user_clerk_mode",
+            claims={"sub": "user_clerk_mode", "role": "admin"},
+        )
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/me",
+            headers={"Authorization": "Bearer clerk"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "student"
+    assert user.role == UserRole.STUDENT.value
+    assert session.commits == 0
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_clerk_mode"),
+        ("apply_profile_claims", None, None),
+    ]
+
+
 class FakeVerifier:
     def __init__(self, claims: ClerkAuthClaims) -> None:
         self._claims = claims
@@ -212,3 +299,7 @@ class FakeUserRepository(UserAccountRepository):
             email=email,
             display_name=display_name,
         )
+
+    def apply_role(self, user: UserAccount, role: UserRole) -> bool:
+        self.calls.append(("apply_role", role))
+        return super().apply_role(user, role)
