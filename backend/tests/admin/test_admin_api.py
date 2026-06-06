@@ -15,6 +15,12 @@ from backend.admin.schemas import (
     UsageRange,
 )
 from backend.admin.service import AdminUsageService
+from backend.auth.dependencies import get_current_user, get_user_repository
+from backend.auth.models import UserAccount
+from backend.auth.repository import UserAccountRepository
+from backend.auth.schemas import CurrentUser, UserRole
+from backend.core.config import Settings, get_settings
+from backend.core.database import get_db
 from backend.main import app
 
 
@@ -38,8 +44,16 @@ def test_admin_openapi_exposes_usage_summary_route() -> None:
     )
 
 
+def _authorize(role: UserRole = UserRole.ADMIN) -> None:
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id=uuid4(),
+        clerk_id=f"user_{role.value}_{uuid4().hex}",
+        role=role,
+    )
+
+
 @pytest.mark.asyncio
-async def test_usage_summary_requires_admin_header() -> None:
+async def test_usage_summary_requires_bearer_auth() -> None:
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -53,8 +67,8 @@ async def test_usage_summary_requires_admin_header() -> None:
         )
 
     expected = {
-        "code": "admin_required",
-        "message": "Admin access is required.",
+        "code": "auth_required",
+        "message": "Authentication is required.",
         "details": None,
     }
     assert missing_response.status_code == 401
@@ -64,7 +78,7 @@ async def test_usage_summary_requires_admin_header() -> None:
 
 
 @pytest.mark.asyncio
-async def test_usage_summary_accepts_normalized_true_admin_header() -> None:
+async def test_usage_summary_ignores_old_admin_header() -> None:
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -75,6 +89,21 @@ async def test_usage_summary_accepts_normalized_true_admin_header() -> None:
             "/api/admin/usage/summary",
             headers={"X-Admin-User": " TRUE "},
         )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "auth_required"
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_accepts_admin_role() -> None:
+    _authorize(UserRole.ADMIN)
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/admin/usage/summary")
 
     assert response.status_code == 200
     payload = response.json()
@@ -88,6 +117,7 @@ async def test_usage_summary_accepts_normalized_true_admin_header() -> None:
 
 @pytest.mark.asyncio
 async def test_usage_summary_rejects_invalid_date_ranges() -> None:
+    _authorize(UserRole.ADMIN)
     app.dependency_overrides[get_admin_usage_service] = lambda: AdminUsageService(
         session=object(),
         repository=EmptyUsageRepository(),
@@ -100,7 +130,6 @@ async def test_usage_summary_rejects_invalid_date_ranges() -> None:
     ) as client:
         response = await client.get(
             "/api/admin/usage/summary?fromDate=2026-05-01&toDate=2026-05-01",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 400
@@ -116,6 +145,7 @@ async def test_usage_summary_rejects_invalid_date_ranges() -> None:
 
 @pytest.mark.asyncio
 async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
+    _authorize(UserRole.ADMIN)
     repository = EmptyUsageRepository()
     app.dependency_overrides[get_admin_usage_service] = lambda: AdminUsageService(
         session=object(),
@@ -129,7 +159,6 @@ async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
     ) as client:
         response = await client.get(
             "/api/admin/usage/summary",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 200
@@ -150,7 +179,7 @@ async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cost_components_endpoint_requires_admin_header() -> None:
+async def test_cost_components_endpoint_requires_auth() -> None:
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -160,11 +189,12 @@ async def test_cost_components_endpoint_requires_admin_header() -> None:
         response = await client.get("/api/admin/usage/cost-components")
 
     assert response.status_code == 401
-    assert response.json()["code"] == "admin_required"
+    assert response.json()["code"] == "auth_required"
 
 
 @pytest.mark.asyncio
 async def test_cost_components_endpoint_returns_granular_rows() -> None:
+    _authorize(UserRole.ADMIN)
     service = FakeAdminUsageService()
     app.dependency_overrides[get_admin_usage_service] = lambda: service
 
@@ -175,7 +205,6 @@ async def test_cost_components_endpoint_returns_granular_rows() -> None:
         response = await client.get(
             "/api/admin/usage/cost-components?fromDate=2026-05-01&toDate=2026-05-04"
             "&componentType=main_generation&limit=25&offset=50",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 200
@@ -192,6 +221,7 @@ async def test_cost_components_endpoint_returns_granular_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
+    _authorize(UserRole.ADMIN)
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -200,10 +230,77 @@ async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
     ) as client:
         response = await client.get(
             "/api/admin/usage/cost-components?limit=501",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [UserRole.STUDENT, UserRole.INSTRUCTOR])
+async def test_usage_summary_rejects_non_admin_roles(role: UserRole) -> None:
+    _authorize(role)
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/admin/usage/summary")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "admin_required",
+        "message": "Admin access is required.",
+        "details": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_test_auth_mode_rejects_non_admin_role() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_mode="test",
+        test_auth_clerk_id="user_test_student",
+        test_auth_role="student",
+    )
+    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    app.dependency_overrides[get_user_repository] = lambda: FakeUserRepository()
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "admin_required"
+
+
+@pytest.mark.asyncio
+async def test_test_auth_mode_accepts_admin_role() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_mode="test",
+        test_auth_clerk_id="user_test_admin",
+        test_auth_role="admin",
+    )
+    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    app.dependency_overrides[get_user_repository] = lambda: FakeUserRepository()
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["totalUsers"] == 18
 
 
 class FakeAdminUsageService:
@@ -299,5 +396,60 @@ class EmptyUsageRepository:
     async def list_daily_usage(self, session, *, range_start, range_end):
         return []
 
-    async def list_cost_components(self, session, **kwargs):
-        return []
+
+def _fake_db_override(session):
+    async def override():
+        yield session
+
+    return override
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class FakeUserRepository(UserAccountRepository):
+    def __init__(self) -> None:
+        self.user: UserAccount | None = None
+
+    async def get_by_clerk_id(self, session, *, clerk_id: str) -> UserAccount | None:
+        return self.user
+
+    async def create(
+        self,
+        session,
+        *,
+        clerk_id: str,
+        email: str | None = None,
+        display_name: str | None = None,
+        role: UserRole = UserRole.STUDENT,
+    ) -> UserAccount:
+        self.user = UserAccount(
+            id=uuid4(),
+            clerk_id=clerk_id,
+            email=email,
+            display_name=display_name,
+            role=role.value,
+        )
+        return self.user
+
+    def apply_profile_claims(
+        self,
+        user: UserAccount,
+        *,
+        email: str | None,
+        display_name: str | None,
+    ) -> bool:
+        return super().apply_profile_claims(
+            user,
+            email=email,
+            display_name=display_name,
+        )

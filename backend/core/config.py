@@ -1,6 +1,5 @@
 from functools import lru_cache
 from typing import Literal
-from uuid import UUID
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,7 +29,6 @@ class Settings(BaseSettings):
     test_auth_email: str | None = None
     test_auth_display_name: str | None = None
     test_auth_role: Literal["student", "instructor", "admin"] = "student"
-    local_dev_user_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @lru_cache

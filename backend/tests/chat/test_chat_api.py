@@ -5,6 +5,8 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from backend.auth.dependencies import get_current_user
+from backend.auth.schemas import CurrentUser, UserRole
 from backend.chat.dependencies import get_chat_service
 from backend.chat.schemas import (
     ConversationListResponse,
@@ -59,8 +61,17 @@ def test_chat_routes_have_stable_operation_ids() -> None:
     )
 
 
+def _authorize(role: UserRole = UserRole.STUDENT) -> None:
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id=uuid4(),
+        clerk_id=f"user_{role.value}_{uuid4().hex}",
+        role=role,
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_conversation_returns_complete_message_response() -> None:
+    _authorize()
     app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
 
     async with AsyncClient(
@@ -91,7 +102,7 @@ async def test_create_conversation_returns_complete_message_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_user_header_returns_401() -> None:
+async def test_old_user_header_is_not_trusted() -> None:
     app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
 
     async with AsyncClient(
@@ -105,14 +116,15 @@ async def test_invalid_user_header_returns_401() -> None:
 
     assert response.status_code == 401
     assert response.json() == {
-        "code": "invalid_user_header",
-        "message": "X-User-Id must be a valid UUID.",
+        "code": "auth_required",
+        "message": "Authentication is required.",
         "details": None,
     }
 
 
 @pytest.mark.asyncio
 async def test_followup_message_surfaces_ownership_failure() -> None:
+    _authorize()
     app.dependency_overrides[get_chat_service] = lambda: MissingConversationService()
 
     async with AsyncClient(
@@ -130,6 +142,7 @@ async def test_followup_message_surfaces_ownership_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_blocked_input_returns_blocked_assistant_message() -> None:
+    _authorize()
     app.dependency_overrides[get_chat_service] = lambda: BlockedChatService()
 
     async with AsyncClient(
@@ -150,6 +163,7 @@ async def test_blocked_input_returns_blocked_assistant_message() -> None:
 
 @pytest.mark.asyncio
 async def test_conversation_and_message_reads_are_frontend_safe() -> None:
+    _authorize()
     app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
 
     async with AsyncClient(
@@ -182,6 +196,7 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_conversation_returns_empty_204_response() -> None:
+    _authorize()
     service = FakeChatService()
     app.dependency_overrides[get_chat_service] = lambda: service
 
@@ -194,6 +209,24 @@ async def test_delete_conversation_returns_empty_204_response() -> None:
     assert response.status_code == 204
     assert response.content == b""
     assert service.deleted_conversation_id == FakeChatService.conversation_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role",
+    [UserRole.STUDENT, UserRole.INSTRUCTOR, UserRole.ADMIN],
+)
+async def test_chat_routes_accept_authenticated_roles(role: UserRole) -> None:
+    _authorize(role)
+    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/conversations")
+
+    assert response.status_code == 200
 
 
 class FakeChatService:
