@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
 
@@ -39,6 +39,7 @@ function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
 
   const [chatMessages, setChatMessages] = useState(initialChatMessages);
+  const activeConversationIdRef = useRef(null);
 
   //State variables
 
@@ -76,29 +77,38 @@ function LearningWorkspace() {
       return;
     }
 
+    const targetConversationId = conversationId;
+
     try {
       setIsSending(true);
       setErrorMessage("");
 
-      let data;
+      if (targetConversationId) {
+        const data = await createMessage(targetConversationId, trimmedMessage);
 
-      if (conversationId) {
-        data = await createMessage(conversationId, trimmedMessage);
-        } else {
-          data = await createConversation(trimmedMessage);
-          setConversationId(data.conversation.id);
+        if (activeConversationIdRef.current === targetConversationId) {
+          setChatMessages((currentMessages) => [
+            ...currentMessages,
+            data.userMessage,
+            data.assistantMessage,
+          ]);
+        }
+      } else {
+        const data = await createConversation(trimmedMessage);
+        const newConversationId = data.conversation.id;
+
+        if (activeConversationIdRef.current === null) {
+          activeConversationIdRef.current = newConversationId;
+          setConversationId(newConversationId);
 
           setConversations((currentConversations) => [
             data.conversation,
             ...currentConversations,
           ]);
+
+          setChatMessages([data.userMessage, data.assistantMessage]);
         }
-        
-      setChatMessages((currentMessages) => [
-        ...currentMessages,
-        data.userMessage,
-        data.assistantMessage,
-      ]);
+      }
 
       setInputValue("");
     } catch (error) {
@@ -107,29 +117,38 @@ function LearningWorkspace() {
       setIsSending(false);
     }
   }
-
+  
   function handleNewConversation() {
+    activeConversationIdRef.current = null;
     setConversationId(null);
     setChatMessages([...initialChatMessages]);
     setInputValue("");
     setErrorMessage("");
+    setIsLoadingMessages(false);
   }
-
+      
   async function handleSelectConversation(selectedConversationId) {
-    try {
-      setIsLoadingMessages(true);
-      setErrorMessage("");
-      setConversationId(selectedConversationId);
+    activeConversationIdRef.current = selectedConversationId;
+    setConversationId(selectedConversationId);
+    setIsLoadingMessages(true);
+    setErrorMessage("");
 
+    try {
       const data = await listMessages(selectedConversationId);
+
+      if (activeConversationIdRef.current !== selectedConversationId) {
+        return;
+      }
 
       setChatMessages(data.messages || []);
     } catch (error) {
-      setErrorMessage(error.message || "Unable to load conversation messages.");
+      if (activeConversationIdRef.current === selectedConversationId) {
+        setErrorMessage(error.message || "Unable to load conversation messages.");
+      }
     } finally {
       setIsLoadingMessages(false);
     }
-  } 
+  }
 
   return (
     <main className="workspace-page">
