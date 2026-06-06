@@ -1,91 +1,116 @@
-# RAG Layer — Architecture
+# RAG Layer - Architecture
 
 ## Purpose
 
-The RAG (Retrieval-Augmented Generation) layer is responsible for turning raw course content into semantically searchable chunks and retrieving the most relevant chunks for a given student question. It provides context to a future answer-generation layer; it does not generate answers itself.
+The RAG layer turns course source files into searchable embeddings and supplies
+relevant course context to the chat generation flow. PostgreSQL with pgvector
+is the intended primary store. The existing Chroma implementation remains
+available temporarily through `RAG_BACKEND=chroma`.
 
-## Current Scope
+The RAG layer retrieves context; the existing LLM service remains responsible
+for guardrails, prompt construction, generation, and response handling.
 
-- Loading and chunking processed course documents
-- Filtering documents to English-language content only
-- Generating local embeddings using `sentence-transformers/all-MiniLM-L6-v2`
-- Persisting embeddings in a local ChromaDB vector store
-- Querying the vector store by semantic similarity to return ranked context chunks
-- Manual evaluation of retrieval quality
+## End-to-End Flow
 
-## Out of Scope
-
-The following are explicitly not handled by this layer at this time:
-
-- Generating final student-facing answers
-- Enforcing Socratic tutoring behavior
-- Applying input or output guardrails
-- Storing student memory or conversation history
-- Exposing FastAPI endpoints
-- Handling authentication or authorization
-- Frontend behavior of any kind
-
-## Data Flow
-
-All `data/` paths below are relative to `backend/ingestion/`.
-
-```
-Raw Full Stack Open repo (src/)
-    │
-    ▼  backend/ingestion/ingest_repo.py
-backend/ingestion/data/processed/documents.json
-    │
-    ▼  backend/rag/chunk_documents.py
-backend/ingestion/data/processed/chunks.json
-    │
-    ▼  backend/rag/build_vector_store.py
-backend/ingestion/data/vector_store/chroma/
-    │
-    ▼  backend/rag/retriever.py
-Retrieved course context (list of dicts: content, metadata, distance)
+```text
+Raw course repository
+    |
+    | backend/ingestion/ingest_pgvector.py
+    | - reads supported files
+    | - filters English source paths
+    | - applies Markdown-aware chunking
+    | - generates 384-dimensional embeddings
+    v
+PostgreSQL
+    rag_documents
+    rag_chunks
+    rag_embeddings vector(384)
+    |
+    | cosine similarity search through pgvector
+    v
+PgvectorRagRetrievalProvider
+    |
+    | RetrievalResult / RetrievedChunk
+    v
+LLMService
+    |
+    | build_messages() injects retrieved context
+    v
+Chat generation
 ```
 
-## File Responsibilities
+Input guardrail evaluation and retrieval still run concurrently. Query
+embedding uses a worker thread because `sentence-transformers` is synchronous;
+the pgvector query uses the asynchronous SQLAlchemy session layer.
 
-| File | Responsibility |
-|---|---|
-| `backend/ingestion/ingest_repo.py` | Walks the raw course repo, reads supported file types (`.md`, `.txt`, `.py`, `.ipynb`), and writes one document per file to `documents.json` |
-| `backend/rag/chunk_documents.py` | Loads `documents.json`, filters to English-only sources, splits documents into smaller chunks using Markdown-aware splitting with character-count fallback, writes `chunks.json` |
-| `backend/rag/build_vector_store.py` | Loads `chunks.json`, embeds all content locally, and inserts into a persistent ChromaDB collection (collection is reset on each run) |
-| `backend/rag/retriever.py` | Embeds a question, queries ChromaDB, and returns the top-k chunks with content, metadata, and cosine distance |
-| `backend/rag/evaluate_retrieval.py` | Runs a fixed set of sample questions through the retriever and prints results to stdout for manual inspection |
+## Ingestion
 
-## Retrieval Strategy
+`backend/ingestion/ingest_pgvector.py` reads the raw course repository directly
+and reuses:
 
-Retrieval is based on cosine similarity between the query embedding and chunk embeddings, both produced by the same local model (`all-MiniLM-L6-v2`). No keyword boosting, reranking, or hybrid search is applied at this time.
+- `find_course_files()` and `make_document()` from `ingest_repo.py`
+- `is_english_source()` and `chunk_document()` from `chunk_documents.py`
+- `sentence-transformers/all-MiniLM-L6-v2` for embeddings
 
-Chunking uses a two-pass approach:
-1. Split on Markdown headings (`#`–`######`) to produce semantically coherent sections.
-2. For sections exceeding the chunk size (default 1000 characters), apply a sliding window split with overlap (default 200 characters).
+Chunking splits on Markdown headings, then applies a 1,000-character sliding
+window with 200-character overlap to oversized sections.
 
-English filtering is applied before chunking. A document is considered English if its `source_path` contains `/en/` (or `\en\` on Windows).
+Each document is replaced atomically. A rerun updates the matching
+`(source_type, source_path)` document, deletes its old chunks and embeddings,
+and writes the replacement records in one transaction.
 
-## Evaluation Strategy
+## Storage
 
-Evaluation is currently manual and qualitative. `evaluate_retrieval.py` runs a fixed list of sample questions and prints the top-5 retrieved chunks with source path, cosine distance, and a content preview. A contributor reads the output and judges whether the returned chunks are relevant.
+- `rag_documents` stores source identity, content hashes, and source metadata.
+- `rag_chunks` stores chunk text, order, and chunk metadata.
+- `rag_embeddings` stores one `vector(384)` embedding per chunk.
+- `rag_retrieval_logs` optionally stores retrieved chunk IDs and scores.
 
-There is no automated scoring (e.g. recall@k, MRR, NDCG) at this time.
+The embedding column has an HNSW index using `vector_cosine_ops`.
+
+## Runtime Retrieval
+
+`backend/llm/retrieval.py` implements both providers behind the existing
+`RetrievalProvider` protocol:
+
+- `PgvectorRagRetrievalProvider` embeds the query and performs async cosine
+  similarity search through `RagService`.
+- `RagRetrievalProvider` preserves the legacy Chroma path for rollback.
+
+`RAG_BACKEND` selects the provider at application startup. Both providers
+return `RetrievalResult` containing `RetrievedChunk` objects, so prompt behavior
+does not change. Retrieval errors are logged and degrade to empty context
+rather than failing the chat request.
+
+## Prompt Injection
+
+`LLMService` starts retrieval while input guardrails run. After guardrails pass,
+the retrieved chunks are passed to `build_messages()`.
+
+`backend/llm/prompts.py` wraps those chunks in a `<retrieved_context>` block
+before the student message. No separate retrieval endpoint or frontend change
+is required.
+
+## Chroma Fallback
+
+Chroma remains available temporarily:
+
+```dotenv
+RAG_BACKEND=chroma
+```
+
+Its JSON preprocessing, vector-store builder, query engine, and evaluation
+script have not been removed.
 
 ## Known Limitations
 
-- **Semantic similarity only.** Retrieval does not use keyword matching. Queries that use different vocabulary than the course text may retrieve poor results.
-- **No reranking.** The top-k results are returned in raw similarity order without a second-pass reranker.
-- **Beginner/advanced mismatch.** A beginner question may retrieve advanced course sections if they are semantically similar at the embedding level.
-- **English filter depends on path conventions.** The `/en/` filter works for Full Stack Open's directory structure. Content from other sources with different conventions will not be filtered correctly.
-- **Raw Markdown in chunks.** Chunks may still contain Markdown syntax, HTML fragments, frontmatter, or code blocks. No post-processing strips these.
-- **Manual evaluation only.** There is no automated test suite for retrieval quality.
-- **Retriever returns context only.** The caller is responsible for composing a prompt and generating a final answer.
-
-## Future Improvements
-
-- Add a reranker pass (e.g. cross-encoder) to improve result ordering
-- Strip Markdown/HTML/frontmatter from chunks at ingestion time
-- Add automated retrieval evaluation with labelled question–document pairs
-- Support multiple course sources beyond Full Stack Open
-- Expose retrieval as a FastAPI endpoint with request/response validation
-- Add metadata filters (e.g. restrict retrieval to a specific course week)
+- Retrieval uses semantic cosine similarity only.
+- There is no hybrid keyword search, reranking, metadata filtering, or score
+  threshold.
+- Retrieval quality depends on the fixed English source-path convention.
+- Chunks may retain Markdown, HTML fragments, frontmatter, and code blocks.
+- Removed source files are not automatically deleted from PostgreSQL.
+- Retrieval quality evaluation remains manual and qualitative.
+- The first embedding-model use may require a network download.
+- Retrieval failures intentionally produce empty context, which can reduce
+  answer grounding without failing the chat turn.

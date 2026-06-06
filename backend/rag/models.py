@@ -2,24 +2,17 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
+from pgvector.sqlalchemy import VECTOR
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import UserDefinedType
 
 from backend.core.database import Base
+
+EMBEDDING_DIMENSIONS = 384
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-class Vector(UserDefinedType):
-    """Postgres pgvector column type used until a pgvector SQLAlchemy package is added."""
-
-    cache_ok = True
-
-    def get_col_spec(self, **kw: Any) -> str:
-        return "vector"
 
 
 class RagDocument(Base):
@@ -69,6 +62,14 @@ class RagChunk(Base):
 
 class RagEmbedding(Base):
     __tablename__ = "rag_embeddings"
+    __table_args__ = (
+        Index(
+            "rag_embeddings_embedding_cosine_idx",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     chunk_id: Mapped[UUID] = mapped_column(
@@ -76,7 +77,7 @@ class RagEmbedding(Base):
         nullable=False,
         index=True,
     )
-    embedding: Mapped[Any] = mapped_column(Vector, nullable=False)
+    embedding: Mapped[Any] = mapped_column(VECTOR(EMBEDDING_DIMENSIONS), nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
