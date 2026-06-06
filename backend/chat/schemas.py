@@ -5,8 +5,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from backend.auth.schemas import CurrentUser as CurrentUser
-
 MAX_MESSAGE_CONTENT_LENGTH = 8000
 
 

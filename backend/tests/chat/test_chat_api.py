@@ -103,8 +103,6 @@ async def test_create_conversation_returns_complete_message_response() -> None:
 
 @pytest.mark.asyncio
 async def test_old_user_header_is_not_trusted() -> None:
-    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
-
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",

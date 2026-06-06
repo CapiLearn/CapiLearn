@@ -5,11 +5,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from backend.auth.schemas import UserRole
+from backend.auth.schemas import CurrentUser, UserRole
 from backend.chat.models import Conversation, Message
 from backend.chat.schemas import (
     ConversationStatus,
-    CurrentUser,
     MessageRole,
     MessageStatus,
 )

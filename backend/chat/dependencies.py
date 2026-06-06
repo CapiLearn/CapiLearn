@@ -3,15 +3,12 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from backend.auth.dependencies import get_current_user
-from backend.auth.schemas import CurrentUser
+from backend.auth.dependencies import CurrentUserDep
 from backend.chat.service import ChatService
 from backend.core.database import DbSession
 from backend.llm.retrieval import RagRetrievalProvider
 from backend.llm.schemas import RetrievalProvider
 from backend.llm.service import LLMService
-
-CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 
 @lru_cache(maxsize=1)
