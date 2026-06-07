@@ -137,7 +137,12 @@ class LLMCostComponent(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
     conversation_id: Mapped[UUID] = mapped_column(
         ForeignKey("conversation.id", ondelete="CASCADE"),
         nullable=False,
