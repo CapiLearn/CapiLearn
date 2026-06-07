@@ -8,8 +8,8 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.auth.models import UserAccount
 from backend.auth.repository import UserAccountRepository
-from backend.auth.schemas import ClerkAuthClaims, UserRole
-from backend.auth.service import AuthUserService
+from backend.auth.schemas import AuthPrincipal, ClerkAuthClaims, UserRole
+from backend.auth.service import AuthTestModeService, AuthUserService
 from backend.core.exceptions import ApiError
 
 
@@ -339,6 +339,57 @@ def test_get_or_create_current_user_has_no_role_override_parameter() -> None:
     parameters = signature(AuthUserService.get_or_create_current_user).parameters
 
     assert "role_override" not in parameters
+
+
+@pytest.mark.asyncio
+async def test_test_auth_principal_for_missing_user_is_not_db_backed_current_user() -> None:
+    session = FakeSession()
+    repository = FakeUserRepository()
+
+    principal = await AuthTestModeService(repository).get_current_principal(
+        session,
+        ClerkAuthClaims(
+            clerk_id="user_test_admin",
+            email="admin@example.com",
+            display_name="Test Admin",
+            claims={"sub": "user_test_admin"},
+        ),
+        role=UserRole.ADMIN,
+    )
+
+    assert isinstance(principal, AuthPrincipal)
+    assert not hasattr(principal, "id")
+    assert principal.clerk_id == "user_test_admin"
+    assert principal.email == "admin@example.com"
+    assert principal.display_name == "Test Admin"
+    assert principal.role == UserRole.ADMIN
+    assert repository.user is None
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
+
+
+@pytest.mark.asyncio
+async def test_test_auth_principal_propagates_disabled_user_error() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_disabled",
+        role=UserRole.ADMIN.value,
+        deleted_at=datetime.now(UTC),
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+
+    with pytest.raises(ApiError) as exc_info:
+        await AuthTestModeService(repository).get_current_principal(
+            session,
+            ClerkAuthClaims(clerk_id="user_disabled", claims={"sub": "user_disabled"}),
+            role=UserRole.ADMIN,
+        )
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    assert exc_info.value.code == "forbidden"
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_disabled")]
 
 
 class FakeSession:

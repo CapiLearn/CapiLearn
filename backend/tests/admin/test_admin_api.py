@@ -17,12 +17,12 @@ from backend.admin.schemas import (
 from backend.admin.service import AdminUsageService
 from backend.auth.dependencies import (
     get_auth_request_verifier,
-    get_existing_current_user,
+    get_current_principal,
     get_user_repository,
 )
 from backend.auth.models import UserAccount
 from backend.auth.repository import UserAccountRepository
-from backend.auth.schemas import ClerkAuthClaims, CurrentUser, UserRole
+from backend.auth.schemas import AuthPrincipal, ClerkAuthClaims, UserRole
 from backend.core.config import Settings, get_settings
 from backend.core.database import get_db
 from backend.main import app
@@ -49,8 +49,7 @@ def test_admin_openapi_exposes_usage_summary_route() -> None:
 
 
 def _authorize(role: UserRole = UserRole.ADMIN) -> None:
-    app.dependency_overrides[get_existing_current_user] = lambda: CurrentUser(
-        id=uuid4(),
+    app.dependency_overrides[get_current_principal] = lambda: AuthPrincipal(
         clerk_id=f"user_{role.value}_{uuid4().hex}",
         role=role,
     )
@@ -348,8 +347,8 @@ async def test_usage_summary_rejects_existing_disabled_admin_local_user() -> Non
 
     assert response.status_code == 403
     assert response.json() == {
-        "code": "admin_required",
-        "message": "Admin access is required.",
+        "code": "forbidden",
+        "message": "This user account is disabled.",
         "details": None,
     }
     assert repository.calls == [("get_by_clerk_id", "user_disabled_admin")]
@@ -387,13 +386,15 @@ async def test_usage_summary_accepts_existing_admin_local_user() -> None:
 
 @pytest.mark.asyncio
 async def test_test_auth_mode_rejects_non_admin_role() -> None:
+    repository = FakeUserRepository()
+    session = FakeSession()
     app.dependency_overrides[get_settings] = lambda: Settings(
         auth_mode="test",
         test_auth_clerk_id="user_test_student",
         test_auth_role="student",
     )
-    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
-    app.dependency_overrides[get_user_repository] = lambda: FakeUserRepository()
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -407,17 +408,22 @@ async def test_test_auth_mode_rejects_non_admin_role() -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "admin_required"
+    assert repository.calls == [("get_by_clerk_id", "user_test_student")]
+    assert repository.user is None
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
 async def test_test_auth_mode_accepts_admin_role() -> None:
+    repository = FakeUserRepository()
+    session = FakeSession()
     app.dependency_overrides[get_settings] = lambda: Settings(
         auth_mode="test",
         test_auth_clerk_id="user_test_admin",
         test_auth_role="admin",
     )
-    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
-    app.dependency_overrides[get_user_repository] = lambda: FakeUserRepository()
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -431,6 +437,9 @@ async def test_test_auth_mode_accepts_admin_role() -> None:
 
     assert response.status_code == 200
     assert response.json()["metrics"]["totalUsers"] == 18
+    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
+    assert repository.user is None
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
@@ -463,8 +472,8 @@ async def test_test_auth_mode_rejects_disabled_local_user_before_admin_role_gate
 
     assert response.status_code == 403
     assert response.json() == {
-        "code": "admin_required",
-        "message": "Admin access is required.",
+        "code": "forbidden",
+        "message": "This user account is disabled.",
         "details": None,
     }
     assert repository.calls == [("get_by_clerk_id", "user_test_disabled")]

@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.models import UserAccount
 from backend.auth.repository import UserAccountRepository
-from backend.auth.schemas import ClerkAuthClaims, CurrentUser, UserRole
+from backend.auth.schemas import (
+    AuthPrincipal,
+    ClerkAuthClaims,
+    CurrentUser,
+    UserRole,
+    current_user_to_principal,
+)
 from backend.core.exceptions import ApiError
 
 
@@ -67,6 +73,63 @@ class AuthUserService:
                 raise
             return existing_user, False
         return user, True
+
+
+class AuthTestModeService:
+    def __init__(self, repository: UserAccountRepository | None = None) -> None:
+        self._repository = repository or UserAccountRepository()
+        self._auth_service = AuthUserService(repository=self._repository)
+
+    async def get_or_create_current_user(
+        self,
+        session: AsyncSession,
+        claims: ClerkAuthClaims,
+        *,
+        role: UserRole,
+    ) -> CurrentUser:
+        current_user = await self._auth_service.get_or_create_current_user(
+            session,
+            claims,
+            initial_role=role,
+        )
+        if current_user.role == role:
+            return current_user
+
+        user = await self._repository.get_by_clerk_id(
+            session,
+            clerk_id=claims.clerk_id,
+        )
+        if user is not None and self._repository.apply_role(user, role):
+            await session.commit()
+
+        return CurrentUser(
+            id=current_user.id,
+            clerk_id=current_user.clerk_id,
+            email=claims.email,
+            display_name=claims.display_name,
+            role=role,
+        )
+
+    async def get_current_principal(
+        self,
+        session: AsyncSession,
+        claims: ClerkAuthClaims,
+        *,
+        role: UserRole,
+    ) -> AuthPrincipal:
+        current_user = await self._auth_service.get_existing_current_user(
+            session,
+            claims,
+        )
+        if current_user is None:
+            return AuthPrincipal(
+                clerk_id=claims.clerk_id,
+                email=claims.email,
+                display_name=claims.display_name,
+                role=role,
+            )
+
+        return current_user_to_principal(current_user, role=role)
 
 
 def _reject_disabled_user(user: UserAccount) -> None:

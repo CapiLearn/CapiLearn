@@ -1,14 +1,19 @@
 from collections.abc import Callable
 from typing import Annotated, Any, Protocol
-from uuid import UUID
 
 from clerk_backend_api import Clerk
 from clerk_backend_api.security.types import AuthenticateRequestOptions
 from fastapi import Depends, Header, status
 
 from backend.auth.repository import UserAccountRepository
-from backend.auth.schemas import ClerkAuthClaims, CurrentUser, UserRole
-from backend.auth.service import AuthUserService
+from backend.auth.schemas import (
+    AuthPrincipal,
+    ClerkAuthClaims,
+    CurrentUser,
+    UserRole,
+    current_user_to_principal,
+)
+from backend.auth.service import AuthTestModeService, AuthUserService
 from backend.core.config import Settings, get_settings
 from backend.core.database import DbSession
 from backend.core.exceptions import ApiError
@@ -100,6 +105,16 @@ def get_auth_user_service(repository: UserRepositoryDep) -> AuthUserService:
 AuthUserServiceDep = Annotated[AuthUserService, Depends(get_auth_user_service)]
 
 
+def get_test_auth_user_service(repository: UserRepositoryDep) -> AuthTestModeService:
+    return AuthTestModeService(repository=repository)
+
+
+TestAuthUserServiceDep = Annotated[
+    AuthTestModeService,
+    Depends(get_test_auth_user_service),
+]
+
+
 async def require_clerk_auth(
     verifier: AuthRequestVerifierDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
@@ -115,16 +130,14 @@ async def get_current_user(
     session: DbSession,
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
-    repository: UserRepositoryDep,
+    test_service: TestAuthUserServiceDep,
     settings: SettingsDep,
 ) -> CurrentUser:
     if settings.auth_mode == "test":
-        return await _get_or_create_test_current_user(
+        return await test_service.get_or_create_current_user(
             session,
             auth_claims,
-            service=service,
-            repository=repository,
-            settings=settings,
+            role=UserRole(settings.test_auth_role),
         )
 
     return await service.get_or_create_current_user(
@@ -137,126 +150,47 @@ async def get_current_user(
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 
-async def get_existing_current_user(
+async def get_current_principal(
     session: DbSession,
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
+    test_service: TestAuthUserServiceDep,
     settings: SettingsDep,
-) -> CurrentUser | None:
+) -> AuthPrincipal | None:
     if settings.auth_mode == "test":
-        return await _get_existing_test_current_user(
+        return await test_service.get_current_principal(
             session,
             auth_claims,
-            service=service,
-            settings=settings,
+            role=UserRole(settings.test_auth_role),
         )
 
-    try:
-        return await service.get_existing_current_user(session, auth_claims)
-    except ApiError as exc:
-        if _is_disabled_user_error(exc):
-            return None
-        raise
+    current_user = await service.get_existing_current_user(session, auth_claims)
+    if current_user is None:
+        return None
+    return current_user_to_principal(current_user)
 
 
-ExistingCurrentUserDep = Annotated[
-    CurrentUser | None,
-    Depends(get_existing_current_user),
+AuthPrincipalDep = Annotated[
+    AuthPrincipal | None,
+    Depends(get_current_principal),
 ]
 
 
-def require_role(*roles: UserRole) -> Callable[[CurrentUser], CurrentUser]:
+def require_role(*roles: UserRole) -> Callable[[AuthPrincipal], AuthPrincipal]:
     allowed_roles = set(roles)
 
-    async def dependency(current_user: ExistingCurrentUserDep) -> CurrentUser:
-        if current_user is None:
+    async def dependency(principal: AuthPrincipalDep) -> AuthPrincipal:
+        if principal is None:
             _raise_role_error(allowed_roles)
-        if current_user.role not in allowed_roles:
+        if principal.role not in allowed_roles:
             _raise_role_error(allowed_roles)
-        return current_user
+        return principal
 
     return dependency
 
 
 require_admin = require_role(UserRole.ADMIN)
 require_instructor_or_admin = require_role(UserRole.INSTRUCTOR, UserRole.ADMIN)
-
-
-async def _get_or_create_test_current_user(
-    session: DbSession,
-    claims: ClerkAuthClaims,
-    *,
-    service: AuthUserService,
-    repository: UserAccountRepository,
-    settings: Settings,
-) -> CurrentUser:
-    test_role = UserRole(settings.test_auth_role)
-    current_user = await service.get_or_create_current_user(
-        session,
-        claims,
-        initial_role=test_role,
-    )
-    if current_user.role == test_role:
-        return current_user
-
-    user = await repository.get_by_clerk_id(session, clerk_id=claims.clerk_id)
-    if user is not None and repository.apply_role(user, test_role):
-        await session.commit()
-
-    return CurrentUser(
-        id=current_user.id,
-        clerk_id=current_user.clerk_id,
-        email=claims.email,
-        display_name=claims.display_name,
-        role=test_role,
-    )
-
-
-async def _get_existing_test_current_user(
-    session: DbSession,
-    claims: ClerkAuthClaims,
-    *,
-    service: AuthUserService,
-    settings: Settings,
-) -> CurrentUser | None:
-    try:
-        current_user = await service.get_existing_current_user(session, claims)
-    except ApiError as exc:
-        if _is_disabled_user_error(exc):
-            return None
-        raise
-
-    if current_user is None:
-        return _synthetic_test_current_user(settings)
-    return _current_user_with_role(current_user, UserRole(settings.test_auth_role))
-
-
-def _synthetic_test_current_user(settings: Settings) -> CurrentUser:
-    return CurrentUser(
-        id=UUID(int=0),
-        clerk_id=settings.test_auth_clerk_id,
-        email=settings.test_auth_email,
-        display_name=settings.test_auth_display_name,
-        role=UserRole(settings.test_auth_role),
-    )
-
-
-def _current_user_with_role(current_user: CurrentUser, role: UserRole) -> CurrentUser:
-    return CurrentUser(
-        id=current_user.id,
-        clerk_id=current_user.clerk_id,
-        email=current_user.email,
-        display_name=current_user.display_name,
-        role=role,
-    )
-
-
-def _is_disabled_user_error(exc: ApiError) -> bool:
-    return (
-        exc.code == "forbidden"
-        and exc.message == "This user account is disabled."
-        and exc.status_code == status.HTTP_403_FORBIDDEN
-    )
 
 
 def _raise_role_error(allowed_roles: set[UserRole]) -> None:
