@@ -413,6 +413,70 @@ body {
   text-align: left;
 }
 
+.message-search-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.message-search-section label {
+  color: #5f554b;
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.message-search-section input {
+  width: 100%;
+  border: 1px solid #d8cfb1;
+  border-radius: 999px;
+  background: #fffdf0;
+  color: #2b1d15;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.message-search-section input:focus {
+  outline: 2px solid rgba(85, 124, 56, 0.25);
+  border-color: #557c38;
+}
+
+.message-search-control {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+}
+
+.message-search-control input {
+  flex: 1;
+}
+
+.message-search-clear {
+  border: 1px solid #d8cfb1;
+  border-radius: 999px;
+  background: #fffdf0;
+  color: #557c38;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.message-search-highlight {
+  background: #f0e087;
+  color: #2b1d15;
+  border-radius: 4px;
+  padding: 0 3px;
+}
+
+.workspace-empty-search {
+  margin: 0;
+  color: #867a69;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .student-message code,
 .student-message pre {
   background: rgba(255, 247, 227, 0.18);
