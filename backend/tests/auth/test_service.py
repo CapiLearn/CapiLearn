@@ -342,6 +342,37 @@ def test_get_or_create_current_user_has_no_role_override_parameter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_test_auth_current_user_overrides_role_without_mutating_existing_user() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_test_admin",
+        role=UserRole.STUDENT.value,
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+
+    current_user = await AuthTestModeService(repository).get_or_create_current_user(
+        session,
+        ClerkAuthClaims(
+            clerk_id="user_test_admin",
+            email="admin@example.com",
+            display_name="Test Admin",
+            claims={"sub": "user_test_admin"},
+        ),
+        role=UserRole.ADMIN,
+    )
+
+    assert current_user.id == user.id
+    assert current_user.clerk_id == "user_test_admin"
+    assert current_user.email == "admin@example.com"
+    assert current_user.display_name == "Test Admin"
+    assert current_user.role == UserRole.ADMIN
+    assert user.role == UserRole.STUDENT.value
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
+
+
+@pytest.mark.asyncio
 async def test_test_auth_principal_for_missing_user_is_not_db_backed_current_user() -> None:
     session = FakeSession()
     repository = FakeUserRepository()
@@ -439,7 +470,3 @@ class FakeUserRepository(UserAccountRepository):
             role=role.value,
         )
         return self.user
-
-    def apply_role(self, user: UserAccount, role: UserRole) -> bool:
-        self.calls.append(("apply_role", role))
-        return super().apply_role(user, role)

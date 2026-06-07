@@ -1,5 +1,4 @@
 from inspect import signature
-from uuid import uuid4
 
 import pytest
 
@@ -32,32 +31,6 @@ async def test_create_persists_only_app_owned_auth_state() -> None:
     assert not hasattr(user, "display_name")
     assert session.added == [user]
     assert session.flushes == 1
-
-
-def test_apply_role_updates_local_role() -> None:
-    user = UserAccount(
-        id=uuid4(),
-        clerk_id="user_123",
-        role=UserRole.STUDENT.value,
-    )
-
-    changed = UserAccountRepository().apply_role(user, UserRole.ADMIN)
-
-    assert changed is True
-    assert user.role == UserRole.ADMIN.value
-
-
-def test_apply_role_returns_false_for_unchanged_role() -> None:
-    user = UserAccount(
-        id=uuid4(),
-        clerk_id="user_123",
-        role=UserRole.INSTRUCTOR.value,
-    )
-
-    changed = UserAccountRepository().apply_role(user, UserRole.INSTRUCTOR)
-
-    assert changed is False
-    assert user.role == UserRole.INSTRUCTOR.value
 
 
 class FakeSession:

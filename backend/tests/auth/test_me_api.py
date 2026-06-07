@@ -130,16 +130,17 @@ async def test_test_auth_mode_creates_local_user_with_configured_claims() -> Non
     }
     assert session.commits == 1
     assert repository.user is not None
+    assert repository.user.role == UserRole.STUDENT.value
     assert not hasattr(repository.user, "email")
     assert not hasattr(repository.user, "display_name")
     assert repository.calls == [
         ("get_by_clerk_id", "user_test_mode"),
-        ("create", "user_test_mode", UserRole.ADMIN),
+        ("create", "user_test_mode", UserRole.STUDENT),
     ]
 
 
 @pytest.mark.asyncio
-async def test_test_auth_mode_updates_existing_local_user_with_configured_claims() -> None:
+async def test_test_auth_mode_overlays_existing_local_user_with_configured_claims() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_test_mode",
@@ -177,13 +178,9 @@ async def test_test_auth_mode_updates_existing_local_user_with_configured_claims
     }
     assert not hasattr(user, "email")
     assert not hasattr(user, "display_name")
-    assert user.role == UserRole.ADMIN.value
-    assert session.commits == 1
-    assert repository.calls == [
-        ("get_by_clerk_id", "user_test_mode"),
-        ("get_by_clerk_id", "user_test_mode"),
-        ("apply_role", UserRole.ADMIN),
-    ]
+    assert user.role == UserRole.STUDENT.value
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_test_mode")]
 
 
 @pytest.mark.asyncio
@@ -326,7 +323,3 @@ class FakeUserRepository(UserAccountRepository):
             role=role.value,
         )
         return self.user
-
-    def apply_role(self, user: UserAccount, role: UserRole) -> bool:
-        self.calls.append(("apply_role", role))
-        return super().apply_role(user, role)

@@ -77,8 +77,8 @@ class AuthUserService:
 
 class AuthTestModeService:
     def __init__(self, repository: UserAccountRepository | None = None) -> None:
-        self._repository = repository or UserAccountRepository()
-        self._auth_service = AuthUserService(repository=self._repository)
+        repository = repository or UserAccountRepository()
+        self._auth_service = AuthUserService(repository=repository)
 
     async def get_or_create_current_user(
         self,
@@ -90,17 +90,7 @@ class AuthTestModeService:
         current_user = await self._auth_service.get_or_create_current_user(
             session,
             claims,
-            initial_role=role,
         )
-        if current_user.role == role:
-            return current_user
-
-        user = await self._repository.get_by_clerk_id(
-            session,
-            clerk_id=claims.clerk_id,
-        )
-        if user is not None and self._repository.apply_role(user, role):
-            await session.commit()
 
         return CurrentUser(
             id=current_user.id,
