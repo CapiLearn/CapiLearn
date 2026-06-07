@@ -4,6 +4,7 @@ from typing import Annotated, Any, Protocol
 from clerk_backend_api import Clerk
 from clerk_backend_api.security.types import AuthenticateRequestOptions
 from fastapi import Depends, Header, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.repository import UserAccountRepository
 from backend.auth.schemas import (
@@ -11,7 +12,6 @@ from backend.auth.schemas import (
     ClerkAuthClaims,
     CurrentUser,
     UserRole,
-    current_user_to_principal,
 )
 from backend.auth.service import AuthTestModeService, AuthUserService
 from backend.core.config import Settings, get_settings
@@ -23,6 +23,20 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 class AuthRequestVerifier(Protocol):
     async def verify(self, bearer_token: str) -> ClerkAuthClaims: ...
+
+
+class CurrentUserResolver(Protocol):
+    async def get_or_create_current_user(
+        self,
+        session: AsyncSession,
+        claims: ClerkAuthClaims,
+    ) -> CurrentUser: ...
+
+    async def get_current_principal(
+        self,
+        session: AsyncSession,
+        claims: ClerkAuthClaims,
+    ) -> AuthPrincipal | None: ...
 
 
 class ClerkRequestVerifier:
@@ -98,21 +112,19 @@ def get_user_repository() -> UserAccountRepository:
 UserRepositoryDep = Annotated[UserAccountRepository, Depends(get_user_repository)]
 
 
-def get_auth_user_service(repository: UserRepositoryDep) -> AuthUserService:
+def get_auth_user_service(
+    settings: SettingsDep,
+    repository: UserRepositoryDep,
+) -> CurrentUserResolver:
+    if settings.auth_mode == "test":
+        return AuthTestModeService(
+            repository=repository,
+            role=UserRole(settings.test_auth_role),
+        )
     return AuthUserService(repository=repository)
 
 
-AuthUserServiceDep = Annotated[AuthUserService, Depends(get_auth_user_service)]
-
-
-def get_test_auth_user_service(repository: UserRepositoryDep) -> AuthTestModeService:
-    return AuthTestModeService(repository=repository)
-
-
-TestAuthUserServiceDep = Annotated[
-    AuthTestModeService,
-    Depends(get_test_auth_user_service),
-]
+AuthUserServiceDep = Annotated[CurrentUserResolver, Depends(get_auth_user_service)]
 
 
 async def require_clerk_auth(
@@ -130,21 +142,8 @@ async def get_current_user(
     session: DbSession,
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
-    test_service: TestAuthUserServiceDep,
-    settings: SettingsDep,
 ) -> CurrentUser:
-    if settings.auth_mode == "test":
-        return await test_service.get_or_create_current_user(
-            session,
-            auth_claims,
-            role=UserRole(settings.test_auth_role),
-        )
-
-    return await service.get_or_create_current_user(
-        session,
-        auth_claims,
-        initial_role=UserRole.STUDENT,
-    )
+    return await service.get_or_create_current_user(session, auth_claims)
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
@@ -154,20 +153,8 @@ async def get_current_principal(
     session: DbSession,
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
-    test_service: TestAuthUserServiceDep,
-    settings: SettingsDep,
 ) -> AuthPrincipal | None:
-    if settings.auth_mode == "test":
-        return await test_service.get_current_principal(
-            session,
-            auth_claims,
-            role=UserRole(settings.test_auth_role),
-        )
-
-    current_user = await service.get_existing_current_user(session, auth_claims)
-    if current_user is None:
-        return None
-    return current_user_to_principal(current_user)
+    return await service.get_current_principal(session, auth_claims)
 
 
 AuthPrincipalDep = Annotated[

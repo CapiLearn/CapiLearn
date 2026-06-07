@@ -49,6 +49,16 @@ class AuthUserService:
         _reject_disabled_user(user)
         return _current_user_from_model(user, claims=claims)
 
+    async def get_current_principal(
+        self,
+        session: AsyncSession,
+        claims: ClerkAuthClaims,
+    ) -> AuthPrincipal | None:
+        current_user = await self.get_existing_current_user(session, claims)
+        if current_user is None:
+            return None
+        return current_user_to_principal(current_user)
+
     async def _create_user(
         self,
         session: AsyncSession,
@@ -76,16 +86,20 @@ class AuthUserService:
 
 
 class AuthTestModeService:
-    def __init__(self, repository: UserAccountRepository | None = None) -> None:
+    def __init__(
+        self,
+        repository: UserAccountRepository | None = None,
+        *,
+        role: UserRole,
+    ) -> None:
         repository = repository or UserAccountRepository()
         self._auth_service = AuthUserService(repository=repository)
+        self._role = role
 
     async def get_or_create_current_user(
         self,
         session: AsyncSession,
         claims: ClerkAuthClaims,
-        *,
-        role: UserRole,
     ) -> CurrentUser:
         current_user = await self._auth_service.get_or_create_current_user(
             session,
@@ -97,15 +111,13 @@ class AuthTestModeService:
             clerk_id=current_user.clerk_id,
             email=claims.email,
             display_name=claims.display_name,
-            role=role,
+            role=self._role,
         )
 
     async def get_current_principal(
         self,
         session: AsyncSession,
         claims: ClerkAuthClaims,
-        *,
-        role: UserRole,
     ) -> AuthPrincipal:
         current_user = await self._auth_service.get_existing_current_user(
             session,
@@ -116,10 +128,10 @@ class AuthTestModeService:
                 clerk_id=claims.clerk_id,
                 email=claims.email,
                 display_name=claims.display_name,
-                role=role,
+                role=self._role,
             )
 
-        return current_user_to_principal(current_user, role=role)
+        return current_user_to_principal(current_user, role=self._role)
 
 
 def _reject_disabled_user(user: UserAccount) -> None:

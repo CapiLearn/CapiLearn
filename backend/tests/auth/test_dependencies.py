@@ -1,10 +1,19 @@
+from inspect import signature
 from types import SimpleNamespace
 
 import pytest
 from fastapi import status
 
-from backend.auth.dependencies import ClerkRequestVerifier, _extract_bearer_token
+from backend.auth.dependencies import (
+    ClerkRequestVerifier,
+    _extract_bearer_token,
+    get_auth_user_service,
+    get_current_principal,
+    get_current_user,
+)
+from backend.auth.repository import UserAccountRepository
 from backend.auth.schemas import ClerkAuthClaims
+from backend.auth.service import AuthTestModeService, AuthUserService
 from backend.core.config import Settings
 from backend.core.exceptions import ApiError
 
@@ -107,6 +116,40 @@ async def test_clerk_verifier_passes_normalized_bearer_request(monkeypatch) -> N
     assert captured["options"].jwt_key == "jwt-key"
     assert captured["options"].authorized_parties == ["https://app.example.com"]
     assert captured["options"].accepts_token == ["session_token"]
+
+
+def test_current_user_dependency_uses_one_configured_auth_service() -> None:
+    parameters = signature(get_current_user).parameters
+
+    assert list(parameters) == ["session", "auth_claims", "service"]
+    assert "settings" not in parameters
+    assert "test_service" not in parameters
+
+
+def test_current_principal_dependency_uses_one_configured_auth_service() -> None:
+    parameters = signature(get_current_principal).parameters
+
+    assert list(parameters) == ["session", "auth_claims", "service"]
+    assert "settings" not in parameters
+    assert "test_service" not in parameters
+
+
+def test_auth_user_service_dependency_selects_clerk_service() -> None:
+    service = get_auth_user_service(
+        Settings(auth_mode="clerk"),
+        UserAccountRepository(),
+    )
+
+    assert isinstance(service, AuthUserService)
+
+
+def test_auth_user_service_dependency_selects_test_mode_service() -> None:
+    service = get_auth_user_service(
+        Settings(auth_mode="test", test_auth_role="admin"),
+        UserAccountRepository(),
+    )
+
+    assert isinstance(service, AuthTestModeService)
 
 
 def _claims_from_verifier_payload(payload: dict) -> ClerkAuthClaims:

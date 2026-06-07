@@ -351,7 +351,10 @@ async def test_test_auth_current_user_overrides_role_without_mutating_existing_u
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
-    current_user = await AuthTestModeService(repository).get_or_create_current_user(
+    current_user = await AuthTestModeService(
+        repository,
+        role=UserRole.ADMIN,
+    ).get_or_create_current_user(
         session,
         ClerkAuthClaims(
             clerk_id="user_test_admin",
@@ -359,7 +362,6 @@ async def test_test_auth_current_user_overrides_role_without_mutating_existing_u
             display_name="Test Admin",
             claims={"sub": "user_test_admin"},
         ),
-        role=UserRole.ADMIN,
     )
 
     assert current_user.id == user.id
@@ -377,7 +379,10 @@ async def test_test_auth_principal_for_missing_user_is_not_db_backed_current_use
     session = FakeSession()
     repository = FakeUserRepository()
 
-    principal = await AuthTestModeService(repository).get_current_principal(
+    principal = await AuthTestModeService(
+        repository,
+        role=UserRole.ADMIN,
+    ).get_current_principal(
         session,
         ClerkAuthClaims(
             clerk_id="user_test_admin",
@@ -385,7 +390,6 @@ async def test_test_auth_principal_for_missing_user_is_not_db_backed_current_use
             display_name="Test Admin",
             claims={"sub": "user_test_admin"},
         ),
-        role=UserRole.ADMIN,
     )
 
     assert isinstance(principal, AuthPrincipal)
@@ -411,10 +415,12 @@ async def test_test_auth_principal_propagates_disabled_user_error() -> None:
     repository = FakeUserRepository(user=user)
 
     with pytest.raises(ApiError) as exc_info:
-        await AuthTestModeService(repository).get_current_principal(
+        await AuthTestModeService(
+            repository,
+            role=UserRole.ADMIN,
+        ).get_current_principal(
             session,
             ClerkAuthClaims(clerk_id="user_disabled", claims={"sub": "user_disabled"}),
-            role=UserRole.ADMIN,
         )
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
