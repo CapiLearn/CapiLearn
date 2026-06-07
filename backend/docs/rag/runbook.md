@@ -22,7 +22,8 @@ uv run alembic current
 ```
 
 `uv run alembic heads` should report one head. `uv run alembic current` should
-report that same revision after upgrade.
+report that same revision after upgrade. The verified current revision is
+`20260606_0005`.
 
 ## Ingest Course Content
 
@@ -89,18 +90,86 @@ The query embedding runs in a worker thread. Similarity search uses async
 SQLAlchemy and pgvector. Retrieved chunks are injected into the existing chat
 prompt after input guardrails pass.
 
-## Verify Data
+## Local Verification Checklist
 
-The ingestion summary should show nonzero document, chunk, and embedding
-counts. Retrieval logs should include:
+1. Start PostgreSQL and confirm it is healthy:
 
-- backend (`pgvector`)
-- latency
-- chunk count
-- source path
-- distance and similarity
+   ```bash
+   docker compose up -d postgres
+   docker compose ps postgres
+   ```
 
-Retrieval failures degrade to empty context and log `rag.retrieve.failed`.
+2. Apply migrations and confirm current/head alignment:
+
+   ```bash
+   uv run alembic upgrade head
+   uv run alembic current
+   uv run alembic heads
+   ```
+
+3. Ingest the corpus:
+
+   ```bash
+   uv run python -m backend.ingestion.ingest_pgvector
+   ```
+
+4. Check the stored records:
+
+   ```bash
+   docker compose exec postgres psql -U capilearn -d capilearn -c \
+     "SELECT 'rag_documents' AS table_name, COUNT(*) FROM rag_documents
+      UNION ALL SELECT 'rag_chunks', COUNT(*) FROM rag_chunks
+      UNION ALL SELECT 'rag_embeddings', COUNT(*) FROM rag_embeddings
+      UNION ALL SELECT 'rag_retrieval_logs', COUNT(*) FROM rag_retrieval_logs;"
+   ```
+
+   For the current corpus, the expected ingestion counts are 72 documents,
+   2,353 chunks, and 2,353 embeddings. Retrieval logs may initially be zero.
+
+5. Ensure `.env` selects pgvector before application startup:
+
+   ```dotenv
+   RAG_BACKEND=pgvector
+   RAG_WRITE_RETRIEVAL_LOGS=true
+   ```
+
+6. Start FastAPI:
+
+   ```bash
+   uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001
+   ```
+
+7. In another terminal, create a chat turn:
+
+   ```bash
+   curl -i -X POST http://127.0.0.1:8001/api/conversations \
+     -H "Content-Type: application/json" \
+     -d '{"content":"What is React state, and why would a component use it?"}'
+   ```
+
+8. Verify the latest retrieval:
+
+   ```bash
+   docker compose exec postgres psql -U capilearn -d capilearn -c \
+     "SELECT query_text,
+             json_array_length(retrieved_chunk_ids) AS chunk_count,
+             scores
+      FROM rag_retrieval_logs
+      ORDER BY created_at DESC
+      LIMIT 1;"
+   ```
+
+Successful runtime logs include:
+
+- `rag.provider.retrieve.completed` with `backend=pgvector`
+- a `chunk_count` greater than zero
+- source paths, distances, and similarities
+- `rag.retrieve.completed`
+- `llm.generation.completed` when the external LLM is available
+
+The retrieved chunks are passed to `build_messages()`, which wraps them in the
+existing `<retrieved_context>` prompt block. Retrieval failures degrade to
+empty context and log `rag.retrieve.failed`.
 
 ## Roll Back To Chroma
 
@@ -180,6 +249,19 @@ the existing schema and recover the missing migration history before stamping.
 For a disposable local database, recreating the Docker volume and running
 `uv run alembic upgrade head` is usually the cleanest recovery.
 
+For the known local-only stale-volume case where the database records
+`20260527_0004`, stop Compose and remove only this project's disposable volume:
+
+```bash
+docker compose down
+docker volume rm capilearn_postgres_data
+docker compose up -d postgres
+uv run alembic upgrade head
+```
+
+This deletes local database data. Do not use this procedure for a shared,
+staging, or production database.
+
 ### RAG_BACKEND
 
 Valid values are:
@@ -190,7 +272,28 @@ RAG_BACKEND=chroma
 ```
 
 Restart FastAPI after changing the value. Invalid values fail settings
-validation during startup.
+validation during startup. Settings are cached in the application process, so
+setting `RAG_BACKEND=pgvector` after Uvicorn has started does not switch the
+running provider.
+
+If the variable is omitted, the current code-level default is Chroma. The
+branch's `.env.example` selects pgvector explicitly.
+
+### Rejected OpenAI Key
+
+An HTTP `503` with `AuthenticationError` after successful
+`rag.provider.retrieve.completed` and `rag.retrieve.completed` events is an
+external LLM credential or account issue, not a pgvector retrieval failure.
+
+For the default OpenAI model, configure an active OpenAI Platform API key:
+
+```dotenv
+OPENAI_API_KEY=sk-...
+LLM_MODEL=openai/gpt-4o-mini
+```
+
+Confirm the key belongs to an API project with available billing/credits, then
+restart FastAPI. Do not place real keys in `.env.example` or commit `.env`.
 
 ### Embedding Model Download
 

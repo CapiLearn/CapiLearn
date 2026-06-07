@@ -4,8 +4,8 @@
 
 The RAG layer turns course source files into searchable embeddings and supplies
 relevant course context to the chat generation flow. PostgreSQL with pgvector
-is the intended primary store. The existing Chroma implementation remains
-available temporarily through `RAG_BACKEND=chroma`.
+is the preferred runtime for this branch. The existing Chroma implementation
+remains available through `RAG_BACKEND=chroma` as a rollback path.
 
 The RAG layer retrieves context; the existing LLM service remains responsible
 for guardrails, prompt construction, generation, and response handling.
@@ -25,6 +25,7 @@ PostgreSQL
     rag_documents
     rag_chunks
     rag_embeddings vector(384)
+    rag_retrieval_logs
     |
     | cosine similarity search through pgvector
     v
@@ -42,6 +43,10 @@ Chat generation
 Input guardrail evaluation and retrieval still run concurrently. Query
 embedding uses a worker thread because `sentence-transformers` is synchronous;
 the pgvector query uses the asynchronous SQLAlchemy session layer.
+
+The verified local corpus contains 72 documents, 2,353 chunks, and 2,353
+embeddings. These counts describe the current bundled corpus and may change
+when its source files or chunking configuration change.
 
 ## Ingestion
 
@@ -64,7 +69,9 @@ and writes the replacement records in one transaction.
 - `rag_documents` stores source identity, content hashes, and source metadata.
 - `rag_chunks` stores chunk text, order, and chunk metadata.
 - `rag_embeddings` stores one `vector(384)` embedding per chunk.
-- `rag_retrieval_logs` optionally stores retrieved chunk IDs and scores.
+- `rag_retrieval_logs` stores the query, retrieved chunk IDs, cosine distances,
+  similarities, and optional RAG index version when
+  `RAG_WRITE_RETRIEVAL_LOGS=true`.
 
 The embedding column has an HNSW index using `vector_cosine_ops`.
 
@@ -82,6 +89,11 @@ return `RetrievalResult` containing `RetrievedChunk` objects, so prompt behavior
 does not change. Retrieval errors are logged and degrade to empty context
 rather than failing the chat request.
 
+The verified pgvector path embeds the query with
+`sentence-transformers/all-MiniLM-L6-v2`, filters stored embeddings by the same
+model name, orders results by cosine distance, and returns `RAG_TOP_K` chunks.
+The default configured value is five chunks.
+
 ## Prompt Injection
 
 `LLMService` starts retrieval while input guardrails run. After guardrails pass,
@@ -91,9 +103,16 @@ the retrieved chunks are passed to `build_messages()`.
 before the student message. No separate retrieval endpoint or frontend change
 is required.
 
+Structured runtime events include `rag.provider.retrieve.completed` with
+`backend=pgvector`, chunk count, source paths, distances, and similarities.
+`rag.retrieve.completed` records the chunks accepted by `LLMService`. There is
+no separate prompt-injection event; successful retrieval followed by
+`llm.generation.completed` exercises the existing `build_messages()` context
+injection path.
+
 ## Chroma Fallback
 
-Chroma remains available temporarily:
+Chroma remains available for fallback and rollback:
 
 ```dotenv
 RAG_BACKEND=chroma
@@ -101,6 +120,10 @@ RAG_BACKEND=chroma
 
 Its JSON preprocessing, vector-store builder, query engine, and evaluation
 script have not been removed.
+
+If `RAG_BACKEND` is omitted, the current code-level settings default remains
+Chroma. The branch's `.env.example` explicitly selects pgvector, so copy or set
+that value before starting FastAPI.
 
 ## Known Limitations
 

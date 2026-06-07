@@ -98,6 +98,16 @@ frontend/
 
 3. Configure LLM access in `.env`.
 
+    For OpenAI directly through LiteLLM:
+
+    ```env
+    OPENAI_API_KEY=sk-...
+    LLM_MODEL=openai/gpt-4o-mini
+    ```
+
+    An OpenAI API key requires active API billing or credits. A ChatGPT
+    subscription alone does not provide API credits.
+
     For OpenRouter through LiteLLM, set `OPENROUTER_API_KEY` and prefix model
     names with `openrouter/`. The prefix tells LiteLLM to route the request
     through OpenRouter; without it, the model can be sent to the wrong provider
@@ -134,25 +144,41 @@ frontend/
 
     The migration graph should have one head; verify it with `uv run alembic heads`.
 
-    If you already created tables locally with the old manual Python command,
-    stamp the database instead of rerunning the initial migration:
+6. Ingest the pgvector corpus:
 
     ```bash
-    uv run alembic stamp head
+    uv run python -m backend.ingestion.ingest_pgvector
     ```
 
-6. Start the FastAPI backend:
+    The current corpus should produce 72 documents, 2,353 chunks, and 2,353
+    384-dimensional embeddings.
+
+7. Confirm `.env` selects the preferred backend:
+
+    ```env
+    RAG_BACKEND=pgvector
+    RAG_WRITE_RETRIEVAL_LOGS=true
+    ```
+
+    Chroma remains available as a rollback path with `RAG_BACKEND=chroma`.
+    Restart the backend whenever this setting changes.
+
+8. Start the FastAPI backend:
 
     ```bash
     uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001
     ```
 
-7. Smoke-test the backend:
+9. Smoke-test the backend:
 
     ```bash
     curl -sS http://127.0.0.1:8001/health
     curl -sS http://127.0.0.1:8001/api/conversations
     ```
+
+    For the full pgvector verification checklist, SQL count queries, chat
+    payload, and troubleshooting steps, see
+    [`backend/docs/rag/runbook.md`](backend/docs/rag/runbook.md).
 
 ## Frontend Setup
 
