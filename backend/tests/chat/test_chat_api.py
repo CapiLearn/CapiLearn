@@ -170,9 +170,11 @@ async def test_chat_routes_provision_missing_local_user(monkeypatch) -> None:
         "user_id": repository.user.id,
     }
     assert session.commits == 1
+    assert not hasattr(repository.user, "email")
+    assert not hasattr(repository.user, "display_name")
     assert repository.calls == [
         ("get_by_clerk_id", "user_chat_new"),
-        ("create", "user_chat_new", "chat@example.com", "Chat User", UserRole.STUDENT),
+        ("create", "user_chat_new", UserRole.STUDENT),
     ]
 
 
@@ -428,16 +430,12 @@ class FakeUserRepository(UserAccountRepository):
         session,
         *,
         clerk_id: str,
-        email: str | None = None,
-        display_name: str | None = None,
         role: UserRole = UserRole.STUDENT,
     ) -> UserAccount:
-        self.calls.append(("create", clerk_id, email, display_name, role))
+        self.calls.append(("create", clerk_id, role))
         self.user = UserAccount(
             id=uuid4(),
             clerk_id=clerk_id,
-            email=email,
-            display_name=display_name,
             role=role.value,
         )
         return self.user

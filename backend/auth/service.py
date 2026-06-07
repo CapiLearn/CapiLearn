@@ -20,25 +20,16 @@ class AuthUserService:
         initial_role: UserRole = UserRole.STUDENT,
     ) -> CurrentUser:
         user = await self._repository.get_by_clerk_id(session, clerk_id=claims.clerk_id)
-        created = False
         if user is None:
-            user, created = await self._create_user(
+            user, _ = await self._create_user(
                 session,
-                claims,
+                clerk_id=claims.clerk_id,
                 initial_role=initial_role,
             )
 
         _reject_disabled_user(user)
 
-        if not created:
-            profile_changed = self._repository.apply_profile_claims(
-                user,
-                email=claims.email,
-                display_name=claims.display_name,
-            )
-            if profile_changed:
-                await session.commit()
-        return _current_user_from_model(user)
+        return _current_user_from_model(user, claims=claims)
 
     async def get_existing_current_user(
         self,
@@ -50,21 +41,19 @@ class AuthUserService:
             return None
 
         _reject_disabled_user(user)
-        return _current_user_from_model(user)
+        return _current_user_from_model(user, claims=claims)
 
     async def _create_user(
         self,
         session: AsyncSession,
-        claims: ClerkAuthClaims,
         *,
+        clerk_id: str,
         initial_role: UserRole,
     ) -> tuple[UserAccount, bool]:
         try:
             user = await self._repository.create(
                 session,
-                clerk_id=claims.clerk_id,
-                email=claims.email,
-                display_name=claims.display_name,
+                clerk_id=clerk_id,
                 role=initial_role,
             )
             await session.commit()
@@ -72,7 +61,7 @@ class AuthUserService:
             await session.rollback()
             existing_user = await self._repository.get_by_clerk_id(
                 session,
-                clerk_id=claims.clerk_id,
+                clerk_id=clerk_id,
             )
             if existing_user is None:
                 raise
@@ -89,7 +78,7 @@ def _reject_disabled_user(user: UserAccount) -> None:
         )
 
 
-def _current_user_from_model(user: UserAccount) -> CurrentUser:
+def _current_user_from_model(user: UserAccount, *, claims: ClerkAuthClaims) -> CurrentUser:
     try:
         role = UserRole(user.role)
     except ValueError as exc:
@@ -101,7 +90,7 @@ def _current_user_from_model(user: UserAccount) -> CurrentUser:
     return CurrentUser(
         id=user.id,
         clerk_id=user.clerk_id,
-        email=user.email,
-        display_name=user.display_name,
+        email=claims.email,
+        display_name=claims.display_name,
         role=role,
     )

@@ -36,8 +36,11 @@ async def test_missing_local_user_creates_student_user() -> None:
     assert session.rollbacks == 0
     assert repository.calls == [
         ("get_by_clerk_id", "user_new"),
-        ("create", "user_new", "new@example.com", "New User", UserRole.STUDENT),
+        ("create", "user_new", UserRole.STUDENT),
     ]
+    assert repository.user is not None
+    assert not hasattr(repository.user, "email")
+    assert not hasattr(repository.user, "display_name")
 
 
 @pytest.mark.asyncio
@@ -53,21 +56,18 @@ async def test_existing_local_user_is_loaded_by_clerk_id() -> None:
     )
 
     assert current_user.id == user_id
+    assert current_user.email is None
+    assert current_user.display_name is None
     assert current_user.role == UserRole.ADMIN
     assert session.commits == 0
-    assert repository.calls == [
-        ("get_by_clerk_id", "user_existing"),
-        ("apply_profile_claims", None, None),
-    ]
+    assert repository.calls == [("get_by_clerk_id", "user_existing")]
 
 
 @pytest.mark.asyncio
-async def test_profile_claims_update_email_and_display_name() -> None:
+async def test_existing_local_user_returns_request_profile_claims_without_commit() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_existing",
-        email="old@example.com",
-        display_name="Old Name",
         role=UserRole.STUDENT.value,
     )
     session = FakeSession()
@@ -85,9 +85,10 @@ async def test_profile_claims_update_email_and_display_name() -> None:
 
     assert current_user.email == "new@example.com"
     assert current_user.display_name == "New Name"
-    assert user.email == "new@example.com"
-    assert user.display_name == "New Name"
-    assert session.commits == 1
+    assert not hasattr(user, "email")
+    assert not hasattr(user, "display_name")
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_existing")]
 
 
 @pytest.mark.asyncio
@@ -109,7 +110,7 @@ async def test_auth_claim_role_payload_does_not_seed_local_role() -> None:
     assert session.commits == 1
     assert repository.calls == [
         ("get_by_clerk_id", "user_role_claim"),
-        ("create", "user_role_claim", None, None, UserRole.STUDENT),
+        ("create", "user_role_claim", UserRole.STUDENT),
     ]
 
 
@@ -134,10 +135,7 @@ async def test_auth_claim_role_payload_does_not_override_existing_local_role() -
     assert current_user.role == UserRole.STUDENT
     assert user.role == UserRole.STUDENT.value
     assert session.commits == 0
-    assert repository.calls == [
-        ("get_by_clerk_id", "user_role_claim"),
-        ("apply_profile_claims", None, None),
-    ]
+    assert repository.calls == [("get_by_clerk_id", "user_role_claim")]
 
 
 @pytest.mark.asyncio
@@ -160,7 +158,7 @@ async def test_explicit_initial_role_seeds_new_local_user() -> None:
     assert session.commits == 1
     assert repository.calls == [
         ("get_by_clerk_id", "user_test_admin"),
-        ("create", "user_test_admin", None, None, UserRole.ADMIN),
+        ("create", "user_test_admin", UserRole.ADMIN),
     ]
 
 
@@ -184,8 +182,6 @@ async def test_existing_current_user_loads_without_profile_mutation() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_existing",
-        email="old@example.com",
-        display_name="Old Name",
         role=UserRole.STUDENT.value,
     )
     session = FakeSession()
@@ -203,10 +199,10 @@ async def test_existing_current_user_loads_without_profile_mutation() -> None:
 
     assert current_user is not None
     assert current_user.id == user.id
-    assert current_user.email == "old@example.com"
-    assert current_user.display_name == "Old Name"
-    assert user.email == "old@example.com"
-    assert user.display_name == "Old Name"
+    assert current_user.email == "new@example.com"
+    assert current_user.display_name == "New Name"
+    assert not hasattr(user, "email")
+    assert not hasattr(user, "display_name")
     assert session.commits == 0
     assert repository.calls == [("get_by_clerk_id", "user_existing")]
 
@@ -238,8 +234,6 @@ async def test_claim_updates_do_not_mutate_soft_deleted_user() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_deleted",
-        email="old@example.com",
-        display_name="Old Name",
         role=UserRole.STUDENT.value,
         deleted_at=datetime.now(UTC),
     )
@@ -259,8 +253,8 @@ async def test_claim_updates_do_not_mutate_soft_deleted_user() -> None:
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert exc_info.value.code == "forbidden"
-    assert user.email == "old@example.com"
-    assert user.display_name == "Old Name"
+    assert not hasattr(user, "email")
+    assert not hasattr(user, "display_name")
     assert user.role == UserRole.STUDENT.value
     assert session.commits == 0
     assert repository.calls == [("get_by_clerk_id", "user_deleted")]
@@ -312,9 +306,8 @@ async def test_concurrent_first_request_conflict_rolls_back_and_returns_existing
     assert session.commits == 0
     assert repository.calls == [
         ("get_by_clerk_id", "user_race"),
-        ("create", "user_race", None, None, UserRole.STUDENT),
+        ("create", "user_race", UserRole.STUDENT),
         ("get_by_clerk_id", "user_race"),
-        ("apply_profile_claims", None, None),
     ]
 
 
@@ -384,35 +377,17 @@ class FakeUserRepository(UserAccountRepository):
         session,
         *,
         clerk_id: str,
-        email: str | None = None,
-        display_name: str | None = None,
         role: UserRole = UserRole.STUDENT,
     ) -> UserAccount:
-        self.calls.append(("create", clerk_id, email, display_name, role))
+        self.calls.append(("create", clerk_id, role))
         if self.create_error is not None:
             raise self.create_error
         self.user = UserAccount(
             id=uuid4(),
             clerk_id=clerk_id,
-            email=email,
-            display_name=display_name,
             role=role.value,
         )
         return self.user
-
-    def apply_profile_claims(
-        self,
-        user: UserAccount,
-        *,
-        email: str | None,
-        display_name: str | None,
-    ) -> bool:
-        self.calls.append(("apply_profile_claims", email, display_name))
-        return super().apply_profile_claims(
-            user,
-            email=email,
-            display_name=display_name,
-        )
 
     def apply_role(self, user: UserAccount, role: UserRole) -> bool:
         self.calls.append(("apply_role", role))

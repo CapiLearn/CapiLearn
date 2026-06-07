@@ -606,29 +606,12 @@ class FakeUserRepository(UserAccountRepository):
         session,
         *,
         clerk_id: str,
-        email: str | None = None,
-        display_name: str | None = None,
         role: UserRole = UserRole.STUDENT,
     ) -> UserAccount:
-        self.calls.append(("create", clerk_id, email, display_name, role))
+        self.calls.append(("create", clerk_id, role))
         self.user = UserAccount(
             id=uuid4(),
             clerk_id=clerk_id,
-            email=email,
-            display_name=display_name,
             role=role.value,
         )
         return self.user
-
-    def apply_profile_claims(
-        self,
-        user: UserAccount,
-        *,
-        email: str | None,
-        display_name: str | None,
-    ) -> bool:
-        return super().apply_profile_claims(
-            user,
-            email=email,
-            display_name=display_name,
-        )

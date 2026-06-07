@@ -9,3 +9,8 @@ def test_user_account_role_constraint_renders_expected_name() -> None:
 
     assert "CONSTRAINT user_account_role_check CHECK" in ddl
     assert "user_account_user_account_role_check_check" not in ddl
+
+
+def test_user_account_does_not_map_clerk_profile_fields() -> None:
+    assert "email" not in UserAccount.__table__.columns
+    assert "display_name" not in UserAccount.__table__.columns

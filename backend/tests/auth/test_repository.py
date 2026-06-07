@@ -1,68 +1,72 @@
+from inspect import signature
 from uuid import uuid4
+
+import pytest
 
 from backend.auth.models import UserAccount
 from backend.auth.repository import UserAccountRepository
 from backend.auth.schemas import UserRole
 
 
-def test_apply_profile_claims_updates_email_and_display_name_without_changing_role() -> None:
+def test_repository_does_not_expose_profile_merge_behavior() -> None:
+    assert not hasattr(UserAccountRepository, "apply_profile_claims")
+
+    create_parameters = signature(UserAccountRepository.create).parameters
+    assert "email" not in create_parameters
+    assert "display_name" not in create_parameters
+
+
+@pytest.mark.asyncio
+async def test_create_persists_only_app_owned_auth_state() -> None:
+    session = FakeSession()
+
+    user = await UserAccountRepository().create(
+        session,
+        clerk_id="user_123",
+        role=UserRole.INSTRUCTOR,
+    )
+
+    assert user.clerk_id == "user_123"
+    assert user.role == UserRole.INSTRUCTOR.value
+    assert not hasattr(user, "email")
+    assert not hasattr(user, "display_name")
+    assert session.added == [user]
+    assert session.flushes == 1
+
+
+def test_apply_role_updates_local_role() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_123",
-        email="old@example.com",
-        display_name="Old Name",
         role=UserRole.STUDENT.value,
     )
 
-    changed = UserAccountRepository().apply_profile_claims(
-        user,
-        email="new@example.com",
-        display_name="New Name",
-    )
+    changed = UserAccountRepository().apply_role(user, UserRole.ADMIN)
 
     assert changed is True
-    assert user.email == "new@example.com"
-    assert user.display_name == "New Name"
-    assert user.role == UserRole.STUDENT.value
+    assert user.role == UserRole.ADMIN.value
 
 
-def test_apply_profile_claims_returns_false_for_unchanged_values() -> None:
+def test_apply_role_returns_false_for_unchanged_role() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_123",
-        email="same@example.com",
-        display_name="Same Name",
         role=UserRole.INSTRUCTOR.value,
     )
 
-    changed = UserAccountRepository().apply_profile_claims(
-        user,
-        email="same@example.com",
-        display_name="Same Name",
-    )
+    changed = UserAccountRepository().apply_role(user, UserRole.INSTRUCTOR)
 
     assert changed is False
-    assert user.email == "same@example.com"
-    assert user.display_name == "Same Name"
     assert user.role == UserRole.INSTRUCTOR.value
 
 
-def test_apply_profile_claims_does_not_overwrite_profile_with_none_values() -> None:
-    user = UserAccount(
-        id=uuid4(),
-        clerk_id="user_123",
-        email="kept@example.com",
-        display_name="Kept Name",
-        role=UserRole.STUDENT.value,
-    )
+class FakeSession:
+    def __init__(self) -> None:
+        self.added = []
+        self.flushes = 0
 
-    changed = UserAccountRepository().apply_profile_claims(
-        user,
-        email=None,
-        display_name=None,
-    )
+    def add(self, user: UserAccount) -> None:
+        self.added.append(user)
 
-    assert changed is False
-    assert user.email == "kept@example.com"
-    assert user.display_name == "Kept Name"
-    assert user.role == UserRole.STUDENT.value
+    async def flush(self) -> None:
+        self.flushes += 1

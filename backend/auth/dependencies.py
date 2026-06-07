@@ -206,8 +206,8 @@ async def _get_or_create_test_current_user(
     return CurrentUser(
         id=current_user.id,
         clerk_id=current_user.clerk_id,
-        email=current_user.email,
-        display_name=current_user.display_name,
+        email=claims.email,
+        display_name=claims.display_name,
         role=test_role,
     )
 

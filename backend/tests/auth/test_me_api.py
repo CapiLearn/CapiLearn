@@ -129,9 +129,12 @@ async def test_test_auth_mode_creates_local_user_with_configured_claims() -> Non
         "role": "admin",
     }
     assert session.commits == 1
+    assert repository.user is not None
+    assert not hasattr(repository.user, "email")
+    assert not hasattr(repository.user, "display_name")
     assert repository.calls == [
         ("get_by_clerk_id", "user_test_mode"),
-        ("create", "user_test_mode", "dev@example.com", "Local Dev", UserRole.ADMIN),
+        ("create", "user_test_mode", UserRole.ADMIN),
     ]
 
 
@@ -140,8 +143,6 @@ async def test_test_auth_mode_updates_existing_local_user_with_configured_claims
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_test_mode",
-        email="old@example.com",
-        display_name="Old Name",
         role=UserRole.STUDENT.value,
     )
     repository = FakeUserRepository(user=user)
@@ -174,13 +175,12 @@ async def test_test_auth_mode_updates_existing_local_user_with_configured_claims
         "displayName": "Local Dev",
         "role": "admin",
     }
-    assert user.email == "dev@example.com"
-    assert user.display_name == "Local Dev"
+    assert not hasattr(user, "email")
+    assert not hasattr(user, "display_name")
     assert user.role == UserRole.ADMIN.value
-    assert session.commits == 2
+    assert session.commits == 1
     assert repository.calls == [
         ("get_by_clerk_id", "user_test_mode"),
-        ("apply_profile_claims", "dev@example.com", "Local Dev"),
         ("get_by_clerk_id", "user_test_mode"),
         ("apply_role", UserRole.ADMIN),
     ]
@@ -214,13 +214,57 @@ async def test_me_keeps_existing_local_role_when_clerk_claim_has_role() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["role"] == "student"
+    payload = response.json()
+    assert payload["email"] is None
+    assert payload["displayName"] is None
+    assert payload["role"] == "student"
     assert user.role == UserRole.STUDENT.value
     assert session.commits == 0
-    assert repository.calls == [
-        ("get_by_clerk_id", "user_clerk_mode"),
-        ("apply_profile_claims", None, None),
-    ]
+    assert repository.calls == [("get_by_clerk_id", "user_clerk_mode")]
+
+
+@pytest.mark.asyncio
+async def test_me_returns_profile_fields_from_current_clerk_claims() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_clerk_mode",
+        role=UserRole.STUDENT.value,
+    )
+    repository = FakeUserRepository(user=user)
+    session = FakeSession()
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
+        ClerkAuthClaims(
+            clerk_id="user_clerk_mode",
+            email="claim@example.com",
+            display_name="Claim User",
+            claims={"sub": "user_clerk_mode"},
+        )
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/me",
+            headers={"Authorization": "Bearer clerk"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "id": str(user.id),
+        "clerkId": "user_clerk_mode",
+        "email": "claim@example.com",
+        "displayName": "Claim User",
+        "role": "student",
+    }
+    assert not hasattr(user, "email")
+    assert not hasattr(user, "display_name")
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_clerk_mode")]
 
 
 class FakeVerifier:
@@ -273,33 +317,15 @@ class FakeUserRepository(UserAccountRepository):
         session,
         *,
         clerk_id: str,
-        email: str | None = None,
-        display_name: str | None = None,
         role: UserRole = UserRole.STUDENT,
     ) -> UserAccount:
-        self.calls.append(("create", clerk_id, email, display_name, role))
+        self.calls.append(("create", clerk_id, role))
         self.user = UserAccount(
             id=uuid4(),
             clerk_id=clerk_id,
-            email=email,
-            display_name=display_name,
             role=role.value,
         )
         return self.user
-
-    def apply_profile_claims(
-        self,
-        user: UserAccount,
-        *,
-        email: str | None,
-        display_name: str | None,
-    ) -> bool:
-        self.calls.append(("apply_profile_claims", email, display_name))
-        return super().apply_profile_claims(
-            user,
-            email=email,
-            display_name=display_name,
-        )
 
     def apply_role(self, user: UserAccount, role: UserRole) -> bool:
         self.calls.append(("apply_role", role))
