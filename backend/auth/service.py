@@ -18,7 +18,6 @@ class AuthUserService:
         claims: ClerkAuthClaims,
         *,
         initial_role: UserRole = UserRole.STUDENT,
-        role_override: UserRole | None = None,
     ) -> CurrentUser:
         user = await self._repository.get_by_clerk_id(session, clerk_id=claims.clerk_id)
         created = False
@@ -29,12 +28,7 @@ class AuthUserService:
                 initial_role=initial_role,
             )
 
-        if user.deleted_at is not None:
-            raise ApiError(
-                code="forbidden",
-                message="This user account is disabled.",
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+        _reject_disabled_user(user)
 
         if not created:
             profile_changed = self._repository.apply_profile_claims(
@@ -42,13 +36,20 @@ class AuthUserService:
                 email=claims.email,
                 display_name=claims.display_name,
             )
-            role_changed = (
-                self._repository.apply_role(user, role_override)
-                if role_override is not None
-                else False
-            )
-            if profile_changed or role_changed:
+            if profile_changed:
                 await session.commit()
+        return _current_user_from_model(user)
+
+    async def get_existing_current_user(
+        self,
+        session: AsyncSession,
+        claims: ClerkAuthClaims,
+    ) -> CurrentUser | None:
+        user = await self._repository.get_by_clerk_id(session, clerk_id=claims.clerk_id)
+        if user is None:
+            return None
+
+        _reject_disabled_user(user)
         return _current_user_from_model(user)
 
     async def _create_user(
@@ -77,6 +78,15 @@ class AuthUserService:
                 raise
             return existing_user, False
         return user, True
+
+
+def _reject_disabled_user(user: UserAccount) -> None:
+    if user.deleted_at is not None:
+        raise ApiError(
+            code="forbidden",
+            message="This user account is disabled.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
 
 
 def _current_user_from_model(user: UserAccount) -> CurrentUser:

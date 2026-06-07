@@ -177,10 +177,11 @@ async def test_test_auth_mode_updates_existing_local_user_with_configured_claims
     assert user.email == "dev@example.com"
     assert user.display_name == "Local Dev"
     assert user.role == UserRole.ADMIN.value
-    assert session.commits == 1
+    assert session.commits == 2
     assert repository.calls == [
         ("get_by_clerk_id", "user_test_mode"),
         ("apply_profile_claims", "dev@example.com", "Local Dev"),
+        ("get_by_clerk_id", "user_test_mode"),
         ("apply_role", UserRole.ADMIN),
     ]
 

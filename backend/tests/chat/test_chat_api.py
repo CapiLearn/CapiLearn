@@ -5,8 +5,14 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from backend.auth.dependencies import get_current_user
-from backend.auth.schemas import CurrentUser, UserRole
+from backend.auth.dependencies import (
+    get_auth_request_verifier,
+    get_current_user,
+    get_user_repository,
+)
+from backend.auth.models import UserAccount
+from backend.auth.repository import UserAccountRepository
+from backend.auth.schemas import ClerkAuthClaims, CurrentUser, UserRole
 from backend.chat.dependencies import get_chat_service
 from backend.chat.schemas import (
     ConversationListResponse,
@@ -17,6 +23,7 @@ from backend.chat.schemas import (
     MessageStatus,
     SendMessageResponse,
 )
+from backend.core.database import get_db
 from backend.main import app
 
 
@@ -118,6 +125,55 @@ async def test_old_user_header_is_not_trusted() -> None:
         "message": "Authentication is required.",
         "details": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_chat_routes_provision_missing_local_user(monkeypatch) -> None:
+    repository = FakeUserRepository()
+    session = FakeSession()
+    captured = {}
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
+        ClerkAuthClaims(
+            clerk_id="user_chat_new",
+            email="chat@example.com",
+            display_name="Chat User",
+            claims={"sub": "user_chat_new"},
+        )
+    )
+
+    async def list_conversations(self, session_arg, *, user_id):
+        captured["session"] = session_arg
+        captured["user_id"] = user_id
+        return []
+
+    monkeypatch.setattr(
+        "backend.chat.repository.ChatRepository.list_conversations",
+        list_conversations,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/conversations",
+            headers={"Authorization": "Bearer clerk"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"conversations": []}
+    assert repository.user is not None
+    assert captured == {
+        "session": session,
+        "user_id": repository.user.id,
+    }
+    assert session.commits == 1
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_chat_new"),
+        ("create", "user_chat_new", "chat@example.com", "Chat User", UserRole.STUDENT),
+    ]
 
 
 @pytest.mark.asyncio
@@ -329,6 +385,62 @@ class MissingConversationService(FakeChatService):
             message="Conversation was not found.",
             status_code=404,
         )
+
+
+class FakeVerifier:
+    def __init__(self, claims: ClerkAuthClaims) -> None:
+        self._claims = claims
+
+    async def verify(self, bearer_token: str):
+        return self._claims
+
+
+def _fake_db_override(session):
+    async def override():
+        yield session
+
+    return override
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class FakeUserRepository(UserAccountRepository):
+    def __init__(self) -> None:
+        self.user: UserAccount | None = None
+        self.calls = []
+
+    async def get_by_clerk_id(self, session, *, clerk_id: str) -> UserAccount | None:
+        self.calls.append(("get_by_clerk_id", clerk_id))
+        return self.user
+
+    async def create(
+        self,
+        session,
+        *,
+        clerk_id: str,
+        email: str | None = None,
+        display_name: str | None = None,
+        role: UserRole = UserRole.STUDENT,
+    ) -> UserAccount:
+        self.calls.append(("create", clerk_id, email, display_name, role))
+        self.user = UserAccount(
+            id=uuid4(),
+            clerk_id=clerk_id,
+            email=email,
+            display_name=display_name,
+            role=role.value,
+        )
+        return self.user
 
 
 class BlockedChatService(FakeChatService):
