@@ -26,3 +26,12 @@ Metrics tracked:
 - [ ] Number of total questions asked  
 - [ ] Student activity overview: top topic, number of questions asked, current streak, last login  
 - [ ] Pie graph of users active in last week verses total users
+
+**Goals for Saturday:**  
+**Jose: clean up admin and instructor dashboards, start turning turning into dynamic board,**   
+**Lizzie: bring tech stack for deployment for group to decide, fake user data,**   
+**Stephan: PR for logging, endpoints for instructor and admin dashboards**
+
+**Next week:** 
+
+**Lizzie \- refactor RAG**
