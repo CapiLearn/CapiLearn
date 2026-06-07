@@ -27,11 +27,52 @@ Metrics tracked:
 - [ ] Student activity overview: top topic, number of questions asked, current streak, last login  
 - [ ] Pie graph of users active in last week verses total users
 
-**Goals for Saturday:**  
-**Jose: clean up admin and instructor dashboards, start turning turning into dynamic board,**   
-**Lizzie: bring tech stack for deployment for group to decide, fake user data,**   
-**Stephan: PR for logging, endpoints for instructor and admin dashboards**
+## Phase 2 Features 
 
-**Next week:** 
+## RAG Overhaul Completed
 
-**Lizzie \- refactor RAG**
+The original local Chroma RAG implementation was upgraded to a PostgreSQL and
+pgvector-backed retrieval system while preserving Chroma as a rollback option.
+The existing chat, guardrail, prompt-building, and LLM generation flow was not
+rewritten.
+
+Completed work:
+
+- Added PostgreSQL tables for RAG documents, chunks, 384-dimensional
+  embeddings, and retrieval logs.
+- Enabled the pgvector extension and added an HNSW cosine-similarity index.
+- Merged the Alembic migration branches into one head and verified migrations
+  from a clean Docker volume.
+- Added a pgvector repository and service behind the existing retrieval
+  provider interface.
+- Added repository ingestion that filters English course content, applies
+  Markdown-aware chunking, and embeds chunks with
+  `sentence-transformers/all-MiniLM-L6-v2`.
+- Added runtime query embedding and asynchronous pgvector cosine-similarity
+  search.
+- Preserved the existing guardrail flow and `<retrieved_context>` prompt
+  injection through `build_messages()`.
+- Added structured retrieval events and optional database retrieval logs with
+  chunk IDs, distances, and similarity scores.
+- Documented pgvector as the preferred backend for this branch while retaining
+  `RAG_BACKEND=chroma` for rollback.
+- Added local setup, verification, and troubleshooting instructions.
+
+Live verification results:
+
+- PostgreSQL/pgvector started successfully with pgvector `0.8.2`.
+- Alembic current and head both resolved to `20260606_0005`.
+- Ingestion completed with zero failures.
+- Stored 72 documents, 2,353 chunks, and 2,353 embeddings.
+- A live chat request selected pgvector, embedded the query, retrieved five
+  chunks, injected them into the prompt, completed OpenAI generation, and
+  persisted the retrieval and response.
+- Backend test suite passed with 116 tests, and Ruff checks passed.
+- No frontend files were changed.
+
+Remaining deployment requirements:
+
+- Set `RAG_BACKEND=pgvector` before starting the backend.
+- Run migrations and ingestion before serving chat traffic.
+- Configure an active LLM API key with available API credits.
+- Keep Chroma available as a temporary rollback path.
