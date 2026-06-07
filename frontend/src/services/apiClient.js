@@ -26,12 +26,25 @@ export async function handleApiResponse(
   fallbackMessage = "Request failed."
 ) {
   if (!response.ok) {
+    let errorMessage = fallbackMessage;
+    let errorCode;
+    let errorDetails;
+
     try {
       const errorData = await response.json();
-      throw new Error(errorData.message || fallbackMessage);
+
+      errorMessage = errorData?.message || fallbackMessage;
+      errorCode = errorData?.code;
+      errorDetails = errorData?.details;
     } catch {
-      throw new Error(fallbackMessage);
+      // Keep the fallback message when the response body is not valid JSON.
     }
+
+    const error = new Error(errorMessage);
+    error.code = errorCode;
+    error.details = errorDetails;
+
+    throw error;
   }
 
   if (response.status === 204) {
