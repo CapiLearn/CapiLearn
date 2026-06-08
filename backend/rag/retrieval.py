@@ -1,17 +1,13 @@
 import asyncio
 import logging
-from collections.abc import Callable
-from threading import Lock
 from typing import Any
 from uuid import UUID
 
-from sentence_transformers import SentenceTransformer
-
 from backend.core.database import SessionFactory
 from backend.core.observability import elapsed_ms, log_event, timer_start
-from backend.llm.schemas import RetrievalProvider, RetrievalResult, RetrievedChunk
 from backend.rag.config import RagBackend, RagSettings
 from backend.rag.query import RagQueryEngine, get_default_query_engine
+from backend.rag.schemas import RetrievalProvider, RetrievalResult, RetrievedChunk
 from backend.rag.service import RagService
 
 logger = logging.getLogger(__name__)
@@ -76,7 +72,6 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
         top_k: int = 5,
         write_retrieval_logs: bool = True,
         rag_index_version: str | None = None,
-        model_loader: Callable[[str], Any] = SentenceTransformer,
         session_factory=SessionFactory,
         service_factory=RagService,
     ) -> None:
@@ -84,11 +79,8 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
         self._top_k = top_k
         self._write_retrieval_logs = write_retrieval_logs
         self._rag_index_version = rag_index_version
-        self._model_loader = model_loader
         self._session_factory = session_factory
         self._service_factory = service_factory
-        self._model: Any | None = None
-        self._model_lock = Lock()
 
     async def retrieve(
         self,
@@ -100,12 +92,10 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
     ) -> RetrievalResult:
         started_at = timer_start()
         try:
-            query_embedding = await asyncio.to_thread(self._embed_query, query)
             async with self._session_factory() as session:
                 service = self._service_factory(session=session)
-                rows = await service.retrieve(
+                rows = await service.retrieve_by_text(
                     query_text=query,
-                    query_embedding=query_embedding,
                     embedding_model=self._model_name,
                     top_k=self._top_k,
                     write_log=self._write_retrieval_logs,
@@ -135,18 +125,6 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
                 user_message_id=str(user_message_id),
             )
             return RetrievalResult(chunks=[])
-
-    def _embed_query(self, query: str) -> list[float]:
-        model = self._get_model()
-        embedding = model.encode(query)
-        return embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
-
-    def _get_model(self) -> Any:
-        if self._model is None:
-            with self._model_lock:
-                if self._model is None:
-                    self._model = self._model_loader(self._model_name)
-        return self._model
 
 
 def build_rag_retrieval_provider(config: RagSettings) -> RetrievalProvider:

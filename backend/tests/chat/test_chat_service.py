@@ -22,10 +22,9 @@ from backend.llm.schemas import (
     LLMCostComponent,
     LLMResult,
     ProviderResponse,
-    RetrievalResult,
-    RetrievedChunk,
 )
 from backend.llm.service import LLMServiceError
+from backend.rag.schemas import RetrievalResult, RetrievedChunk
 
 
 @pytest.mark.asyncio

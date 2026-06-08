@@ -4,15 +4,14 @@ from uuid import uuid4
 
 import pytest
 
-from backend.llm.retrieval import (
+from backend.rag.config import RagBackend, RagSettings
+from backend.rag.repository import SimilarChunk
+from backend.rag.retrieval import (
     PgvectorRagRetrievalProvider,
     RagRetrievalProvider,
     build_rag_retrieval_provider,
 )
-from backend.llm.schemas import RetrievalProvider
-from backend.rag.config import RagBackend, RagSettings
-from backend.rag.models import EMBEDDING_DIMENSIONS
-from backend.rag.repository import SimilarChunk
+from backend.rag.schemas import RetrievalProvider
 
 
 @pytest.mark.asyncio
@@ -84,20 +83,17 @@ def test_build_rag_retrieval_provider_selects_configured_backend() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pgvector_provider_embeds_queries_and_returns_compatible_chunks(
+async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks(
     caplog,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="backend.llm.retrieval")
+    caplog.set_level(logging.INFO, logger="backend.rag.retrieval")
     service = FakePgvectorService()
-    model = FakeEmbeddingModel()
     provider = PgvectorRagRetrievalProvider(
-        model_loader=lambda name: model,
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
         top_k=3,
         rag_index_version="fso-2026-06",
     )
-    loop_thread_id = threading.get_ident()
     conversation_id = uuid4()
     message_id = uuid4()
 
@@ -108,8 +104,6 @@ async def test_pgvector_provider_embeds_queries_and_returns_compatible_chunks(
         user_message_id=message_id,
     )
 
-    assert model.queries == ["What is React state?"]
-    assert model.thread_ids[0] != loop_thread_id
     assert service.calls == [
         {
             "query_text": "What is React state?",
@@ -155,8 +149,8 @@ async def test_pgvector_provider_embeds_queries_and_returns_compatible_chunks(
 @pytest.mark.asyncio
 async def test_pgvector_provider_degrades_to_empty_context_on_failure(caplog) -> None:
     provider = PgvectorRagRetrievalProvider(
-        model_loader=lambda name: FakeEmbeddingModel(error=RuntimeError("model failed")),
         session_factory=FakeSessionFactory,
+        service_factory=lambda *, session: FakePgvectorService(error=RuntimeError("model failed")),
     )
 
     result = await provider.retrieve(
@@ -173,7 +167,6 @@ async def test_pgvector_provider_degrades_to_empty_context_on_failure(caplog) ->
 @pytest.mark.asyncio
 async def test_pgvector_provider_degrades_on_database_failure(caplog) -> None:
     provider = PgvectorRagRetrievalProvider(
-        model_loader=lambda name: FakeEmbeddingModel(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: FakePgvectorService(
             error=RuntimeError("database unavailable")
@@ -211,20 +204,6 @@ class FakeRagQueryEngine:
         ]
 
 
-class FakeEmbeddingModel:
-    def __init__(self, *, error: Exception | None = None) -> None:
-        self.error = error
-        self.queries = []
-        self.thread_ids = []
-
-    def encode(self, query: str):
-        self.queries.append(query)
-        self.thread_ids.append(threading.get_ident())
-        if self.error is not None:
-            raise self.error
-        return [0.0] * EMBEDDING_DIMENSIONS
-
-
 class FakeSessionFactory:
     async def __aenter__(self):
         return object()
@@ -250,9 +229,8 @@ class FakePgvectorService:
             similarity=0.875,
         )
 
-    async def retrieve(self, **kwargs):
+    async def retrieve_by_text(self, **kwargs):
         if self.error is not None:
             raise self.error
-        assert len(kwargs.pop("query_embedding")) == EMBEDDING_DIMENSIONS
         self.calls.append(kwargs)
         return [self.result]

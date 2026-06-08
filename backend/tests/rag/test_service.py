@@ -1,3 +1,4 @@
+import threading
 from uuid import uuid4
 
 import pytest
@@ -84,6 +85,119 @@ async def test_retrieve_returns_results_and_optionally_writes_log() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retrieve_by_text_embeds_query_and_delegates_to_retrieve() -> None:
+    session = FakeSession()
+    result = SimilarChunk(
+        chunk_id=uuid4(),
+        document_id=uuid4(),
+        content="Course content",
+        metadata={"week": "2"},
+        source_type="course_repo",
+        source_path="src/content/en/example.md",
+        title="Example",
+        course_name="Full Stack Open",
+        distance=0.2,
+        similarity=0.8,
+    )
+    repository = CapturingRepository(results=[result])
+    model = FakeEmbeddingModel()
+    service = RagService(
+        session=session,
+        repository=repository,
+        model_loader=lambda name: model,
+    )
+    conversation_id = uuid4()
+    message_id = uuid4()
+
+    results = await service.retrieve_by_text(
+        query_text="What is state?",
+        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        top_k=4,
+        write_log=True,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        rag_index_version="fso-2026-06",
+    )
+
+    assert results == [result]
+    assert model.queries == ["What is state?"]
+    assert repository.search_query_embedding == [0.0] * EMBEDDING_DIMENSIONS
+    assert repository.search_embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
+    assert repository.search_top_k == 4
+    assert repository.logged_query_text == "What is state?"
+    assert repository.logged_results == [result]
+    assert repository.logged_conversation_id == conversation_id
+    assert repository.logged_message_id == message_id
+    assert repository.logged_rag_index_version == "fso-2026-06"
+    assert session.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retrieve_by_text_embeds_query_in_thread() -> None:
+    model = FakeEmbeddingModel()
+    service = RagService(
+        session=FakeSession(),
+        repository=CapturingRepository(),
+        model_loader=lambda name: model,
+    )
+    loop_thread_id = threading.get_ident()
+
+    await service.retrieve_by_text(
+        query_text="What is state?",
+        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+    )
+
+    assert model.thread_ids
+    assert model.thread_ids[0] != loop_thread_id
+
+
+@pytest.mark.asyncio
+async def test_retrieve_by_text_rejects_wrong_embedding_dimensions() -> None:
+    repository = CapturingRepository()
+    model = FakeEmbeddingModel(vector=[0.1, 0.2])
+    service = RagService(
+        session=FakeSession(),
+        repository=repository,
+        model_loader=lambda name: model,
+    )
+
+    with pytest.raises(ValueError, match="exactly 384 dimensions"):
+        await service.retrieve_by_text(
+            query_text="What is state?",
+            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        )
+
+    assert repository.search_top_k is None
+
+
+@pytest.mark.asyncio
+async def test_retrieve_by_text_caches_model_by_loader_and_model_name() -> None:
+    loader = CountingModelLoader()
+    first = RagService(
+        session=FakeSession(),
+        repository=CapturingRepository(),
+        model_loader=loader,
+    )
+    second = RagService(
+        session=FakeSession(),
+        repository=CapturingRepository(),
+        model_loader=loader,
+    )
+
+    await first.retrieve_by_text(
+        query_text="first",
+        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+    )
+    await second.retrieve_by_text(
+        query_text="second",
+        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+    )
+
+    assert loader.calls == ["sentence-transformers/all-MiniLM-L6-v2"]
+    assert loader.model.queries == ["first", "second"]
+
+
+@pytest.mark.asyncio
 async def test_replace_document_index_writes_atomically() -> None:
     session = FakeSession()
     repository = CapturingRepository()
@@ -160,8 +274,14 @@ class CapturingRepository:
         self.inserted_embeddings = None
         self.inserted_chunks = None
         self.deleted_document_id = None
+        self.search_query_embedding = None
+        self.search_embedding_model = None
         self.search_top_k = None
+        self.logged_query_text = None
         self.logged_results = None
+        self.logged_conversation_id = None
+        self.logged_message_id = None
+        self.logged_rag_index_version = None
 
     async def insert_embeddings(self, session, *, embeddings):
         if self.error is not None:
@@ -187,6 +307,8 @@ class CapturingRepository:
         embedding_model,
         top_k,
     ):
+        self.search_query_embedding = query_embedding
+        self.search_embedding_model = embedding_model
         self.search_top_k = top_k
         return self.results
 
@@ -200,10 +322,36 @@ class CapturingRepository:
         message_id,
         rag_index_version,
     ):
+        self.logged_query_text = query_text
         self.logged_results = results
+        self.logged_conversation_id = conversation_id
+        self.logged_message_id = message_id
+        self.logged_rag_index_version = rag_index_version
         return object()
 
 
 class FakeDocument:
     def __init__(self) -> None:
         self.id = uuid4()
+
+
+class FakeEmbeddingModel:
+    def __init__(self, *, vector: list[float] | None = None) -> None:
+        self.vector = vector or [0.0] * EMBEDDING_DIMENSIONS
+        self.queries = []
+        self.thread_ids = []
+
+    def encode(self, query: str):
+        self.queries.append(query)
+        self.thread_ids.append(threading.get_ident())
+        return self.vector
+
+
+class CountingModelLoader:
+    def __init__(self) -> None:
+        self.calls = []
+        self.model = FakeEmbeddingModel()
+
+    def __call__(self, model_name: str) -> FakeEmbeddingModel:
+        self.calls.append(model_name)
+        return self.model

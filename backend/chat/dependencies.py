@@ -9,10 +9,10 @@ from backend.chat.service import ChatService
 from backend.core.config import settings
 from backend.core.database import DbSession
 from backend.core.exceptions import ApiError
-from backend.llm.retrieval import build_rag_retrieval_provider
-from backend.llm.schemas import RetrievalProvider
 from backend.llm.service import LLMService
 from backend.rag.config import rag_settings
+from backend.rag.retrieval import build_rag_retrieval_provider
+from backend.rag.schemas import RetrievalProvider
 
 
 async def get_current_user(

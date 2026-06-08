@@ -32,10 +32,9 @@ from backend.llm.schemas import (
     GuardrailResult,
     LLMRequest,
     ProviderResponse,
-    RetrievalResult,
-    RetrievedChunk,
 )
 from backend.llm.service import LLMService, LLMServiceError
+from backend.rag.schemas import RetrievalResult, RetrievedChunk
 
 
 class FakeProvider:

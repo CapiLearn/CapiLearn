@@ -31,10 +31,8 @@ from backend.llm.schemas import (
     LLMRequest,
     LLMResult,
     ProviderResponse,
-    RetrievalProvider,
-    RetrievalResult,
-    RetrievedChunk,
 )
+from backend.rag.schemas import RetrievalProvider, RetrievalResult, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

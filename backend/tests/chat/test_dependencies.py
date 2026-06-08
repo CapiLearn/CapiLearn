@@ -1,7 +1,7 @@
 from backend.chat.dependencies import get_llm_service, get_rag_retrieval_provider
-from backend.llm.retrieval import build_rag_retrieval_provider
-from backend.llm.schemas import RetrievalResult
 from backend.rag.config import RagBackend, RagSettings
+from backend.rag.retrieval import build_rag_retrieval_provider
+from backend.rag.schemas import RetrievalResult
 
 
 def test_get_rag_retrieval_provider_returns_cached_provider() -> None:
