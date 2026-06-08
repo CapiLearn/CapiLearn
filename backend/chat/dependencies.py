@@ -9,9 +9,10 @@ from backend.chat.service import ChatService
 from backend.core.config import settings
 from backend.core.database import DbSession
 from backend.core.exceptions import ApiError
-from backend.llm.retrieval import RagRetrievalProvider
+from backend.llm.retrieval import build_rag_retrieval_provider
 from backend.llm.schemas import RetrievalProvider
 from backend.llm.service import LLMService
+from backend.rag.config import rag_settings
 
 
 async def get_current_user(
@@ -38,7 +39,7 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 @lru_cache(maxsize=1)
 def get_rag_retrieval_provider() -> RetrievalProvider:
-    return RagRetrievalProvider()
+    return build_rag_retrieval_provider(rag_settings)
 
 
 RagRetrievalProviderDep = Annotated[
