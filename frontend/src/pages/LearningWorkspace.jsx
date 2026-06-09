@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
 
-import { 
-  createConversation, 
-  createMessage, 
-  listConversations, 
+import {
+  createConversation,
+  createMessage,
+  listConversations,
   listMessages,
 } from "../services/conversationService";
 
@@ -19,11 +19,39 @@ const suggestedPrompts = [
 ];
 
 const calendarDays = [
-  "", "", "", "1", "2", "3", "4",
-  "5", "6", "7", "8", "9", "10", "11",
-  "12", "13", "14", "15", "16", "17", "18",
-  "19", "20", "21", "22", "23", "24", "25",
-  "26", "27", "28", "29", "30", "31", "",
+  "",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "10",
+  "11",
+  "12",
+  "13",
+  "14",
+  "15",
+  "16",
+  "17",
+  "18",
+  "19",
+  "20",
+  "21",
+  "22",
+  "23",
+  "24",
+  "25",
+  "26",
+  "27",
+  "28",
+  "29",
+  "30",
+  "31",
+  "",
 ];
 
 const initialChatMessages = [
@@ -35,6 +63,10 @@ const initialChatMessages = [
   },
 ];
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function HighlightedText({ text, searchTerm }) {
   const normalizedSearchTerm = searchTerm.trim();
 
@@ -42,11 +74,7 @@ function HighlightedText({ text, searchTerm }) {
     return text;
   }
 
-  const escapedSearchTerm = normalizedSearchTerm.replace(
-    /[.*+?^${}()|[\]\\]/g,
-    "\\$&"
-  );
-
+  const escapedSearchTerm = escapeRegExp(normalizedSearchTerm);
   const parts = text.split(new RegExp(`(${escapedSearchTerm})`, "gi"));
 
   return parts.map((part, index) =>
@@ -60,13 +88,48 @@ function HighlightedText({ text, searchTerm }) {
   );
 }
 
+function getSearchableMarkdownText(content) {
+  return content
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/```[\s\S]*?```/g, (match) =>
+      match.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "")
+    )
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getSearchableTextForMessage(message) {
+  return message.role === "assistant"
+    ? getSearchableMarkdownText(message.content)
+    : message.content;
+}
+
+function countSearchMatchesInMessage(message, searchTerm) {
+  if (!searchTerm) {
+    return 0;
+  }
+
+  const searchableText = getSearchableTextForMessage(message);
+  const escapedSearchTerm = escapeRegExp(searchTerm);
+  const matches = searchableText.match(new RegExp(escapedSearchTerm, "gi"));
+
+  return matches ? matches.length : 0;
+}
+
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
-
   const [chatMessages, setChatMessages] = useState(initialChatMessages);
   const activeConversationIdRef = useRef(null);
-
-  //State variables
 
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -143,7 +206,7 @@ function LearningWorkspace() {
       setIsSending(false);
     }
   }
-  
+
   function handleNewConversation() {
     activeConversationIdRef.current = null;
     setConversationId(null);
@@ -153,7 +216,7 @@ function LearningWorkspace() {
     setIsLoadingMessages(false);
     setMessageSearchTerm("");
   }
-      
+
   async function handleSelectConversation(selectedConversationId) {
     activeConversationIdRef.current = selectedConversationId;
     setConversationId(selectedConversationId);
@@ -171,35 +234,32 @@ function LearningWorkspace() {
       setChatMessages(data.messages || []);
     } catch (error) {
       if (activeConversationIdRef.current === selectedConversationId) {
-        setErrorMessage(error.message || "Unable to load conversation messages.");
+        setErrorMessage(
+          error.message || "Unable to load conversation messages."
+        );
       }
     } finally {
       setIsLoadingMessages(false);
     }
   }
 
-  const normalizedSearchTerm = messageSearchTerm.trim().toLowerCase();
+  const normalizedSearchTerm = messageSearchTerm.trim();
 
   const visibleChatMessages = normalizedSearchTerm
     ? chatMessages.filter((message) =>
-        message.content.toLowerCase().includes(normalizedSearchTerm)
+        getSearchableTextForMessage(message)
+          .toLowerCase()
+          .includes(normalizedSearchTerm.toLowerCase())
       )
     : chatMessages;
 
   const searchMatchCount = normalizedSearchTerm
-  ? chatMessages.reduce((count, message) => {
-      const escapedSearchTerm = normalizedSearchTerm.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        "\\$&"
-      );
-
-      const matches = message.content.toLowerCase().match(
-        new RegExp(escapedSearchTerm, "g")
-      );
-
-      return count + (matches ? matches.length : 0);
-    }, 0)
-  : 0;
+    ? visibleChatMessages.reduce(
+        (count, message) =>
+          count + countSearchMatchesInMessage(message, normalizedSearchTerm),
+        0
+      )
+    : 0;
 
   return (
     <main className="workspace-page">
@@ -238,7 +298,9 @@ function LearningWorkspace() {
               conversations.map((conversation) => (
                 <button
                   className={`chat-history-item ${
-                    conversation.id === conversationId ? "active-conversation" : ""
+                    conversation.id === conversationId
+                      ? "active-conversation"
+                      : ""
                   }`}
                   key={conversation.id}
                   type="button"
@@ -246,8 +308,7 @@ function LearningWorkspace() {
                 >
                   {conversation.title || "Untitled conversation"}
                 </button>
-            ))}
-             
+              ))}
           </section>
         </div>
 
@@ -337,8 +398,7 @@ function LearningWorkspace() {
             <span className="message-search-count">
               {searchMatchCount} {searchMatchCount === 1 ? "match" : "matches"}
             </span>
-          )}    
-
+          )}
         </section>
 
         <section className="chat-preview">
@@ -354,7 +414,7 @@ function LearningWorkspace() {
               key={message.id}
             >
               {message.role === "assistant" ? (
-                <MarkdownMessage 
+                <MarkdownMessage
                   content={message.content}
                   searchTerm={messageSearchTerm}
                 />
@@ -366,7 +426,6 @@ function LearningWorkspace() {
                   />
                 </p>
               )}
-              
             </div>
           ))}
 
@@ -375,7 +434,6 @@ function LearningWorkspace() {
               No messages found for “{messageSearchTerm}”.
             </p>
           )}
-
         </section>
 
         <form className="chat-input-bar" onSubmit={handleSendMessage}>
@@ -405,7 +463,7 @@ function LearningWorkspace() {
 
         <section className="tracker-card">
           <div className="calendar-header">
-            <h2>May 2026</h2>
+            <h2>June 2026</h2>
             <span>Learning calendar</span>
           </div>
 
