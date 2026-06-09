@@ -160,8 +160,14 @@ class CapturingRepository:
         self.inserted_embeddings = None
         self.inserted_chunks = None
         self.deleted_document_id = None
+        self.search_query_embedding = None
+        self.search_embedding_model = None
         self.search_top_k = None
+        self.logged_query_text = None
         self.logged_results = None
+        self.logged_conversation_id = None
+        self.logged_message_id = None
+        self.logged_rag_index_version = None
 
     async def insert_embeddings(self, session, *, embeddings):
         if self.error is not None:
@@ -187,6 +193,8 @@ class CapturingRepository:
         embedding_model,
         top_k,
     ):
+        self.search_query_embedding = query_embedding
+        self.search_embedding_model = embedding_model
         self.search_top_k = top_k
         return self.results
 
@@ -200,7 +208,11 @@ class CapturingRepository:
         message_id,
         rag_index_version,
     ):
+        self.logged_query_text = query_text
         self.logged_results = results
+        self.logged_conversation_id = conversation_id
+        self.logged_message_id = message_id
+        self.logged_rag_index_version = rag_index_version
         return object()
 
 

@@ -1,4 +1,5 @@
-from backend.llm.schemas import ChatMessage, ChatRole, RetrievedChunk
+from backend.llm.schemas import ChatMessage, ChatRole
+from backend.rag.schemas import RetrievedChunk
 
 BASE_SYSTEM_PROMPT = """You are CapiLearn, a learning assistant for students.
 Use the provided course context when it is relevant.

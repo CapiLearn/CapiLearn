@@ -164,12 +164,13 @@ Successful runtime logs include:
 - `rag.provider.retrieve.completed` with `backend=pgvector`
 - a `chunk_count` greater than zero
 - source paths, distances, and similarities
-- `rag.retrieve.completed`
+- `rag.retrieve.completed` when `LLMService` accepts retrieved chunks
 - `llm.generation.completed` when the external LLM is available
 
 The retrieved chunks are passed to `build_messages()`, which wraps them in the
 existing `<retrieved_context>` prompt block. Retrieval failures degrade to
-empty context and log `rag.retrieve.failed`.
+empty context at the LLM service retrieval boundary and log `rag.retrieve.failed`
+without a matching `rag.retrieve.completed` event for that retrieval.
 
 ## Roll Back To Chroma
 
@@ -180,14 +181,16 @@ RAG_BACKEND=chroma
 ```
 
 Restart FastAPI. The legacy Chroma files and local vector store remain
-available, so rollback does not require deleting PostgreSQL data.
+available, so rollback does not require deleting PostgreSQL data. The Chroma
+query engine owns text-query embedding and collection lookup; the runtime
+provider adapts that sync engine to the async retrieval protocol.
 
 If the Chroma store must be rebuilt:
 
 ```bash
 uv run python backend/ingestion/ingest_repo.py
 uv run python backend/rag/chunk_documents.py
-uv run python backend/rag/build_vector_store.py
+uv run python backend/rag/build_chroma_vector_store.py
 ```
 
 ## Troubleshooting

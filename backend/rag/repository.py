@@ -44,24 +44,6 @@ class SimilarChunk:
     distance: float
     similarity: float
 
-    def to_retrieval_dict(self) -> dict[str, Any]:
-        metadata = {
-            **self.metadata,
-            "chunk_id": str(self.chunk_id),
-            "document_id": str(self.document_id),
-            "source_type": self.source_type,
-            "source_path": self.source_path,
-            "title": self.title,
-            "course_name": self.course_name,
-            "distance": self.distance,
-            "similarity": self.similarity,
-        }
-        return {
-            "content": self.content,
-            "metadata": metadata,
-            "distance": self.distance,
-        }
-
 
 class RagRepository:
     async def upsert_document(
