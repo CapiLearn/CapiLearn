@@ -1,5 +1,5 @@
 """
-build_vector_store.py
+build_chroma_vector_store.py
 
 Builds a local ChromaDB vector store from processed course chunks.
 
@@ -81,7 +81,7 @@ def clean_metadata(chunk: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def build_vector_store(
+def build_chroma_vector_store(
     chunks_path: str,
     persist_path: str,
     collection_name: str,
@@ -170,7 +170,7 @@ def build_vector_store(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    build_vector_store(
+    build_chroma_vector_store(
         chunks_path="data/processed/chunks.json",
         persist_path="data/vector_store/chroma",
         collection_name="capilearn_course_chunks",

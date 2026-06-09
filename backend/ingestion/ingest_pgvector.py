@@ -15,13 +15,14 @@ from sentence_transformers import SentenceTransformer
 from backend.core.database import SessionFactory
 from backend.ingestion.ingest_repo import find_course_files, make_document
 from backend.rag.chunk_documents import chunk_document, is_english_source
+from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS
 from backend.rag.repository import ChunkRecord, EmbeddingRecord
 from backend.rag.service import RagService
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_MODEL_NAME = DEFAULT_RAG_MODEL_NAME
 DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_EMBEDDING_BATCH_SIZE = 64

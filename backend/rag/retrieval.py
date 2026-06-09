@@ -6,7 +6,8 @@ from uuid import UUID
 from backend.core.database import SessionFactory
 from backend.core.observability import elapsed_ms, log_event, timer_start
 from backend.rag.config import RagBackend, RagSettings
-from backend.rag.query import ChromaRagQueryEngine, get_default_chroma_query_engine
+from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME, DEFAULT_RAG_TOP_K
+from backend.rag.query import ChromaRagConfig, ChromaRagQueryEngine
 from backend.rag.schemas import RetrievalProvider, RetrievalResult, RetrievedChunk
 from backend.rag.service import RagService
 
@@ -20,10 +21,12 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
         self,
         *,
         engine: ChromaRagQueryEngine | None = None,
-        top_k: int = 5,
+        model_name: str = DEFAULT_RAG_MODEL_NAME,
+        top_k: int = DEFAULT_RAG_TOP_K,
     ) -> None:
-        self._engine = engine or get_default_chroma_query_engine()
-        self._top_k = top_k
+        self._engine = engine or ChromaRagQueryEngine(
+            ChromaRagConfig(model_name=model_name, top_k=top_k)
+        )
 
     async def retrieve(
         self,
@@ -38,7 +41,6 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
             raw_chunks = await asyncio.to_thread(
                 self._engine.retrieve,
                 query,
-                top_k=self._top_k,
             )
             result = RetrievalResult(
                 chunks=[_retrieved_chunk_from_raw(item) for item in raw_chunks],
@@ -71,8 +73,8 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
     def __init__(
         self,
         *,
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-        top_k: int = 5,
+        model_name: str = DEFAULT_RAG_MODEL_NAME,
+        top_k: int = DEFAULT_RAG_TOP_K,
         write_retrieval_logs: bool = True,
         rag_index_version: str | None = None,
         session_factory=SessionFactory,
@@ -138,7 +140,7 @@ def build_rag_retrieval_provider(config: RagSettings) -> RetrievalProvider:
             write_retrieval_logs=config.write_retrieval_logs,
             rag_index_version=config.index_version,
         )
-    return ChromaRagRetrievalProvider(top_k=config.top_k)
+    return ChromaRagRetrievalProvider(model_name=config.model_name, top_k=config.top_k)
 
 
 def _retrieved_chunk_from_raw(item: dict[str, Any]) -> RetrievedChunk:

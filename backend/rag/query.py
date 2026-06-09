@@ -21,6 +21,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
+from .defaults import (
+    DEFAULT_CHROMA_COLLECTION_NAME,
+    DEFAULT_CHROMA_PERSIST_PATH,
+    DEFAULT_RAG_MODEL_NAME,
+    DEFAULT_RAG_TOP_K,
+)
 from .embeddings import QueryEmbeddingProvider, get_embedding_provider
 from .retriever import (
     format_context,
@@ -28,17 +34,15 @@ from .retriever import (
     retrieve_context,
 )
 
-_DEFAULT_TOP_K = 5
-
 
 @dataclass(frozen=True)
 class ChromaRagConfig:
     """Configuration for the local Chroma RAG query engine."""
 
-    persist_path: str = "data/vector_store/chroma"
-    collection_name: str = "capilearn_course_chunks"
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    top_k: int = _DEFAULT_TOP_K
+    persist_path: str = DEFAULT_CHROMA_PERSIST_PATH
+    collection_name: str = DEFAULT_CHROMA_COLLECTION_NAME
+    model_name: str = DEFAULT_RAG_MODEL_NAME
+    top_k: int = DEFAULT_RAG_TOP_K
 
 
 class ChromaRagQueryEngine:
@@ -93,7 +97,7 @@ def get_default_chroma_query_engine() -> ChromaRagQueryEngine:
     return ChromaRagQueryEngine()
 
 
-def query_chroma_rag(question: str, top_k: int = _DEFAULT_TOP_K) -> dict:
+def query_chroma_rag(question: str, top_k: int = DEFAULT_RAG_TOP_K) -> dict:
     """
     Run the full Chroma RAG retrieval pipeline for *question*.
 
@@ -109,7 +113,7 @@ RagQueryEngine = ChromaRagQueryEngine
 get_default_query_engine = get_default_chroma_query_engine
 
 
-def query_rag(question: str, top_k: int = _DEFAULT_TOP_K) -> dict:
+def query_rag(question: str, top_k: int = DEFAULT_RAG_TOP_K) -> dict:
     """
     Run the full Chroma RAG retrieval pipeline for *question*.
 

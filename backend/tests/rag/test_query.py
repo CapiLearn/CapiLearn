@@ -4,6 +4,12 @@ import unittest
 from types import ModuleType
 from unittest.mock import Mock
 
+from backend.rag.defaults import (
+    DEFAULT_CHROMA_COLLECTION_NAME,
+    DEFAULT_CHROMA_PERSIST_PATH,
+    DEFAULT_RAG_MODEL_NAME,
+)
+
 
 def make_retriever_module(
     *,
@@ -78,12 +84,12 @@ class ChromaRagQueryTests(unittest.TestCase):
         assert provider.calls == [
             {
                 "query_text": "What is React state?",
-                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                "model_name": DEFAULT_RAG_MODEL_NAME,
             }
         ]
         retriever.get_collection.assert_called_once_with(
-            "data/vector_store/chroma",
-            "capilearn_course_chunks",
+            DEFAULT_CHROMA_PERSIST_PATH,
+            DEFAULT_CHROMA_COLLECTION_NAME,
         )
         retriever.retrieve_context.assert_called_once_with(
             query_embedding=[0.1, 0.2],
@@ -108,17 +114,17 @@ class ChromaRagQueryTests(unittest.TestCase):
 
         embeddings.get_embedding_provider.assert_called_once_with()
         retriever.get_collection.assert_called_once_with(
-            "data/vector_store/chroma",
-            "capilearn_course_chunks",
+            DEFAULT_CHROMA_PERSIST_PATH,
+            DEFAULT_CHROMA_COLLECTION_NAME,
         )
         assert provider.calls == [
             {
                 "query_text": "first",
-                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                "model_name": DEFAULT_RAG_MODEL_NAME,
             },
             {
                 "query_text": "second",
-                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                "model_name": DEFAULT_RAG_MODEL_NAME,
             },
         ]
         self.assertEqual(retriever.retrieve_context.call_count, 2)
@@ -151,7 +157,7 @@ class ChromaRagQueryTests(unittest.TestCase):
         assert provider.calls == [
             {
                 "query_text": "legacy question",
-                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                "model_name": DEFAULT_RAG_MODEL_NAME,
             }
         ]
         retriever.retrieve_context.assert_called_once_with(

@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from backend.rag.config import RagBackend, RagSettings
+from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
 from backend.rag.repository import SimilarChunk
 from backend.rag.retrieval import (
     ChromaRagRetrievalProvider,
@@ -16,7 +17,7 @@ from backend.rag.schemas import RetrievalProvider
 
 
 @pytest.mark.asyncio
-async def test_rag_retrieval_provider_calls_engine_with_configured_top_k() -> None:
+async def test_rag_retrieval_provider_delegates_to_configured_engine() -> None:
     engine = FakeChromaRagQueryEngine()
     provider = ChromaRagRetrievalProvider(engine=engine, top_k=3)
     retrieval_provider: RetrievalProvider = provider
@@ -28,7 +29,7 @@ async def test_rag_retrieval_provider_calls_engine_with_configured_top_k() -> No
         user_message_id=uuid4(),
     )
 
-    assert engine.calls == [("What is a cell?", 3)]
+    assert engine.calls == [("What is a cell?", None)]
     assert len(result.chunks) == 1
     assert result.chunks[0].content == "Retrieved course chunk."
     assert result.chunks[0].metadata == {
@@ -74,14 +75,28 @@ async def test_rag_retrieval_provider_degrades_to_empty_context_on_error(
 
 
 def test_build_rag_retrieval_provider_selects_configured_backend() -> None:
-    chroma = build_rag_retrieval_provider(RagSettings(backend=RagBackend.CHROMA, top_k=3))
-    pgvector = build_rag_retrieval_provider(RagSettings(backend=RagBackend.PGVECTOR, top_k=4))
+    chroma = build_rag_retrieval_provider(
+        RagSettings(
+            backend=RagBackend.CHROMA,
+            model_name="custom-chroma-model",
+            top_k=3,
+        )
+    )
+    pgvector = build_rag_retrieval_provider(
+        RagSettings(
+            backend=RagBackend.PGVECTOR,
+            model_name="custom-pgvector-model",
+            top_k=4,
+        )
+    )
 
     assert RagRetrievalProvider is ChromaRagRetrievalProvider
     assert isinstance(chroma, ChromaRagRetrievalProvider)
-    assert chroma._top_k == 3
+    assert chroma._engine.config.model_name == "custom-chroma-model"
+    assert chroma._engine.config.top_k == 3
     assert isinstance(pgvector, PgvectorRagRetrievalProvider)
     assert pgvector._top_k == 4
+    assert pgvector._model_name == "custom-pgvector-model"
 
 
 @pytest.mark.asyncio
@@ -109,7 +124,7 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
     assert service.calls == [
         {
             "query_text": "What is React state?",
-            "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+            "embedding_model": DEFAULT_RAG_MODEL_NAME,
             "top_k": 3,
             "write_log": True,
             "conversation_id": conversation_id,

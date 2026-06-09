@@ -20,16 +20,22 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from backend.rag.defaults import (  # noqa: E402
+    DEFAULT_CHROMA_COLLECTION_NAME,
+    DEFAULT_CHROMA_PERSIST_PATH,
+    DEFAULT_RAG_MODEL_NAME,
+    DEFAULT_RAG_TOP_K,
+)
 from backend.rag.query import ChromaRagConfig, ChromaRagQueryEngine  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-PERSIST_PATH = "data/vector_store/chroma"
-COLLECTION_NAME = "capilearn_course_chunks"
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-TOP_K = 5
+PERSIST_PATH = DEFAULT_CHROMA_PERSIST_PATH
+COLLECTION_NAME = DEFAULT_CHROMA_COLLECTION_NAME
+MODEL_NAME = DEFAULT_RAG_MODEL_NAME
+TOP_K = DEFAULT_RAG_TOP_K
 
 # ---------------------------------------------------------------------------
 # Sample evaluation questions

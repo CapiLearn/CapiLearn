@@ -187,7 +187,7 @@ If the Chroma store must be rebuilt:
 ```bash
 uv run python backend/ingestion/ingest_repo.py
 uv run python backend/rag/chunk_documents.py
-uv run python backend/rag/build_vector_store.py
+uv run python backend/rag/build_chroma_vector_store.py
 ```
 
 ## Troubleshooting
