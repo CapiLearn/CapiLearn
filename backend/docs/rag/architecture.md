@@ -82,12 +82,16 @@ The embedding column has an HNSW index using `vector_cosine_ops`.
 
 - `PgvectorRagRetrievalProvider` delegates text retrieval to `RagService`, which
   embeds the query and performs async cosine similarity search.
-- `RagRetrievalProvider` preserves the legacy Chroma path for rollback.
+- `ChromaRagRetrievalProvider` preserves the legacy Chroma path for rollback.
 
 `RAG_BACKEND` selects the provider at application startup. Both providers
 return `RetrievalResult` containing `RetrievedChunk` objects, so prompt behavior
 does not change. Retrieval errors are logged and degrade to empty context
 rather than failing the chat request.
+
+Both runtime retrieval backends use `backend/rag/embeddings.py` for query-time
+`SentenceTransformer` loading, caching, and lock handling. Chroma still owns its
+collection connection, while pgvector still owns database retrieval and logging.
 
 The verified pgvector path embeds the query with
 `sentence-transformers/all-MiniLM-L6-v2`, filters stored embeddings by the same

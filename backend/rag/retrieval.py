@@ -6,23 +6,23 @@ from uuid import UUID
 from backend.core.database import SessionFactory
 from backend.core.observability import elapsed_ms, log_event, timer_start
 from backend.rag.config import RagBackend, RagSettings
-from backend.rag.query import RagQueryEngine, get_default_query_engine
+from backend.rag.query import ChromaRagQueryEngine, get_default_chroma_query_engine
 from backend.rag.schemas import RetrievalProvider, RetrievalResult, RetrievedChunk
 from backend.rag.service import RagService
 
 logger = logging.getLogger(__name__)
 
 
-class RagRetrievalProvider(RetrievalProvider):
+class ChromaRagRetrievalProvider(RetrievalProvider):
     """Adapt the sync Chroma query engine to the async retrieval protocol."""
 
     def __init__(
         self,
         *,
-        engine: RagQueryEngine | None = None,
+        engine: ChromaRagQueryEngine | None = None,
         top_k: int = 5,
     ) -> None:
-        self._engine = engine or get_default_query_engine()
+        self._engine = engine or get_default_chroma_query_engine()
         self._top_k = top_k
 
     async def retrieve(
@@ -62,6 +62,9 @@ class RagRetrievalProvider(RetrievalProvider):
                 user_message_id=str(user_message_id),
             )
             return RetrievalResult(chunks=[])
+
+
+RagRetrievalProvider = ChromaRagRetrievalProvider
 
 
 class PgvectorRagRetrievalProvider(RetrievalProvider):
@@ -135,7 +138,7 @@ def build_rag_retrieval_provider(config: RagSettings) -> RetrievalProvider:
             write_retrieval_logs=config.write_retrieval_logs,
             rag_index_version=config.index_version,
         )
-    return RagRetrievalProvider(top_k=config.top_k)
+    return ChromaRagRetrievalProvider(top_k=config.top_k)
 
 
 def _retrieved_chunk_from_raw(item: dict[str, Any]) -> RetrievedChunk:

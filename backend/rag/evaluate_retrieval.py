@@ -14,11 +14,13 @@ This module does not:
     - Modify the vector store
 """
 
-from retriever import (
-    get_collection,
-    get_embedding_model,
-    retrieve_context,
-)
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from backend.rag.query import ChromaRagConfig, ChromaRagQueryEngine  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -92,16 +94,22 @@ def run_evaluation(
     top_k: int,
 ) -> None:
     """
-    Load the embedding model and vector store once, then evaluate every
-    question in *questions*, printing results to stdout.
+    Load the Chroma query engine once, then evaluate every question in
+    *questions*, printing results to stdout.
     """
-    model = get_embedding_model(model_name)
-    collection = get_collection(persist_path, collection_name)
+    engine = ChromaRagQueryEngine(
+        ChromaRagConfig(
+            persist_path=persist_path,
+            collection_name=collection_name,
+            model_name=model_name,
+            top_k=top_k,
+        )
+    )
 
     print(f"\nRunning retrieval evaluation — {len(questions)} question(s), top_k={top_k}\n")
 
     for question in questions:
-        results = retrieve_context(question, collection, model, top_k=top_k)
+        results = engine.retrieve(question, top_k=top_k)
         print_results(question, results)
 
     print("Evaluation complete.")

@@ -42,13 +42,14 @@ def get_rag_retrieval_provider() -> RetrievalProvider:
     return build_rag_retrieval_provider(rag_settings)
 
 
-RagRetrievalProviderDep = Annotated[
+RetrievalProviderDep = Annotated[
     RetrievalProvider,
     Depends(get_rag_retrieval_provider),
 ]
+RagRetrievalProviderDep = RetrievalProviderDep
 
 
-def get_llm_service(retriever: RagRetrievalProviderDep) -> LLMService:
+def get_llm_service(retriever: RetrievalProviderDep) -> LLMService:
     return LLMService(retriever=retriever)
 
 

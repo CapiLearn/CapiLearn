@@ -7,6 +7,7 @@ import pytest
 from backend.rag.config import RagBackend, RagSettings
 from backend.rag.repository import SimilarChunk
 from backend.rag.retrieval import (
+    ChromaRagRetrievalProvider,
     PgvectorRagRetrievalProvider,
     RagRetrievalProvider,
     build_rag_retrieval_provider,
@@ -16,8 +17,8 @@ from backend.rag.schemas import RetrievalProvider
 
 @pytest.mark.asyncio
 async def test_rag_retrieval_provider_calls_engine_with_configured_top_k() -> None:
-    engine = FakeRagQueryEngine()
-    provider = RagRetrievalProvider(engine=engine, top_k=3)
+    engine = FakeChromaRagQueryEngine()
+    provider = ChromaRagRetrievalProvider(engine=engine, top_k=3)
     retrieval_provider: RetrievalProvider = provider
 
     result = await retrieval_provider.retrieve(
@@ -38,8 +39,8 @@ async def test_rag_retrieval_provider_calls_engine_with_configured_top_k() -> No
 
 @pytest.mark.asyncio
 async def test_rag_retrieval_provider_runs_sync_engine_in_thread() -> None:
-    engine = FakeRagQueryEngine()
-    provider = RagRetrievalProvider(engine=engine)
+    engine = FakeChromaRagQueryEngine()
+    provider = ChromaRagRetrievalProvider(engine=engine)
     loop_thread_id = threading.get_ident()
 
     result = await provider.retrieve(
@@ -58,8 +59,8 @@ async def test_rag_retrieval_provider_runs_sync_engine_in_thread() -> None:
 async def test_rag_retrieval_provider_degrades_to_empty_context_on_error(
     caplog,
 ) -> None:
-    engine = FakeRagQueryEngine(error=RuntimeError("vector store unavailable"))
-    provider = RagRetrievalProvider(engine=engine)
+    engine = FakeChromaRagQueryEngine(error=RuntimeError("vector store unavailable"))
+    provider = ChromaRagRetrievalProvider(engine=engine)
 
     result = await provider.retrieve(
         "What is a cell?",
@@ -76,7 +77,8 @@ def test_build_rag_retrieval_provider_selects_configured_backend() -> None:
     chroma = build_rag_retrieval_provider(RagSettings(backend=RagBackend.CHROMA, top_k=3))
     pgvector = build_rag_retrieval_provider(RagSettings(backend=RagBackend.PGVECTOR, top_k=4))
 
-    assert isinstance(chroma, RagRetrievalProvider)
+    assert RagRetrievalProvider is ChromaRagRetrievalProvider
+    assert isinstance(chroma, ChromaRagRetrievalProvider)
     assert chroma._top_k == 3
     assert isinstance(pgvector, PgvectorRagRetrievalProvider)
     assert pgvector._top_k == 4
@@ -184,7 +186,7 @@ async def test_pgvector_provider_degrades_on_database_failure(caplog) -> None:
     assert "database unavailable" in caplog.text
 
 
-class FakeRagQueryEngine:
+class FakeChromaRagQueryEngine:
     def __init__(self, *, error: Exception | None = None) -> None:
         self._error = error
         self.calls: list[tuple[str, int | None]] = []
