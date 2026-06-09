@@ -1,12 +1,11 @@
 import asyncio
-from collections.abc import Callable, Sequence
-from threading import Lock
-from typing import Any, ClassVar
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
-from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.rag.embeddings import QueryEmbeddingProvider, get_embedding_provider
 from backend.rag.models import EMBEDDING_DIMENSIONS, RagChunk, RagDocument, RagEmbedding
 from backend.rag.repository import (
     ChunkRecord,
@@ -17,20 +16,16 @@ from backend.rag.repository import (
 
 
 class RagService:
-    _model_cache: ClassVar[dict[tuple[int, str], Any]] = {}
-    _model_loader_refs: ClassVar[dict[int, Callable[[str], Any]]] = {}
-    _model_cache_lock: ClassVar[Lock] = Lock()
-
     def __init__(
         self,
         *,
         session: AsyncSession,
         repository: RagRepository | None = None,
-        model_loader: Callable[[str], Any] = SentenceTransformer,
+        embedding_provider: QueryEmbeddingProvider | None = None,
     ) -> None:
         self._session = session
         self._repository = repository or RagRepository()
-        self._model_loader = model_loader
+        self._embedding_provider = embedding_provider or get_embedding_provider()
 
     async def upsert_document(
         self,
@@ -201,19 +196,10 @@ class RagService:
         )
 
     def _embed_query(self, query_text: str, embedding_model: str) -> list[float]:
-        model = self._get_model(embedding_model)
-        embedding = model.encode(query_text)
-        return embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
-
-    def _get_model(self, embedding_model: str) -> Any:
-        loader_id = id(self._model_loader)
-        cache_key = (loader_id, embedding_model)
-        if cache_key not in self._model_cache:
-            with self._model_cache_lock:
-                if cache_key not in self._model_cache:
-                    self._model_loader_refs[loader_id] = self._model_loader
-                    self._model_cache[cache_key] = self._model_loader(embedding_model)
-        return self._model_cache[cache_key]
+        return self._embedding_provider.embed_query(
+            query_text,
+            model_name=embedding_model,
+        )
 
 
 def _validate_embedding(embedding: Sequence[float]) -> None:

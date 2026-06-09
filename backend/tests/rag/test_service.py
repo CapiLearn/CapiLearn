@@ -100,11 +100,11 @@ async def test_retrieve_by_text_embeds_query_and_delegates_to_retrieve() -> None
         similarity=0.8,
     )
     repository = CapturingRepository(results=[result])
-    model = FakeEmbeddingModel()
+    embedding_provider = FakeEmbeddingProvider()
     service = RagService(
         session=session,
         repository=repository,
-        model_loader=lambda name: model,
+        embedding_provider=embedding_provider,
     )
     conversation_id = uuid4()
     message_id = uuid4()
@@ -120,7 +120,12 @@ async def test_retrieve_by_text_embeds_query_and_delegates_to_retrieve() -> None
     )
 
     assert results == [result]
-    assert model.queries == ["What is state?"]
+    assert embedding_provider.calls == [
+        {
+            "query_text": "What is state?",
+            "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+        }
+    ]
     assert repository.search_query_embedding == [0.0] * EMBEDDING_DIMENSIONS
     assert repository.search_embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
     assert repository.search_top_k == 4
@@ -134,11 +139,11 @@ async def test_retrieve_by_text_embeds_query_and_delegates_to_retrieve() -> None
 
 @pytest.mark.asyncio
 async def test_retrieve_by_text_embeds_query_in_thread() -> None:
-    model = FakeEmbeddingModel()
+    embedding_provider = FakeEmbeddingProvider()
     service = RagService(
         session=FakeSession(),
         repository=CapturingRepository(),
-        model_loader=lambda name: model,
+        embedding_provider=embedding_provider,
     )
     loop_thread_id = threading.get_ident()
 
@@ -147,18 +152,18 @@ async def test_retrieve_by_text_embeds_query_in_thread() -> None:
         embedding_model="sentence-transformers/all-MiniLM-L6-v2",
     )
 
-    assert model.thread_ids
-    assert model.thread_ids[0] != loop_thread_id
+    assert embedding_provider.thread_ids
+    assert embedding_provider.thread_ids[0] != loop_thread_id
 
 
 @pytest.mark.asyncio
 async def test_retrieve_by_text_rejects_wrong_embedding_dimensions() -> None:
     repository = CapturingRepository()
-    model = FakeEmbeddingModel(vector=[0.1, 0.2])
+    embedding_provider = FakeEmbeddingProvider(vector=[0.1, 0.2])
     service = RagService(
         session=FakeSession(),
         repository=repository,
-        model_loader=lambda name: model,
+        embedding_provider=embedding_provider,
     )
 
     with pytest.raises(ValueError, match="exactly 384 dimensions"):
@@ -168,33 +173,6 @@ async def test_retrieve_by_text_rejects_wrong_embedding_dimensions() -> None:
         )
 
     assert repository.search_top_k is None
-
-
-@pytest.mark.asyncio
-async def test_retrieve_by_text_caches_model_by_loader_and_model_name() -> None:
-    loader = CountingModelLoader()
-    first = RagService(
-        session=FakeSession(),
-        repository=CapturingRepository(),
-        model_loader=loader,
-    )
-    second = RagService(
-        session=FakeSession(),
-        repository=CapturingRepository(),
-        model_loader=loader,
-    )
-
-    await first.retrieve_by_text(
-        query_text="first",
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-    )
-    await second.retrieve_by_text(
-        query_text="second",
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-    )
-
-    assert loader.calls == ["sentence-transformers/all-MiniLM-L6-v2"]
-    assert loader.model.queries == ["first", "second"]
 
 
 @pytest.mark.asyncio
@@ -335,23 +313,13 @@ class FakeDocument:
         self.id = uuid4()
 
 
-class FakeEmbeddingModel:
+class FakeEmbeddingProvider:
     def __init__(self, *, vector: list[float] | None = None) -> None:
         self.vector = vector or [0.0] * EMBEDDING_DIMENSIONS
-        self.queries = []
+        self.calls = []
         self.thread_ids = []
 
-    def encode(self, query: str):
-        self.queries.append(query)
+    def embed_query(self, query_text: str, *, model_name: str) -> list[float]:
+        self.calls.append({"query_text": query_text, "model_name": model_name})
         self.thread_ids.append(threading.get_ident())
         return self.vector
-
-
-class CountingModelLoader:
-    def __init__(self) -> None:
-        self.calls = []
-        self.model = FakeEmbeddingModel()
-
-    def __call__(self, model_name: str) -> FakeEmbeddingModel:
-        self.calls.append(model_name)
-        return self.model
