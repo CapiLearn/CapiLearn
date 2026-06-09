@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from litellm import ServiceUnavailableError
 from pydantic import ValidationError
 
 from backend.core.observability import LLMTraceSink
@@ -733,6 +734,66 @@ async def test_litellm_provider_records_cost_unavailable_component(monkeypatch) 
     assert component.status == "cost_unavailable"
     assert component.estimated_cost_usd is None
     assert component.metadata["costError"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_does_not_retry_transient_failure_by_default(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    async def fake_acompletion(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise ServiceUnavailableError(
+            "provider unavailable",
+            llm_provider="gemini",
+            model=llm_settings.model,
+        )
+
+    settings = LLMSettings(_env_file=None, max_retries=0)
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_provider_module, "llm_settings", settings)
+
+    provider = LiteLLMProvider()
+    with pytest.raises(ServiceUnavailableError):
+        await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_retries_transient_provider_failure_when_configured(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    async def fake_acompletion(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ServiceUnavailableError(
+                "provider unavailable",
+                llm_provider="gemini",
+                model=llm_settings.model,
+            )
+        return _FakeLiteLLMResponse()
+
+    async def fake_sleep(delay):
+        return None
+
+    settings = LLMSettings(_env_file=None, max_retries=1)
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_provider_module, "llm_settings", settings)
+    monkeypatch.setattr(llm_provider_module.asyncio, "sleep", fake_sleep)
+
+    provider = LiteLLMProvider()
+    response = await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert response.content == "Configured model response."
+    assert calls == 2
 
 
 @pytest.mark.asyncio
