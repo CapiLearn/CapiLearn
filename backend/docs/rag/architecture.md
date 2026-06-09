@@ -29,7 +29,7 @@ PostgreSQL
     |
     | cosine similarity search through pgvector
     v
-PgvectorRagRetrievalProvider
+RAG retrieval provider
     |
     | RetrievalResult / RetrievedChunk
     v
@@ -77,11 +77,11 @@ The embedding column has an HNSW index using `vector_cosine_ops`.
 
 ## Runtime Retrieval
 
-`backend/llm/retrieval.py` implements both providers behind the existing
-`RetrievalProvider` protocol:
+`backend/rag/retrieval.py` implements both providers behind the
+`RetrievalProvider` protocol from `backend/rag/schemas.py`:
 
-- `PgvectorRagRetrievalProvider` embeds the query and performs async cosine
-  similarity search through `RagService`.
+- `PgvectorRagRetrievalProvider` delegates text retrieval to `RagService`, which
+  embeds the query and performs async cosine similarity search.
 - `RagRetrievalProvider` preserves the legacy Chroma path for rollback.
 
 `RAG_BACKEND` selects the provider at application startup. Both providers
