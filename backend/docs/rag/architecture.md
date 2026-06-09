@@ -108,8 +108,8 @@ the retrieved chunks are passed to `build_messages()`.
 before the student message. No separate retrieval endpoint or frontend change
 is required.
 
-Structured runtime events include `rag.provider.retrieve.completed` with
-`backend=pgvector`, chunk count, source paths, distances, and similarities.
+Structured runtime events include `rag.provider.retrieve.completed` with the
+selected backend, chunk count, source paths, distances, and similarities.
 `rag.retrieve.completed` records successful chunks accepted by `LLMService`.
 Retrieval failures emit `rag.retrieve.failed` without a matching
 `rag.retrieve.completed` event. There is no separate prompt-injection event;
@@ -125,7 +125,8 @@ Chroma remains available for fallback and rollback:
 RAG_BACKEND=chroma
 ```
 
-Its JSON preprocessing, vector-store builder, query engine, and evaluation
+Its JSON preprocessing, Chroma vector-store builder
+(`backend/rag/build_chroma_vector_store.py`), query engine, and evaluation
 script have not been removed.
 
 If `RAG_BACKEND` is omitted, the current code-level settings default remains
