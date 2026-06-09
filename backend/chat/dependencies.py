@@ -46,7 +46,6 @@ RetrievalProviderDep = Annotated[
     RetrievalProvider,
     Depends(get_rag_retrieval_provider),
 ]
-RagRetrievalProviderDep = RetrievalProviderDep
 
 
 def get_llm_service(retriever: RetrievalProviderDep) -> LLMService:

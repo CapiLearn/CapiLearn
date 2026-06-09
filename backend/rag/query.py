@@ -17,6 +17,7 @@ Usage::
     # result["context"]  -> formatted context string ready to inject into a prompt
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -73,11 +74,19 @@ class ChromaRagQueryEngine:
 
     def retrieve(self, question: str, top_k: int | None = None) -> list[dict]:
         """Retrieve raw context chunks for *question*."""
-        n_results = self._config.top_k if top_k is None else top_k
         query_embedding = self._embedding_provider.embed_query(
             question,
             model_name=self._config.model_name,
         )
+        return self.retrieve_by_embedding(query_embedding, top_k=top_k)
+
+    def retrieve_by_embedding(
+        self,
+        query_embedding: Sequence[float],
+        top_k: int | None = None,
+    ) -> list[dict]:
+        """Retrieve raw context chunks for an already-computed query embedding."""
+        n_results = self._config.top_k if top_k is None else top_k
         return retrieve_context(
             query_embedding=query_embedding,
             collection=self.collection,
@@ -104,19 +113,3 @@ def query_chroma_rag(question: str, top_k: int = DEFAULT_RAG_TOP_K) -> dict:
     This helper uses a cached lazy query engine.
     """
     return get_default_chroma_query_engine().query(question, top_k=top_k)
-
-
-# Backwards-compatible public API names. The Chroma-specific names above are
-# preferred for new code, but these aliases keep existing callers working.
-RagConfig = ChromaRagConfig
-RagQueryEngine = ChromaRagQueryEngine
-get_default_query_engine = get_default_chroma_query_engine
-
-
-def query_rag(question: str, top_k: int = DEFAULT_RAG_TOP_K) -> dict:
-    """
-    Run the full Chroma RAG retrieval pipeline for *question*.
-
-    Backwards-compatible alias for query_chroma_rag().
-    """
-    return query_chroma_rag(question, top_k=top_k)

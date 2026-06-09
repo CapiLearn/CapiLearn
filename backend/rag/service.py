@@ -1,11 +1,9 @@
-import asyncio
 from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.rag.embeddings import QueryEmbeddingProvider, get_embedding_provider
 from backend.rag.models import EMBEDDING_DIMENSIONS, RagChunk, RagDocument, RagEmbedding
 from backend.rag.repository import (
     ChunkRecord,
@@ -21,11 +19,9 @@ class RagService:
         *,
         session: AsyncSession,
         repository: RagRepository | None = None,
-        embedding_provider: QueryEmbeddingProvider | None = None,
     ) -> None:
         self._session = session
         self._repository = repository or RagRepository()
-        self._embedding_provider = embedding_provider or get_embedding_provider()
 
     async def upsert_document(
         self,
@@ -167,39 +163,6 @@ class RagService:
             )
             await self._session.commit()
         return results
-
-    async def retrieve_by_text(
-        self,
-        *,
-        query_text: str,
-        embedding_model: str,
-        top_k: int = 5,
-        write_log: bool = False,
-        conversation_id: UUID | None = None,
-        message_id: UUID | None = None,
-        rag_index_version: str | None = None,
-    ) -> list[SimilarChunk]:
-        query_embedding = await asyncio.to_thread(
-            self._embed_query,
-            query_text,
-            embedding_model,
-        )
-        return await self.retrieve(
-            query_text=query_text,
-            query_embedding=query_embedding,
-            embedding_model=embedding_model,
-            top_k=top_k,
-            write_log=write_log,
-            conversation_id=conversation_id,
-            message_id=message_id,
-            rag_index_version=rag_index_version,
-        )
-
-    def _embed_query(self, query_text: str, embedding_model: str) -> list[float]:
-        return self._embedding_provider.embed_query(
-            query_text,
-            model_name=embedding_model,
-        )
 
 
 def _validate_embedding(embedding: Sequence[float]) -> None:

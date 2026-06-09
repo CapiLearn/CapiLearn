@@ -129,12 +129,12 @@ class ChromaRagQueryTests(unittest.TestCase):
         ]
         self.assertEqual(retriever.retrieve_context.call_count, 2)
 
-    def test_backwards_compatible_query_api_uses_chroma_engine(self) -> None:
+    def test_chroma_query_engine_retrieves_by_embedding(self) -> None:
         provider = FakeEmbeddingProvider(vector=[0.3, 0.4])
         chunks = [
             {
-                "content": "Legacy query helper still works.",
-                "metadata": {"source_path": "src/content/en/legacy.md"},
+                "content": "Embedding lookup works.",
+                "metadata": {"source_path": "src/content/en/embedding.md"},
                 "distance": 0.2,
             }
         ]
@@ -146,20 +146,11 @@ class ChromaRagQueryTests(unittest.TestCase):
         embeddings = make_embeddings_module(provider=provider)
         query = fresh_query_module(retriever, embeddings)
 
-        result = query.query_rag("legacy question", top_k=2)
+        engine = query.ChromaRagQueryEngine(embedding_provider=provider)
+        result = engine.retrieve_by_embedding([0.3, 0.4], top_k=2)
 
-        assert query.RagConfig is query.ChromaRagConfig
-        assert query.RagQueryEngine is query.ChromaRagQueryEngine
-        assert query.get_default_query_engine is query.get_default_chroma_query_engine
-        assert hasattr(query.get_default_query_engine, "cache_clear")
-        assert query.get_default_query_engine() is query.get_default_chroma_query_engine()
-        assert result == {"chunks": chunks, "context": "legacy context"}
-        assert provider.calls == [
-            {
-                "query_text": "legacy question",
-                "model_name": DEFAULT_RAG_MODEL_NAME,
-            }
-        ]
+        assert result == chunks
+        assert provider.calls == []
         retriever.retrieve_context.assert_called_once_with(
             query_embedding=[0.3, 0.4],
             collection="collection",

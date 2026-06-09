@@ -6,11 +6,11 @@ import pytest
 
 from backend.rag.config import RagBackend, RagSettings
 from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
+from backend.rag.models import EMBEDDING_DIMENSIONS
 from backend.rag.repository import SimilarChunk
 from backend.rag.retrieval import (
     ChromaRagRetrievalProvider,
     PgvectorRagRetrievalProvider,
-    RagRetrievalProvider,
     build_rag_retrieval_provider,
 )
 from backend.rag.schemas import RetrievalProvider
@@ -19,7 +19,12 @@ from backend.rag.schemas import RetrievalProvider
 @pytest.mark.asyncio
 async def test_rag_retrieval_provider_delegates_to_configured_engine() -> None:
     engine = FakeChromaRagQueryEngine()
-    provider = ChromaRagRetrievalProvider(engine=engine, top_k=3)
+    embedding_provider = FakeEmbeddingProvider(vector=[0.1, 0.2])
+    provider = ChromaRagRetrievalProvider(
+        engine=engine,
+        top_k=3,
+        embedding_provider=embedding_provider,
+    )
     retrieval_provider: RetrievalProvider = provider
 
     result = await retrieval_provider.retrieve(
@@ -29,7 +34,10 @@ async def test_rag_retrieval_provider_delegates_to_configured_engine() -> None:
         user_message_id=uuid4(),
     )
 
-    assert engine.calls == [("What is a cell?", None)]
+    assert embedding_provider.calls == [
+        {"query_text": "What is a cell?", "model_name": DEFAULT_RAG_MODEL_NAME}
+    ]
+    assert engine.calls == [([0.1, 0.2], 3)]
     assert len(result.chunks) == 1
     assert result.chunks[0].content == "Retrieved course chunk."
     assert result.chunks[0].metadata == {
@@ -41,7 +49,11 @@ async def test_rag_retrieval_provider_delegates_to_configured_engine() -> None:
 @pytest.mark.asyncio
 async def test_rag_retrieval_provider_runs_sync_engine_in_thread() -> None:
     engine = FakeChromaRagQueryEngine()
-    provider = ChromaRagRetrievalProvider(engine=engine)
+    embedding_provider = FakeEmbeddingProvider()
+    provider = ChromaRagRetrievalProvider(
+        engine=engine,
+        embedding_provider=embedding_provider,
+    )
     loop_thread_id = threading.get_ident()
 
     result = await provider.retrieve(
@@ -52,6 +64,8 @@ async def test_rag_retrieval_provider_runs_sync_engine_in_thread() -> None:
     )
 
     assert result.chunks
+    assert embedding_provider.thread_ids
+    assert embedding_provider.thread_ids[0] != loop_thread_id
     assert engine.thread_ids
     assert engine.thread_ids[0] != loop_thread_id
 
@@ -61,7 +75,10 @@ async def test_rag_retrieval_provider_degrades_to_empty_context_on_error(
     caplog,
 ) -> None:
     engine = FakeChromaRagQueryEngine(error=RuntimeError("vector store unavailable"))
-    provider = ChromaRagRetrievalProvider(engine=engine)
+    provider = ChromaRagRetrievalProvider(
+        engine=engine,
+        embedding_provider=FakeEmbeddingProvider(),
+    )
 
     result = await provider.retrieve(
         "What is a cell?",
@@ -90,10 +107,10 @@ def test_build_rag_retrieval_provider_selects_configured_backend() -> None:
         )
     )
 
-    assert RagRetrievalProvider is ChromaRagRetrievalProvider
     assert isinstance(chroma, ChromaRagRetrievalProvider)
     assert chroma._engine.config.model_name == "custom-chroma-model"
     assert chroma._engine.config.top_k == 3
+    assert chroma._top_k == 3
     assert isinstance(pgvector, PgvectorRagRetrievalProvider)
     assert pgvector._top_k == 4
     assert pgvector._model_name == "custom-pgvector-model"
@@ -105,9 +122,11 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
 ) -> None:
     caplog.set_level(logging.INFO, logger="backend.rag.retrieval")
     service = FakePgvectorService()
+    embedding_provider = FakeEmbeddingProvider(vector=[0.0] * EMBEDDING_DIMENSIONS)
     provider = PgvectorRagRetrievalProvider(
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
+        embedding_provider=embedding_provider,
         top_k=3,
         rag_index_version="fso-2026-06",
     )
@@ -121,9 +140,13 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
         user_message_id=message_id,
     )
 
+    assert embedding_provider.calls == [
+        {"query_text": "What is React state?", "model_name": DEFAULT_RAG_MODEL_NAME}
+    ]
     assert service.calls == [
         {
             "query_text": "What is React state?",
+            "query_embedding": [0.0] * EMBEDDING_DIMENSIONS,
             "embedding_model": DEFAULT_RAG_MODEL_NAME,
             "top_k": 3,
             "write_log": True,
@@ -168,6 +191,7 @@ async def test_pgvector_provider_degrades_to_empty_context_on_failure(caplog) ->
     provider = PgvectorRagRetrievalProvider(
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: FakePgvectorService(error=RuntimeError("model failed")),
+        embedding_provider=FakeEmbeddingProvider(),
     )
 
     result = await provider.retrieve(
@@ -188,6 +212,7 @@ async def test_pgvector_provider_degrades_on_database_failure(caplog) -> None:
         service_factory=lambda *, session: FakePgvectorService(
             error=RuntimeError("database unavailable")
         ),
+        embedding_provider=FakeEmbeddingProvider(),
     )
 
     result = await provider.retrieve(
@@ -204,11 +229,16 @@ async def test_pgvector_provider_degrades_on_database_failure(caplog) -> None:
 class FakeChromaRagQueryEngine:
     def __init__(self, *, error: Exception | None = None) -> None:
         self._error = error
-        self.calls: list[tuple[str, int | None]] = []
+        self.config = FakeChromaRagConfig()
+        self.calls: list[tuple[list[float], int | None]] = []
         self.thread_ids: list[int] = []
 
-    def retrieve(self, question: str, top_k: int | None = None) -> list[dict]:
-        self.calls.append((question, top_k))
+    def retrieve_by_embedding(
+        self,
+        query_embedding: list[float],
+        top_k: int | None = None,
+    ) -> list[dict]:
+        self.calls.append((query_embedding, top_k))
         self.thread_ids.append(threading.get_ident())
         if self._error is not None:
             raise self._error
@@ -219,6 +249,10 @@ class FakeChromaRagQueryEngine:
                 "distance": 0.18,
             }
         ]
+
+
+class FakeChromaRagConfig:
+    model_name = DEFAULT_RAG_MODEL_NAME
 
 
 class FakeSessionFactory:
@@ -246,8 +280,20 @@ class FakePgvectorService:
             similarity=0.875,
         )
 
-    async def retrieve_by_text(self, **kwargs):
+    async def retrieve(self, **kwargs):
         if self.error is not None:
             raise self.error
         self.calls.append(kwargs)
         return [self.result]
+
+
+class FakeEmbeddingProvider:
+    def __init__(self, *, vector: list[float] | None = None) -> None:
+        self.vector = vector or [0.0] * EMBEDDING_DIMENSIONS
+        self.calls = []
+        self.thread_ids = []
+
+    def embed_query(self, query_text: str, *, model_name: str) -> list[float]:
+        self.calls.append({"query_text": query_text, "model_name": model_name})
+        self.thread_ids.append(threading.get_ident())
+        return self.vector

@@ -1,4 +1,3 @@
-import threading
 from uuid import uuid4
 
 import pytest
@@ -82,97 +81,6 @@ async def test_retrieve_returns_results_and_optionally_writes_log() -> None:
     assert repository.search_top_k == 4
     assert repository.logged_results == [result]
     assert session.commit_count == 1
-
-
-@pytest.mark.asyncio
-async def test_retrieve_by_text_embeds_query_and_delegates_to_retrieve() -> None:
-    session = FakeSession()
-    result = SimilarChunk(
-        chunk_id=uuid4(),
-        document_id=uuid4(),
-        content="Course content",
-        metadata={"week": "2"},
-        source_type="course_repo",
-        source_path="src/content/en/example.md",
-        title="Example",
-        course_name="Full Stack Open",
-        distance=0.2,
-        similarity=0.8,
-    )
-    repository = CapturingRepository(results=[result])
-    embedding_provider = FakeEmbeddingProvider()
-    service = RagService(
-        session=session,
-        repository=repository,
-        embedding_provider=embedding_provider,
-    )
-    conversation_id = uuid4()
-    message_id = uuid4()
-
-    results = await service.retrieve_by_text(
-        query_text="What is state?",
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-        top_k=4,
-        write_log=True,
-        conversation_id=conversation_id,
-        message_id=message_id,
-        rag_index_version="fso-2026-06",
-    )
-
-    assert results == [result]
-    assert embedding_provider.calls == [
-        {
-            "query_text": "What is state?",
-            "model_name": "sentence-transformers/all-MiniLM-L6-v2",
-        }
-    ]
-    assert repository.search_query_embedding == [0.0] * EMBEDDING_DIMENSIONS
-    assert repository.search_embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
-    assert repository.search_top_k == 4
-    assert repository.logged_query_text == "What is state?"
-    assert repository.logged_results == [result]
-    assert repository.logged_conversation_id == conversation_id
-    assert repository.logged_message_id == message_id
-    assert repository.logged_rag_index_version == "fso-2026-06"
-    assert session.commit_count == 1
-
-
-@pytest.mark.asyncio
-async def test_retrieve_by_text_embeds_query_in_thread() -> None:
-    embedding_provider = FakeEmbeddingProvider()
-    service = RagService(
-        session=FakeSession(),
-        repository=CapturingRepository(),
-        embedding_provider=embedding_provider,
-    )
-    loop_thread_id = threading.get_ident()
-
-    await service.retrieve_by_text(
-        query_text="What is state?",
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-    )
-
-    assert embedding_provider.thread_ids
-    assert embedding_provider.thread_ids[0] != loop_thread_id
-
-
-@pytest.mark.asyncio
-async def test_retrieve_by_text_rejects_wrong_embedding_dimensions() -> None:
-    repository = CapturingRepository()
-    embedding_provider = FakeEmbeddingProvider(vector=[0.1, 0.2])
-    service = RagService(
-        session=FakeSession(),
-        repository=repository,
-        embedding_provider=embedding_provider,
-    )
-
-    with pytest.raises(ValueError, match="exactly 384 dimensions"):
-        await service.retrieve_by_text(
-            query_text="What is state?",
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-        )
-
-    assert repository.search_top_k is None
 
 
 @pytest.mark.asyncio
@@ -311,15 +219,3 @@ class CapturingRepository:
 class FakeDocument:
     def __init__(self) -> None:
         self.id = uuid4()
-
-
-class FakeEmbeddingProvider:
-    def __init__(self, *, vector: list[float] | None = None) -> None:
-        self.vector = vector or [0.0] * EMBEDDING_DIMENSIONS
-        self.calls = []
-        self.thread_ids = []
-
-    def embed_query(self, query_text: str, *, model_name: str) -> list[float]:
-        self.calls.append({"query_text": query_text, "model_name": model_name})
-        self.thread_ids.append(threading.get_ident())
-        return self.vector
