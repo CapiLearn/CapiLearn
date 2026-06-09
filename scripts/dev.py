@@ -1,4 +1,4 @@
-#Runner file to set up frontend and backend
+# Runner file to set up frontend and backend
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"

@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://127.0.0.1:8001";
+import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
 const USE_MOCK_ADMIN_API = false;
 
@@ -39,29 +39,6 @@ const mockAdminUsageSummary = {
     },
   ],
 };
-
-/**
- * Parses a fetch response and raises a readable error when the API fails.
- *
- * @param {Response} response - Fetch API response object.
- * @returns {Promise<Object>} Parsed JSON response body.
- * @throws {Error} When the response status is not successful.
- */
-
-async function handleResponse(response) {
-  if (!response.ok) {
-    try {
-      const errorData = await response.json();
-      throw new Error(
-        errorData.message || "Unable to load admin usage summary."
-      );
-    } catch {
-      throw new Error("Unable to load admin usage summary.");
-    }
-  }
-
-  return response.json();
-}
 
 /**
  * Fetches aggregate usage metrics for the Admin Dashboard.
@@ -105,5 +82,5 @@ export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
     headers: ADMIN_HEADERS,
   });
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to load admin usage summary.");
 }

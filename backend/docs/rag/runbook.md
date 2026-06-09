@@ -1,158 +1,304 @@
-# RAG Layer — Runbook
-
-## Purpose
-
-This runbook explains how to run, rebuild, and evaluate the RAG pipeline for CapiLearn. It covers the full pipeline from raw course content to a working vector store, and describes how to inspect retrieval quality manually.
+# RAG Layer - Runbook
 
 ## Prerequisites
 
-- Python 3.11+
-- Dependencies installed (see root `pyproject.toml` or `requirements.txt`):
-  - `chromadb`
-  - `sentence-transformers`
-- The raw Full Stack Open repository cloned to:
+- Python 3.13 and project dependencies installed with `uv sync`
+- Docker and Docker Compose
+- Raw Full Stack Open repository at:
   `backend/ingestion/data/raw/fullstack-hy2020.github.io/`
+- `DATABASE_URL` using `postgresql+asyncpg://`
 
-## Expected Directory Structure
+No psycopg package is used.
 
-After running the full pipeline, the following files and folders should exist:
+## Prepare PostgreSQL
 
-```
-backend/ingestion/data/
-    raw/
-        fullstack-hy2020.github.io/   ← raw course repo (cloned manually)
-    processed/
-        documents.json                ← output of ingest_repo.py
-        chunks.json                   ← output of chunk_documents.py
-    vector_store/
-        chroma/                       ← output of build_vector_store.py
-```
-
-## Run Order
-
-The scripts must be run in order. Each step depends on the output of the previous one.
-
-### From the project root
+Start the pgvector-enabled database and apply migrations:
 
 ```bash
-python backend/ingestion/ingest_repo.py
-python backend/rag/chunk_documents.py
-python backend/rag/build_vector_store.py
+docker compose up -d postgres
+uv run alembic heads
+uv run alembic upgrade head
+uv run alembic current
 ```
 
-### From `backend/rag/`
+`uv run alembic heads` should report one head. `uv run alembic current` should
+report that same revision after upgrade. The verified current revision is
+`20260606_0005`.
+
+## Ingest Course Content
+
+Preview preprocessing without loading the embedding model or connecting to the
+database:
 
 ```bash
-python ../ingestion/ingest_repo.py
-python chunk_documents.py
-python build_vector_store.py
+uv run python -m backend.ingestion.ingest_pgvector --dry-run
 ```
 
-## Expected Outputs
-
-### `ingest_repo.py`
-
-Writes `backend/ingestion/data/processed/documents.json`.
-
-Each entry has this shape:
-```json
-{
-  "id": "src/content/9/en/part9d.md",
-  "content": "...",
-  "metadata": {
-    "source_path": "src/content/9/en/part9d.md",
-    "file_name": "part9d.md",
-    "file_type": ".md",
-    "week": "9",
-    "day": "d"
-  }
-}
-```
-
-### `chunk_documents.py`
-
-Prints:
-```
-Loaded N source document(s) from 'data/processed/documents.json'.
-Selected M English document(s) (filtered by '/en/' in source_path).
-Created K chunk(s). Saved to 'data/processed/chunks.json'.
-```
-
-Writes `backend/ingestion/data/processed/chunks.json`.
-
-Each chunk has this shape:
-```json
-{
-  "chunk_id": "<uuid>",
-  "document_id": "src/content/9/en/part9d.md",
-  "chunk_index": 0,
-  "content": "...",
-  "metadata": { ... }
-}
-```
-
-### `build_vector_store.py`
-
-Prints progress including embedding generation and chunk insertion count.
-
-Persists the ChromaDB collection to `backend/ingestion/data/vector_store/chroma/`.
-
-The collection is **reset on every run**, so rebuilding always starts from a clean state.
-
-## Manual Retrieval Evaluation
-
-Run the evaluation script to inspect retrieval quality for a fixed set of sample questions:
+Write documents, chunks, and embeddings:
 
 ```bash
-# From project root
-python backend/rag/evaluate_retrieval.py
-
-# From backend/rag/
-python evaluate_retrieval.py
+uv run python -m backend.ingestion.ingest_pgvector
 ```
 
-For each question, the script prints the top 5 retrieved chunks with:
-- rank
-- `source_path`
-- cosine distance (lower = more similar)
-- first 400 characters of content
+The command uses:
 
-Read the output and check whether the returned chunks are relevant to the question. There is no automated scoring at this time.
+- `sentence-transformers/all-MiniLM-L6-v2`
+- 384-dimensional embeddings
+- 1,000-character chunks
+- 200-character overlap
+- English source paths only
+
+For the current local corpus, a successful run writes approximately:
+
+```text
+72 documents
+2,353 chunks
+2,353 embeddings
+```
+
+Reruns replace each source document atomically, preventing duplicate chunks
+for sources that still exist. Files removed from the source repository are not
+automatically deleted from PostgreSQL.
+
+Useful options:
+
+```bash
+uv run python -m backend.ingestion.ingest_pgvector --help
+uv run python -m backend.ingestion.ingest_pgvector --fail-fast
+uv run python -m backend.ingestion.ingest_pgvector --repo-path path/to/repo
+```
+
+## Enable pgvector Retrieval
+
+Set these values in `.env`:
+
+```dotenv
+RAG_BACKEND=pgvector
+RAG_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+RAG_TOP_K=5
+RAG_WRITE_RETRIEVAL_LOGS=true
+# RAG_INDEX_VERSION=full-stack-open-2026-06
+```
+
+Restart FastAPI after changing RAG settings:
+
+```bash
+uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001
+```
+
+The query embedding runs in a worker thread. Similarity search uses async
+SQLAlchemy and pgvector. Retrieved chunks are injected into the existing chat
+prompt after input guardrails pass.
+
+## Local Verification Checklist
+
+1. Start PostgreSQL and confirm it is healthy:
+
+   ```bash
+   docker compose up -d postgres
+   docker compose ps postgres
+   ```
+
+2. Apply migrations and confirm current/head alignment:
+
+   ```bash
+   uv run alembic upgrade head
+   uv run alembic current
+   uv run alembic heads
+   ```
+
+3. Ingest the corpus:
+
+   ```bash
+   uv run python -m backend.ingestion.ingest_pgvector
+   ```
+
+4. Check the stored records:
+
+   ```bash
+   docker compose exec postgres psql -U capilearn -d capilearn -c \
+     "SELECT 'rag_documents' AS table_name, COUNT(*) FROM rag_documents
+      UNION ALL SELECT 'rag_chunks', COUNT(*) FROM rag_chunks
+      UNION ALL SELECT 'rag_embeddings', COUNT(*) FROM rag_embeddings
+      UNION ALL SELECT 'rag_retrieval_logs', COUNT(*) FROM rag_retrieval_logs;"
+   ```
+
+   For the current corpus, the expected ingestion counts are 72 documents,
+   2,353 chunks, and 2,353 embeddings. Retrieval logs may initially be zero.
+
+5. Ensure `.env` selects pgvector before application startup:
+
+   ```dotenv
+   RAG_BACKEND=pgvector
+   RAG_WRITE_RETRIEVAL_LOGS=true
+   ```
+
+6. Start FastAPI:
+
+   ```bash
+   uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001
+   ```
+
+7. In another terminal, create a chat turn:
+
+   ```bash
+   curl -i -X POST http://127.0.0.1:8001/api/conversations \
+     -H "Content-Type: application/json" \
+     -d '{"content":"What is React state, and why would a component use it?"}'
+   ```
+
+8. Verify the latest retrieval:
+
+   ```bash
+   docker compose exec postgres psql -U capilearn -d capilearn -c \
+     "SELECT query_text,
+             json_array_length(retrieved_chunk_ids) AS chunk_count,
+             scores
+      FROM rag_retrieval_logs
+      ORDER BY created_at DESC
+      LIMIT 1;"
+   ```
+
+Successful runtime logs include:
+
+- `rag.provider.retrieve.completed` with `backend=pgvector`
+- a `chunk_count` greater than zero
+- source paths, distances, and similarities
+- `rag.retrieve.completed` when `LLMService` accepts retrieved chunks
+- `llm.generation.completed` when the external LLM is available
+
+The retrieved chunks are passed to `build_messages()`, which wraps them in the
+existing `<retrieved_context>` prompt block. Retrieval failures degrade to
+empty context at the LLM service retrieval boundary and log `rag.retrieve.failed`
+without a matching `rag.retrieve.completed` event for that retrieval.
+
+## Roll Back To Chroma
+
+Set:
+
+```dotenv
+RAG_BACKEND=chroma
+```
+
+Restart FastAPI. The legacy Chroma files and local vector store remain
+available, so rollback does not require deleting PostgreSQL data. The Chroma
+query engine owns text-query embedding and collection lookup; the runtime
+provider adapts that sync engine to the async retrieval protocol.
+
+If the Chroma store must be rebuilt:
+
+```bash
+uv run python backend/ingestion/ingest_repo.py
+uv run python backend/rag/chunk_documents.py
+uv run python backend/rag/build_chroma_vector_store.py
+```
 
 ## Troubleshooting
 
-### `FileNotFoundError: documents.json`
+### Missing pgvector Extension
 
-The ingestion script has not been run yet, or was run from the wrong directory.
+Symptoms include `type "vector" does not exist` or failures creating the HNSW
+index.
 
-Run `ingest_repo.py` first. All scripts resolve data paths relative to `backend/ingestion/`, not the current working directory.
+Confirm the Docker image and extension:
 
-### `FileNotFoundError: chunks.json`
+```bash
+docker compose up -d postgres
+docker compose exec postgres psql -U capilearn -d capilearn \
+  -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```
 
-`chunk_documents.py` has not been run yet, or `documents.json` is empty.
+The initialization script runs `CREATE EXTENSION IF NOT EXISTS vector`.
 
-Check that `documents.json` exists and contains entries before running the chunking step.
+### Empty RAG Tables
 
-### `CollectionNotFoundError` (ChromaDB)
+If retrieval returns no chunks, run the ingestion dry-run and then ingestion:
 
-The vector store has not been built yet, or was deleted.
+```bash
+uv run python -m backend.ingestion.ingest_pgvector --dry-run
+uv run python -m backend.ingestion.ingest_pgvector
+```
 
-Run `build_vector_store.py` to create the collection.
+Check that the write summary reports nonzero documents, chunks, and embeddings,
+and verify `DATABASE_URL` points to the same database used by FastAPI.
 
-### `Selected 0 English document(s)`
+### Embedding Dimension Mismatch
 
-No documents in `documents.json` have a `source_path` containing `/en/`. This usually means either:
-- The raw repo was not cloned to the expected location, or
-- `ingest_repo.py` produced paths that do not include the `/en/` segment.
+The database column is `vector(384)`. Both ingestion and retrieval must use
+`sentence-transformers/all-MiniLM-L6-v2`, unless a future migration changes the
+stored dimension.
 
-Check the `source_path` values in `documents.json` directly.
+Check:
 
-### Embedding model download on first run
+```dotenv
+RAG_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+```
 
-`sentence-transformers` will download `all-MiniLM-L6-v2` from Hugging Face on first use and cache it locally. This requires an internet connection the first time only.
+Then reingest after correcting the model.
 
-## Rebuilding the Vector Store
+### Alembic Migration Issues
 
-To fully rebuild from scratch (e.g. after adding new course content or changing chunk settings), run the three scripts in the order shown in [Run Order](#run-order).
+First inspect the graph and database revision:
 
-`build_vector_store.py` deletes and recreates the ChromaDB collection on every run, so no manual cleanup of the vector store is needed.
+```bash
+uv run alembic heads
+uv run alembic current
+uv run alembic history --verbose
+```
+
+Do not blindly stamp a database that may be missing schema changes. If
+`alembic current` references a revision absent from `alembic/versions`, inspect
+the existing schema and recover the missing migration history before stamping.
+For a disposable local database, recreating the Docker volume and running
+`uv run alembic upgrade head` is usually the cleanest recovery.
+
+For the known local-only stale-volume case where the database records
+`20260527_0004`, stop Compose and remove only this project's disposable volume:
+
+```bash
+docker compose down
+docker volume rm capilearn_postgres_data
+docker compose up -d postgres
+uv run alembic upgrade head
+```
+
+This deletes local database data. Do not use this procedure for a shared,
+staging, or production database.
+
+### RAG_BACKEND
+
+Valid values are:
+
+```dotenv
+RAG_BACKEND=pgvector
+RAG_BACKEND=chroma
+```
+
+Restart FastAPI after changing the value. Invalid values fail settings
+validation during startup. Settings are cached in the application process, so
+setting `RAG_BACKEND=pgvector` after Uvicorn has started does not switch the
+running provider.
+
+If the variable is omitted, the current code-level default is Chroma. The
+branch's `.env.example` selects pgvector explicitly.
+
+### Rejected OpenAI Key
+
+An HTTP `503` with `AuthenticationError` after successful
+`rag.provider.retrieve.completed` and `rag.retrieve.completed` events is an
+external LLM credential or account issue, not a pgvector retrieval failure.
+
+For the default OpenAI model, configure an active OpenAI Platform API key:
+
+```dotenv
+OPENAI_API_KEY=sk-...
+LLM_MODEL=openai/gpt-4o-mini
+```
+
+Confirm the key belongs to an API project with available billing/credits, then
+restart FastAPI. Do not place real keys in `.env.example` or commit `.env`.
+
+### Embedding Model Download
+
+The first model load may download files from Hugging Face. Use `--dry-run` when
+you only need preprocessing counts.

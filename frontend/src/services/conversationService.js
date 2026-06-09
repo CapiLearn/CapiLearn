@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://localhost:8001";
+import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
 // Set to true while backend branch is unavailable.
 // Change to false when backend is running locally.
@@ -117,31 +117,11 @@ async function mockListMessages(conversationId) {
   };
 }
 
-async function handleResponse(response) {
-  if (!response.ok) {
-    try {
-      const errorData = await response.json();
-      throw new Error(errorData.message || "Request failed.");
-    } catch {
-      throw new Error("Request failed.");
-    }
-  }
-
-  if (response.status === 204) {
-    return null;
-  }
-
-  return response.json();
-}
-
 /**
- * Parses a fetch response and raises a readable error when the API fails.
+ * Lists saved conversations for the current user.
  *
- * @param {Response} response - Fetch API response object.
- * @returns {Promise<Object>} Parsed JSON response body.
- * @throws {Error} When the response status is not successful.
+ * @returns {Promise<Object>} Object containing a conversations array.
  */
-
 export async function listConversations() {
   if (USE_MOCK_API) {
     return {
@@ -156,19 +136,9 @@ export async function listConversations() {
     },
   });
 
-  return handleResponse(response);
-
-/**
- * Starts a new conversation with the student's first message.
- *
- * The backend response includes the created conversation, saved user message,
- * and generated assistant message.
- *
- * @param {string} content - First message submitted by the student.
- * @returns {Promise<Object>} Conversation creation response.
- */
-
+  return handleApiResponse(response, "Unable to load conversations.");
 }
+
 export async function createConversation(content) {
   if (USE_MOCK_API) {
     return mockCreateConversation(content);
@@ -185,7 +155,7 @@ export async function createConversation(content) {
     }),
   });
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to create conversation.");
 }
 
 /**
@@ -210,7 +180,7 @@ export async function listMessages(conversationId) {
     }
   );
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to load conversation messages.");
 }
 
 /**
@@ -243,5 +213,5 @@ export async function createMessage(conversationId, content) {
     }
   );
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to send message.");
 }

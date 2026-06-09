@@ -5,12 +5,13 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from litellm import ServiceUnavailableError
 from pydantic import ValidationError
 
 from backend.core.observability import LLMTraceSink
 from backend.llm import costing as llm_costing_module
+from backend.llm import guardrail_factory as guardrail_factory_module
 from backend.llm import provider as llm_provider_module
-from backend.llm import service as llm_service_module
 from backend.llm.config import (
     InputGuardrailMode,
     LLMSettings,
@@ -32,10 +33,9 @@ from backend.llm.schemas import (
     GuardrailResult,
     LLMRequest,
     ProviderResponse,
-    RetrievalResult,
-    RetrievedChunk,
 )
 from backend.llm.service import LLMService, LLMServiceError
+from backend.rag.schemas import RetrievalResult, RetrievedChunk
 
 
 class FakeProvider:
@@ -96,13 +96,18 @@ class RichChunkRetriever:
         conversation_id: UUID,
         user_message_id: UUID,
     ):
-        return [
-            {
-                "content": f"Rich note for: {query}",
-                "metadata": {"source_id": "doc_1", "title": "Biology Notes"},
-                "distance": 0.12,
-            }
-        ]
+        return RetrievalResult(
+            chunks=[
+                RetrievedChunk(
+                    content=f"Rich note for: {query}",
+                    metadata={
+                        "source_id": "doc_1",
+                        "title": "Biology Notes",
+                    },
+                    distance=0.12,
+                )
+            ],
+        )
 
 
 class CoordinatedRetriever:
@@ -290,7 +295,7 @@ async def test_llm_service_trace_sink_failures_do_not_change_result(caplog) -> N
 
 
 @pytest.mark.asyncio
-async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
+async def test_llm_service_accepts_retrieval_result_contract() -> None:
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -307,6 +312,7 @@ async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
                 "source_id": "doc_1",
                 "title": "Biology Notes",
             },
+            distance=0.12,
         )
     ]
     assert result.retrieved_context[0].model_dump(
@@ -319,9 +325,10 @@ async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
             "source_id": "doc_1",
             "title": "Biology Notes",
         },
+        "distance": 0.12,
     }
     assert "Rich note for: What is photosynthesis?" in provider.messages[-1].content
-    assert "distance" not in result.retrieved_context[0].metadata
+    assert result.retrieved_context[0].distance == 0.12
 
 
 @pytest.mark.asyncio
@@ -442,6 +449,34 @@ async def test_llm_service_consumes_ignored_retrieval_exception() -> None:
         assert captured_contexts == []
     finally:
         loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_llm_service_degrades_allowed_retrieval_failure_to_empty_context(
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
+    provider = FakeProvider()
+    trace_sink = RecordingTraceSink()
+    service = LLMService(
+        provider=provider,
+        guardrails=AllowGuardrails(),
+        retriever=FailingRetriever(),
+        trace_sink=trace_sink,
+    )
+
+    result = await service.complete(_request("What is photosynthesis?"))
+
+    assert result.content == "Plants turn light into energy."
+    assert result.retrieved_context == []
+    assert provider.complete_called
+    assert "<retrieved_context>" not in provider.messages[-1].content
+    failed_events = _events(caplog.records, "rag.retrieve.failed")
+    assert failed_events[-1].error_type == "RuntimeError"
+    assert failed_events[-1].retriever_class == "FailingRetriever"
+    assert _events(caplog.records, "rag.retrieve.completed") == []
+    assert trace_sink.errors[-1]["error_type"] == "RuntimeError"
+    assert trace_sink.errors[-1]["retriever_class"] == "FailingRetriever"
 
 
 @pytest.mark.asyncio
@@ -699,6 +734,77 @@ async def test_litellm_provider_records_cost_unavailable_component(monkeypatch) 
     assert component.status == "cost_unavailable"
     assert component.estimated_cost_usd is None
     assert component.metadata["costError"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_does_not_retry_transient_failure_by_default(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    async def fake_acompletion(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise ServiceUnavailableError(
+            "provider unavailable",
+            llm_provider="gemini",
+            model=llm_settings.model,
+        )
+
+    settings = LLMSettings(_env_file=None, max_retries=0)
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_provider_module, "llm_settings", settings)
+
+    provider = LiteLLMProvider()
+    with pytest.raises(ServiceUnavailableError):
+        await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_retries_transient_provider_failure_when_configured(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    async def fake_acompletion(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ServiceUnavailableError(
+                "provider unavailable",
+                llm_provider="gemini",
+                model=llm_settings.model,
+            )
+        return _FakeLiteLLMResponse()
+
+    async def fake_sleep(delay):
+        return None
+
+    settings = LLMSettings(_env_file=None, max_retries=1)
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_provider_module, "llm_settings", settings)
+    monkeypatch.setattr(llm_provider_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(llm_costing_module, "completion_cost", lambda **kwargs: 0.001)
+
+    request = _request("hello")
+    recorder = LLMCostRecorder(
+        user_id=str(request.user_id),
+        conversation_id=str(request.conversation_id),
+        user_message_id=str(request.user_message_id),
+        assistant_message_id=str(request.assistant_message_id),
+    )
+    provider = LiteLLMProvider()
+    with cost_recorder_context(recorder):
+        response = await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert response.content == "Configured model response."
+    assert calls == 2
+    assert [component.attempt_index for component in recorder.components] == [1, 2]
+    assert [component.status for component in recorder.components] == ["failed", "completed"]
 
 
 @pytest.mark.asyncio
@@ -1098,10 +1204,10 @@ def test_global_guardrails_disable_builds_noop_guardrails(monkeypatch) -> None:
         input_guardrail_mode=InputGuardrailMode.POLICY,
         output_guardrail_mode=OutputGuardrailMode.POLICY,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_input_guardrails(), NoopGuardrailsProvider)
-    assert isinstance(llm_service_module._build_output_guardrails(), NoopGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_input_guardrails(), NoopGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_output_guardrails(), NoopGuardrailsProvider)
 
 
 def test_regex_input_mode_builds_regex_guardrails(monkeypatch) -> None:
@@ -1109,9 +1215,9 @@ def test_regex_input_mode_builds_regex_guardrails(monkeypatch) -> None:
         _env_file=None,
         input_guardrail_mode=InputGuardrailMode.REGEX,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_input_guardrails(), RegexGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_input_guardrails(), RegexGuardrailsProvider)
 
 
 def test_policy_input_mode_builds_composite_guardrails(monkeypatch) -> None:
@@ -1120,9 +1226,9 @@ def test_policy_input_mode_builds_composite_guardrails(monkeypatch) -> None:
         input_guardrail_mode=InputGuardrailMode.POLICY,
         guardrails_judge_enabled=True,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    provider = llm_service_module._build_input_guardrails()
+    provider = guardrail_factory_module.build_input_guardrails()
 
     assert isinstance(provider, CompositeGuardrailsProvider)
     assert isinstance(provider.providers[0], RegexGuardrailsProvider)
@@ -1135,9 +1241,9 @@ def test_policy_input_mode_without_judge_builds_regex_guardrails(monkeypatch) ->
         input_guardrail_mode=InputGuardrailMode.POLICY,
         guardrails_judge_enabled=False,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_input_guardrails(), RegexGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_input_guardrails(), RegexGuardrailsProvider)
 
 
 def test_policy_output_mode_builds_judge_guardrails(monkeypatch) -> None:
@@ -1146,9 +1252,11 @@ def test_policy_output_mode_builds_judge_guardrails(monkeypatch) -> None:
         output_guardrail_mode=OutputGuardrailMode.POLICY,
         guardrails_judge_enabled=True,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_output_guardrails(), LLMJudgeGuardrailsProvider)
+    assert isinstance(
+        guardrail_factory_module.build_output_guardrails(), LLMJudgeGuardrailsProvider
+    )
 
 
 def test_policy_output_mode_without_judge_builds_noop_guardrails(monkeypatch) -> None:
@@ -1157,9 +1265,9 @@ def test_policy_output_mode_without_judge_builds_noop_guardrails(monkeypatch) ->
         output_guardrail_mode=OutputGuardrailMode.POLICY,
         guardrails_judge_enabled=False,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_output_guardrails(), NoopGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_output_guardrails(), NoopGuardrailsProvider)
 
 
 def _events(records, event: str):
@@ -1178,6 +1286,14 @@ class FailingTraceSink(LLMTraceSink):
 
     async def _record_error(self, metadata):
         raise RuntimeError("trace sink unavailable")
+
+
+class RecordingTraceSink(LLMTraceSink):
+    def __init__(self) -> None:
+        self.errors = []
+
+    async def _record_error(self, metadata):
+        self.errors.append(metadata)
 
 
 def _request(content: str) -> LLMRequest:
