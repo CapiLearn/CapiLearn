@@ -50,6 +50,7 @@ class LLMCostRecorder:
         self,
         *,
         component_type: str,
+        attempt_index: int,
         configured_model: str | None,
         response: Any | None,
         status: str,
@@ -65,7 +66,7 @@ class LLMCostRecorder:
                 **self._base_fields,
                 component_order=len(self._components) + 1,
                 component_type=component_type,
-                attempt_index=1,
+                attempt_index=attempt_index,
                 provider=_provider_name(configured_model=configured_model, response=response),
                 configured_model=configured_model,
                 response_model=_response_value(response, "model"),
@@ -123,6 +124,7 @@ async def tracked_acompletion(
     *,
     component_type: str,
     configured_model: str,
+    attempt_index: int = 1,
     completion: CompletionCallable = acompletion,
     metadata: dict[str, Any] | None = None,
     **kwargs: Any,
@@ -133,6 +135,7 @@ async def tracked_acompletion(
     except Exception as exc:
         _append_component(
             component_type=component_type,
+            attempt_index=attempt_index,
             configured_model=configured_model,
             response=None,
             status="failed",
@@ -144,6 +147,7 @@ async def tracked_acompletion(
 
     _append_component(
         component_type=component_type,
+        attempt_index=attempt_index,
         configured_model=configured_model,
         response=response,
         status="completed",
@@ -156,6 +160,7 @@ async def tracked_acompletion(
 def _append_component(
     *,
     component_type: str,
+    attempt_index: int,
     configured_model: str | None,
     response: Any | None,
     status: str,
@@ -168,6 +173,7 @@ def _append_component(
         return
     recorder.append(
         component_type=component_type,
+        attempt_index=attempt_index,
         configured_model=configured_model,
         response=response,
         status=status,

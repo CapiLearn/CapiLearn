@@ -788,12 +788,23 @@ async def test_litellm_provider_retries_transient_provider_failure_when_configur
     monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
     monkeypatch.setattr(llm_provider_module, "llm_settings", settings)
     monkeypatch.setattr(llm_provider_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(llm_costing_module, "completion_cost", lambda **kwargs: 0.001)
 
+    request = _request("hello")
+    recorder = LLMCostRecorder(
+        user_id=str(request.user_id),
+        conversation_id=str(request.conversation_id),
+        user_message_id=str(request.user_message_id),
+        assistant_message_id=str(request.assistant_message_id),
+    )
     provider = LiteLLMProvider()
-    response = await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+    with cost_recorder_context(recorder):
+        response = await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
 
     assert response.content == "Configured model response."
     assert calls == 2
+    assert [component.attempt_index for component in recorder.components] == [1, 2]
+    assert [component.status for component in recorder.components] == ["failed", "completed"]
 
 
 @pytest.mark.asyncio

@@ -31,7 +31,7 @@ class LiteLLMProvider:
         max_attempts = llm_settings.max_retries + 1
         for attempt in range(1, max_attempts + 1):
             try:
-                return await self._complete_once(messages)
+                return await self._complete_once(messages, attempt_index=attempt)
             except _TRANSIENT_PROVIDER_ERRORS as exc:
                 last_error = exc
                 if attempt >= max_attempts:
@@ -53,12 +53,18 @@ class LiteLLMProvider:
             raise last_error
         raise RuntimeError("LLM provider retry loop exited without a response.")
 
-    async def _complete_once(self, messages: list[ChatMessage]) -> ProviderResponse:
+    async def _complete_once(
+        self,
+        messages: list[ChatMessage],
+        *,
+        attempt_index: int,
+    ) -> ProviderResponse:
         started_at = timer_start()
         kwargs = _completion_kwargs(messages)
         response = await tracked_acompletion(
             component_type=current_generation_component_type(),
             configured_model=llm_settings.model,
+            attempt_index=attempt_index,
             completion=acompletion,
             **kwargs,
         )
