@@ -80,18 +80,19 @@ The embedding column has an HNSW index using `vector_cosine_ops`.
 `backend/rag/retrieval.py` implements both providers behind the
 `RetrievalProvider` protocol from `backend/rag/schemas.py`:
 
-- `PgvectorRagRetrievalProvider` delegates text retrieval to `RagService`, which
-  embeds the query and performs async cosine similarity search.
+- `PgvectorRagRetrievalProvider` embeds the query, then delegates vector
+  retrieval to `RagService`.
 - `ChromaRagRetrievalProvider` preserves the legacy Chroma path for rollback.
 
 `RAG_BACKEND` selects the provider at application startup. Both providers
 return `RetrievalResult` containing `RetrievedChunk` objects, so prompt behavior
-does not change. Retrieval errors are logged and degrade to empty context
-rather than failing the chat request.
+does not change. Retrieval errors propagate to `LLMService`, which logs
+`rag.retrieve.failed`, degrades to empty context, and still allows generation.
 
 Both runtime retrieval backends use `backend/rag/embeddings.py` for query-time
-`SentenceTransformer` loading, caching, and lock handling. Chroma still owns its
-collection connection, while pgvector still owns database retrieval and logging.
+`SentenceTransformer` loading, caching, and lock handling. Chroma's query
+engine owns text-query embedding plus collection lookup for rollback and dev
+scripts; pgvector still owns database retrieval and logging.
 
 The verified pgvector path embeds the query with
 `sentence-transformers/all-MiniLM-L6-v2`, filters stored embeddings by the same
@@ -109,8 +110,10 @@ is required.
 
 Structured runtime events include `rag.provider.retrieve.completed` with
 `backend=pgvector`, chunk count, source paths, distances, and similarities.
-`rag.retrieve.completed` records the chunks accepted by `LLMService`. There is
-no separate prompt-injection event; successful retrieval followed by
+`rag.retrieve.completed` records successful chunks accepted by `LLMService`.
+Retrieval failures emit `rag.retrieve.failed` without a matching
+`rag.retrieve.completed` event. There is no separate prompt-injection event;
+successful retrieval followed by
 `llm.generation.completed` exercises the existing `build_messages()` context
 injection path.
 

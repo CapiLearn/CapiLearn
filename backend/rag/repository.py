@@ -53,13 +53,12 @@ class SimilarChunk:
             "source_path": self.source_path,
             "title": self.title,
             "course_name": self.course_name,
-            "distance": self.distance,
-            "similarity": self.similarity,
         }
         return {
             "content": self.content,
             "metadata": metadata,
             "distance": self.distance,
+            "similarity": self.similarity,
         }
 
 

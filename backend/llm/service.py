@@ -32,7 +32,12 @@ from backend.llm.schemas import (
     LLMResult,
     ProviderResponse,
 )
-from backend.rag.schemas import RetrievalProvider, RetrievalResult, RetrievedChunk
+from backend.rag.schemas import (
+    RetrievalProvider,
+    RetrievalResult,
+    RetrievedChunk,
+    retrieval_chunk_log_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,22 +147,20 @@ class LLMService:
             )
 
         try:
-            retrieval_result = _coerce_retrieval_result(await retrieval_task)
+            retrieval_result = await retrieval_task
         except Exception as exc:
-            latency_ms = elapsed_ms(retrieval_started_at)
-            fields = {
-                **_request_event_fields(request),
-                "latency_ms": latency_ms,
-                "error_type": type(exc).__name__,
-            }
-            await self._trace_sink.record_error(fields)
-            log_event(logger, "rag.retrieve.failed", level=logging.ERROR, **fields)
-            raise
-        await self._record_retrieval_result(
-            request=request,
-            started_at=retrieval_started_at,
-            result=retrieval_result,
-        )
+            retrieval_result = RetrievalResult(chunks=[])
+            await self._record_retrieval_error(
+                request=request,
+                started_at=retrieval_started_at,
+                exc=exc,
+            )
+        else:
+            await self._record_retrieval_result(
+                request=request,
+                started_at=retrieval_started_at,
+                result=retrieval_result,
+            )
 
         provider_response = await self._generate(
             request=request,
@@ -342,10 +345,26 @@ class LLMService:
             **_request_event_fields(request),
             "latency_ms": elapsed_ms(started_at),
             "chunk_count": len(result.chunks),
-            "chunks": [_chunk_observability_metadata(chunk) for chunk in result.chunks[:5]],
+            "chunks": [retrieval_chunk_log_metadata(chunk) for chunk in result.chunks[:5]],
         }
         await self._trace_sink.record_retrieval(fields)
         log_event(logger, "rag.retrieve.completed", **fields)
+
+    async def _record_retrieval_error(
+        self,
+        *,
+        request: LLMRequest,
+        started_at: float,
+        exc: Exception,
+    ) -> None:
+        fields = {
+            **_request_event_fields(request),
+            "latency_ms": elapsed_ms(started_at),
+            "error_type": type(exc).__name__,
+            "retriever_class": type(self._retriever).__name__,
+        }
+        await self._trace_sink.record_error(fields)
+        log_event(logger, "rag.retrieve.failed", level=logging.ERROR, **fields, exc_info=True)
 
 
 def _build_input_guardrails() -> GuardrailsProvider:
@@ -422,20 +441,6 @@ def _with_repair_metadata(
     return result.model_copy(update={"metadata": metadata})
 
 
-def _coerce_retrieval_result(
-    value: RetrievalResult | list[RetrievedChunk | dict],
-) -> RetrievalResult:
-    if isinstance(value, RetrievalResult):
-        return value
-    return RetrievalResult(chunks=[_coerce_retrieved_chunk(chunk) for chunk in value])
-
-
-def _coerce_retrieved_chunk(value: RetrievedChunk | dict) -> RetrievedChunk:
-    if isinstance(value, RetrievedChunk):
-        return value
-    return RetrievedChunk.model_validate(value)
-
-
 def _request_event_fields(request: LLMRequest) -> dict:
     return {
         "user_id": str(request.user_id),
@@ -465,25 +470,6 @@ def _reason_code(reason: str | None) -> str | None:
     if reason is None:
         return None
     return "_".join(reason.lower().split())[:80]
-
-
-def _chunk_observability_metadata(chunk: RetrievedChunk) -> dict:
-    metadata = chunk.metadata or {}
-    allowed_keys = {
-        "source_id",
-        "sourceId",
-        "chunk_id",
-        "chunkId",
-        "document_id",
-        "documentId",
-        "title",
-        "source_path",
-        "sourcePath",
-        "page",
-        "score",
-        "distance",
-    }
-    return {key: metadata[key] for key in allowed_keys if key in metadata}
 
 
 def _discard_task_result(task: asyncio.Task[RetrievalResult]) -> None:

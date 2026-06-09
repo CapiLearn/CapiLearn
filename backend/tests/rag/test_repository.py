@@ -108,10 +108,9 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
             "source_path": "src/content/en/state.md",
             "title": "State",
             "course_name": "Full Stack Open",
-            "distance": 0.125,
-            "similarity": 0.875,
         },
         "distance": 0.125,
+        "similarity": 0.875,
     }
 
 

@@ -95,13 +95,18 @@ class RichChunkRetriever:
         conversation_id: UUID,
         user_message_id: UUID,
     ):
-        return [
-            {
-                "content": f"Rich note for: {query}",
-                "metadata": {"source_id": "doc_1", "title": "Biology Notes"},
-                "distance": 0.12,
-            }
-        ]
+        return RetrievalResult(
+            chunks=[
+                RetrievedChunk(
+                    content=f"Rich note for: {query}",
+                    metadata={
+                        "source_id": "doc_1",
+                        "title": "Biology Notes",
+                    },
+                    distance=0.12,
+                )
+            ],
+        )
 
 
 class CoordinatedRetriever:
@@ -289,7 +294,7 @@ async def test_llm_service_trace_sink_failures_do_not_change_result(caplog) -> N
 
 
 @pytest.mark.asyncio
-async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
+async def test_llm_service_accepts_retrieval_result_contract() -> None:
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -306,6 +311,7 @@ async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
                 "source_id": "doc_1",
                 "title": "Biology Notes",
             },
+            distance=0.12,
         )
     ]
     assert result.retrieved_context[0].model_dump(
@@ -318,9 +324,10 @@ async def test_llm_service_coerces_prototype_chunk_dicts() -> None:
             "source_id": "doc_1",
             "title": "Biology Notes",
         },
+        "distance": 0.12,
     }
     assert "Rich note for: What is photosynthesis?" in provider.messages[-1].content
-    assert "distance" not in result.retrieved_context[0].metadata
+    assert result.retrieved_context[0].distance == 0.12
 
 
 @pytest.mark.asyncio
@@ -441,6 +448,34 @@ async def test_llm_service_consumes_ignored_retrieval_exception() -> None:
         assert captured_contexts == []
     finally:
         loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_llm_service_degrades_allowed_retrieval_failure_to_empty_context(
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
+    provider = FakeProvider()
+    trace_sink = RecordingTraceSink()
+    service = LLMService(
+        provider=provider,
+        guardrails=AllowGuardrails(),
+        retriever=FailingRetriever(),
+        trace_sink=trace_sink,
+    )
+
+    result = await service.complete(_request("What is photosynthesis?"))
+
+    assert result.content == "Plants turn light into energy."
+    assert result.retrieved_context == []
+    assert provider.complete_called
+    assert "<retrieved_context>" not in provider.messages[-1].content
+    failed_events = _events(caplog.records, "rag.retrieve.failed")
+    assert failed_events[-1].error_type == "RuntimeError"
+    assert failed_events[-1].retriever_class == "FailingRetriever"
+    assert _events(caplog.records, "rag.retrieve.completed") == []
+    assert trace_sink.errors[-1]["error_type"] == "RuntimeError"
+    assert trace_sink.errors[-1]["retriever_class"] == "FailingRetriever"
 
 
 @pytest.mark.asyncio
@@ -1177,6 +1212,14 @@ class FailingTraceSink(LLMTraceSink):
 
     async def _record_error(self, metadata):
         raise RuntimeError("trace sink unavailable")
+
+
+class RecordingTraceSink(LLMTraceSink):
+    def __init__(self) -> None:
+        self.errors = []
+
+    async def _record_error(self, metadata):
+        self.errors.append(metadata)
 
 
 def _request(content: str) -> LLMRequest:

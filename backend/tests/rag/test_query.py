@@ -61,7 +61,9 @@ class ChromaRagQueryTests(unittest.TestCase):
 
         fresh_query_module(retriever, embeddings)
 
-    def test_chroma_query_engine_embeds_query_and_returns_chunks_and_context(self) -> None:
+    def test_chroma_query_engine_embeds_query_and_returns_chunks_and_context(
+        self,
+    ) -> None:
         chunks = [
             {
                 "content": "React state stores component data.",
@@ -69,12 +71,12 @@ class ChromaRagQueryTests(unittest.TestCase):
                 "distance": 0.12,
             }
         ]
-        provider = FakeEmbeddingProvider(vector=[0.1, 0.2])
         retriever = make_retriever_module(
             get_collection=Mock(return_value="collection"),
             retrieve_context=Mock(return_value=chunks),
             format_context=Mock(return_value="formatted context"),
         )
+        provider = FakeEmbeddingProvider(vector=[0.9, 0.8])
         embeddings = make_embeddings_module(provider=provider)
         query = fresh_query_module(retriever, embeddings)
 
@@ -92,14 +94,14 @@ class ChromaRagQueryTests(unittest.TestCase):
             DEFAULT_CHROMA_COLLECTION_NAME,
         )
         retriever.retrieve_context.assert_called_once_with(
-            query_embedding=[0.1, 0.2],
+            query_embedding=[0.9, 0.8],
             collection="collection",
             top_k=3,
         )
         retriever.format_context.assert_called_once_with(chunks)
         self.assertEqual(result, {"chunks": chunks, "context": "formatted context"})
 
-    def test_query_chroma_rag_reuses_cached_provider_and_collection(self) -> None:
+    def test_query_chroma_rag_embeds_text_and_reuses_cached_collection(self) -> None:
         provider = FakeEmbeddingProvider(vector=[0.1, 0.2])
         retriever = make_retriever_module(
             get_collection=Mock(return_value="collection"),
@@ -129,8 +131,7 @@ class ChromaRagQueryTests(unittest.TestCase):
         ]
         self.assertEqual(retriever.retrieve_context.call_count, 2)
 
-    def test_chroma_query_engine_retrieves_by_embedding(self) -> None:
-        provider = FakeEmbeddingProvider(vector=[0.3, 0.4])
+    def test_chroma_query_engine_retrieves_text_query(self) -> None:
         chunks = [
             {
                 "content": "Embedding lookup works.",
@@ -143,14 +144,20 @@ class ChromaRagQueryTests(unittest.TestCase):
             retrieve_context=Mock(return_value=chunks),
             format_context=Mock(return_value="legacy context"),
         )
+        provider = FakeEmbeddingProvider(vector=[0.3, 0.4])
         embeddings = make_embeddings_module(provider=provider)
         query = fresh_query_module(retriever, embeddings)
 
         engine = query.ChromaRagQueryEngine(embedding_provider=provider)
-        result = engine.retrieve_by_embedding([0.3, 0.4], top_k=2)
+        result = engine.retrieve("How do embeddings work?", top_k=2)
 
         assert result == chunks
-        assert provider.calls == []
+        assert provider.calls == [
+            {
+                "query_text": "How do embeddings work?",
+                "model_name": DEFAULT_RAG_MODEL_NAME,
+            }
+        ]
         retriever.retrieve_context.assert_called_once_with(
             query_embedding=[0.3, 0.4],
             collection="collection",

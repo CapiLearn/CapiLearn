@@ -78,9 +78,9 @@ class ChromaRagQueryEngine:
             question,
             model_name=self._config.model_name,
         )
-        return self.retrieve_by_embedding(query_embedding, top_k=top_k)
+        return self._retrieve_by_embedding(query_embedding, top_k=top_k)
 
-    def retrieve_by_embedding(
+    def _retrieve_by_embedding(
         self,
         query_embedding: Sequence[float],
         top_k: int | None = None,
@@ -106,10 +106,19 @@ def get_default_chroma_query_engine() -> ChromaRagQueryEngine:
     return ChromaRagQueryEngine()
 
 
-def query_chroma_rag(question: str, top_k: int = DEFAULT_RAG_TOP_K) -> dict:
+def query_chroma_rag(
+    question: str,
+    top_k: int = DEFAULT_RAG_TOP_K,
+    *,
+    model_name: str = DEFAULT_RAG_MODEL_NAME,
+) -> dict:
     """
     Run the full Chroma RAG retrieval pipeline for *question*.
 
-    This helper uses a cached lazy query engine.
+    This helper uses a cached lazy query engine for the default embedding model.
     """
-    return get_default_chroma_query_engine().query(question, top_k=top_k)
+    if model_name == DEFAULT_RAG_MODEL_NAME:
+        engine = get_default_chroma_query_engine()
+    else:
+        engine = ChromaRagQueryEngine(ChromaRagConfig(model_name=model_name))
+    return engine.query(question, top_k=top_k)
