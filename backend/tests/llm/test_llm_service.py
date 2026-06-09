@@ -9,8 +9,8 @@ from pydantic import ValidationError
 
 from backend.core.observability import LLMTraceSink
 from backend.llm import costing as llm_costing_module
+from backend.llm import guardrail_factory as guardrail_factory_module
 from backend.llm import provider as llm_provider_module
-from backend.llm import service as llm_service_module
 from backend.llm.config import (
     InputGuardrailMode,
     LLMSettings,
@@ -1132,10 +1132,10 @@ def test_global_guardrails_disable_builds_noop_guardrails(monkeypatch) -> None:
         input_guardrail_mode=InputGuardrailMode.POLICY,
         output_guardrail_mode=OutputGuardrailMode.POLICY,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_input_guardrails(), NoopGuardrailsProvider)
-    assert isinstance(llm_service_module._build_output_guardrails(), NoopGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_input_guardrails(), NoopGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_output_guardrails(), NoopGuardrailsProvider)
 
 
 def test_regex_input_mode_builds_regex_guardrails(monkeypatch) -> None:
@@ -1143,9 +1143,9 @@ def test_regex_input_mode_builds_regex_guardrails(monkeypatch) -> None:
         _env_file=None,
         input_guardrail_mode=InputGuardrailMode.REGEX,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_input_guardrails(), RegexGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_input_guardrails(), RegexGuardrailsProvider)
 
 
 def test_policy_input_mode_builds_composite_guardrails(monkeypatch) -> None:
@@ -1154,9 +1154,9 @@ def test_policy_input_mode_builds_composite_guardrails(monkeypatch) -> None:
         input_guardrail_mode=InputGuardrailMode.POLICY,
         guardrails_judge_enabled=True,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    provider = llm_service_module._build_input_guardrails()
+    provider = guardrail_factory_module.build_input_guardrails()
 
     assert isinstance(provider, CompositeGuardrailsProvider)
     assert isinstance(provider.providers[0], RegexGuardrailsProvider)
@@ -1169,9 +1169,9 @@ def test_policy_input_mode_without_judge_builds_regex_guardrails(monkeypatch) ->
         input_guardrail_mode=InputGuardrailMode.POLICY,
         guardrails_judge_enabled=False,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_input_guardrails(), RegexGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_input_guardrails(), RegexGuardrailsProvider)
 
 
 def test_policy_output_mode_builds_judge_guardrails(monkeypatch) -> None:
@@ -1180,9 +1180,11 @@ def test_policy_output_mode_builds_judge_guardrails(monkeypatch) -> None:
         output_guardrail_mode=OutputGuardrailMode.POLICY,
         guardrails_judge_enabled=True,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_output_guardrails(), LLMJudgeGuardrailsProvider)
+    assert isinstance(
+        guardrail_factory_module.build_output_guardrails(), LLMJudgeGuardrailsProvider
+    )
 
 
 def test_policy_output_mode_without_judge_builds_noop_guardrails(monkeypatch) -> None:
@@ -1191,9 +1193,9 @@ def test_policy_output_mode_without_judge_builds_noop_guardrails(monkeypatch) ->
         output_guardrail_mode=OutputGuardrailMode.POLICY,
         guardrails_judge_enabled=False,
     )
-    monkeypatch.setattr(llm_service_module, "llm_settings", settings)
+    monkeypatch.setattr(guardrail_factory_module, "llm_settings", settings)
 
-    assert isinstance(llm_service_module._build_output_guardrails(), NoopGuardrailsProvider)
+    assert isinstance(guardrail_factory_module.build_output_guardrails(), NoopGuardrailsProvider)
 
 
 def _events(records, event: str):

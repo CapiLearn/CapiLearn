@@ -98,20 +98,6 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
             similarity=0.875,
         )
     ]
-    assert results[0].to_retrieval_dict() == {
-        "content": "React state stores component data.",
-        "metadata": {
-            "week": "1",
-            "chunk_id": str(chunk_id),
-            "document_id": str(document_id),
-            "source_type": "course_repo",
-            "source_path": "src/content/en/state.md",
-            "title": "State",
-            "course_name": "Full Stack Open",
-        },
-        "distance": 0.125,
-        "similarity": 0.875,
-    }
 
 
 class CapturingSession:

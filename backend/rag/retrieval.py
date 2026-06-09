@@ -9,6 +9,7 @@ from backend.rag.config import RagBackend, RagSettings
 from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME, DEFAULT_RAG_TOP_K
 from backend.rag.embeddings import QueryEmbeddingProvider, get_embedding_provider
 from backend.rag.query import ChromaRagConfig, ChromaRagQueryEngine
+from backend.rag.repository import SimilarChunk
 from backend.rag.schemas import (
     RetrievalProvider,
     RetrievalResult,
@@ -31,6 +32,8 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
         top_k: int | None = None,
         embedding_provider: QueryEmbeddingProvider | None = None,
     ) -> None:
+        if engine is not None and embedding_provider is not None:
+            raise ValueError("Pass either engine or embedding_provider, not both.")
         engine_top_k = DEFAULT_RAG_TOP_K if top_k is None else top_k
         self._engine = engine or ChromaRagQueryEngine(
             ChromaRagConfig(model_name=model_name, top_k=engine_top_k),
@@ -118,7 +121,7 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
                 rag_index_version=self._rag_index_version,
             )
         result = RetrievalResult(
-            chunks=[_retrieved_chunk_from_raw(row.to_retrieval_dict()) for row in rows],
+            chunks=[_retrieved_chunk_from_similar_chunk(row) for row in rows],
         )
         _log_retrieval_completed(
             backend=RagBackend.PGVECTOR,
@@ -150,6 +153,23 @@ def build_rag_retrieval_provider(config: RagSettings) -> RetrievalProvider:
 
 def _retrieved_chunk_from_raw(item: dict[str, Any]) -> RetrievedChunk:
     return RetrievedChunk.model_validate(item)
+
+
+def _retrieved_chunk_from_similar_chunk(row: SimilarChunk) -> RetrievedChunk:
+    return RetrievedChunk(
+        content=row.content,
+        metadata={
+            **row.metadata,
+            "chunk_id": str(row.chunk_id),
+            "document_id": str(row.document_id),
+            "source_type": row.source_type,
+            "source_path": row.source_path,
+            "title": row.title,
+            "course_name": row.course_name,
+        },
+        distance=row.distance,
+        similarity=row.similarity,
+    )
 
 
 def _log_retrieval_completed(

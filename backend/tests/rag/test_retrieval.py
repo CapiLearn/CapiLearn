@@ -68,7 +68,6 @@ async def test_rag_retrieval_provider_propagates_engine_error() -> None:
     engine = FakeChromaRagQueryEngine(error=RuntimeError("vector store unavailable"))
     provider = ChromaRagRetrievalProvider(
         engine=engine,
-        embedding_provider=FakeEmbeddingProvider(),
     )
 
     with pytest.raises(RuntimeError, match="vector store unavailable"):
@@ -77,6 +76,14 @@ async def test_rag_retrieval_provider_propagates_engine_error() -> None:
             user_id=uuid4(),
             conversation_id=uuid4(),
             user_message_id=uuid4(),
+        )
+
+
+def test_chroma_provider_rejects_ignored_embedding_provider() -> None:
+    with pytest.raises(ValueError, match="Pass either engine or embedding_provider"):
+        ChromaRagRetrievalProvider(
+            engine=FakeChromaRagQueryEngine(),
+            embedding_provider=FakeEmbeddingProvider(),
         )
 
 
