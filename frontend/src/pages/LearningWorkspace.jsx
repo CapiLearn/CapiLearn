@@ -19,39 +19,11 @@ const suggestedPrompts = [
 ];
 
 const calendarDays = [
-  "",
-  "1",
-  "2",
-  "3",
-  "4",
-  "5",
-  "6",
-  "7",
-  "8",
-  "9",
-  "10",
-  "11",
-  "12",
-  "13",
-  "14",
-  "15",
-  "16",
-  "17",
-  "18",
-  "19",
-  "20",
-  "21",
-  "22",
-  "23",
-  "24",
-  "25",
-  "26",
-  "27",
-  "28",
-  "29",
-  "30",
-  "31",
-  "",
+  "", "1", "2", "3", "4", "5", "6",
+  "7", "8", "9", "10", "11", "12", "13",
+  "14", "15", "16", "17", "18", "19", "20",
+  "21", "22", "23", "24", "25", "26", "27",
+  "28", "29", "30", "", "", "", "",
 ];
 
 const initialChatMessages = [
@@ -88,30 +60,53 @@ function HighlightedText({ text, searchTerm }) {
   );
 }
 
-function getSearchableMarkdownText(content) {
+function getSearchableMarkdownChunks(content) {
   return content
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
     .replace(/```[\s\S]*?```/g, (match) =>
       match.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "")
     )
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/_([^_]+)_/g, "$1")
-    .replace(/~~([^~]+)~~/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^>\s?/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/\s+/g, " ")
-    .trim();
+    .split(/\n+/)
+    .flatMap((line) => {
+      const cleanedLine = line
+        .replace(/^#{1,6}\s+/g, "")
+        .replace(/^>\s?/g, "")
+        .replace(/^\s*[-*+]\s+/g, "")
+        .replace(/^\s*\d+\.\s+/g, "");
+
+      if (
+        /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(cleanedLine)
+      ) {
+        return [];
+      }
+
+      return cleanedLine
+        .split("|")
+        .map((chunk) =>
+          chunk
+            .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+            .replace(/`([^`]+)`/g, "$1")
+            .replace(/\*\*([^*]+)\*\*/g, "$1")
+            .replace(/\*([^*]+)\*/g, "$1")
+            .replace(/__([^_]+)__/g, "$1")
+            .replace(/_([^_]+)_/g, "$1")
+            .replace(/~~([^~]+)~~/g, "$1")
+            .trim()
+        )
+        .filter(Boolean);
+    });
 }
 
-function getSearchableTextForMessage(message) {
+function getSearchableChunksForMessage(message) {
   return message.role === "assistant"
-    ? getSearchableMarkdownText(message.content)
-    : message.content;
+    ? getSearchableMarkdownChunks(message.content)
+    : [message.content];
+}
+
+function messageHasSearchMatch(message, searchTerm) {
+  return getSearchableChunksForMessage(message).some((chunk) =>
+    chunk.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 }
 
 function countSearchMatchesInMessage(message, searchTerm) {
@@ -119,11 +114,14 @@ function countSearchMatchesInMessage(message, searchTerm) {
     return 0;
   }
 
-  const searchableText = getSearchableTextForMessage(message);
   const escapedSearchTerm = escapeRegExp(searchTerm);
-  const matches = searchableText.match(new RegExp(escapedSearchTerm, "gi"));
+  const searchRegex = new RegExp(escapedSearchTerm, "gi");
 
-  return matches ? matches.length : 0;
+  return getSearchableChunksForMessage(message).reduce((count, chunk) => {
+    const matches = chunk.match(searchRegex);
+
+    return count + (matches ? matches.length : 0);
+  }, 0);
 }
 
 function LearningWorkspace() {
@@ -247,9 +245,7 @@ function LearningWorkspace() {
 
   const visibleChatMessages = normalizedSearchTerm
     ? chatMessages.filter((message) =>
-        getSearchableTextForMessage(message)
-          .toLowerCase()
-          .includes(normalizedSearchTerm.toLowerCase())
+        messageHasSearchMatch(message, normalizedSearchTerm)
       )
     : chatMessages;
 
