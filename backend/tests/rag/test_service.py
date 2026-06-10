@@ -134,6 +134,80 @@ async def test_replace_document_index_rolls_back_on_failure() -> None:
     assert session.rollback_count == 1
 
 
+@pytest.mark.asyncio
+async def test_replace_document_index_rejects_duplicate_chunk_indexes() -> None:
+    session = FakeSession()
+    repository = CapturingRepository()
+    service = RagService(session=session, repository=repository)
+    first_id = uuid4()
+    second_id = uuid4()
+
+    with pytest.raises(ValueError, match="Chunk indexes must be unique"):
+        await service.replace_document_index(
+            source_type="course_repo",
+            source_path="src/content/en/example.md",
+            content_hash="content-hash",
+            chunks=[
+                ChunkRecord(id=first_id, chunk_index=0, content="First"),
+                ChunkRecord(id=second_id, chunk_index=0, content="Second"),
+            ],
+            embeddings=[
+                EmbeddingRecord(
+                    chunk_id=first_id,
+                    embedding=[0.0] * EMBEDDING_DIMENSIONS,
+                    embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                ),
+                EmbeddingRecord(
+                    chunk_id=second_id,
+                    embedding=[0.0] * EMBEDDING_DIMENSIONS,
+                    embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                ),
+            ],
+        )
+
+    assert repository.deleted_document_id is None
+    assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_documents_commits_soft_deactivation() -> None:
+    session = FakeSession()
+    repository = CapturingRepository()
+    repository.deactivated_count = 2
+    service = RagService(session=session, repository=repository)
+
+    count = await service.reconcile_documents(
+        source_type="course_repo",
+        course_name="Full Stack Open",
+        seen_source_paths=["active.md"],
+    )
+
+    assert count == 2
+    assert repository.reconciliation == {
+        "source_type": "course_repo",
+        "course_name": "Full Stack Open",
+        "seen_source_paths": ["active.md"],
+    }
+    assert session.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_documents_rejects_empty_scan_without_writing() -> None:
+    session = FakeSession()
+    repository = CapturingRepository()
+    service = RagService(session=session, repository=repository)
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        await service.reconcile_documents(
+            source_type="course_repo",
+            course_name="Full Stack Open",
+            seen_source_paths=[],
+        )
+
+    assert repository.reconciliation is None
+    assert session.commit_count == 0
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.commit_count = 0
@@ -157,6 +231,8 @@ class CapturingRepository:
         self.search_query_embedding = None
         self.search_embedding_model = None
         self.search_top_k = None
+        self.deactivated_count = 0
+        self.reconciliation = None
 
     async def insert_embeddings(self, session, *, embeddings):
         if self.error is not None:
@@ -186,6 +262,21 @@ class CapturingRepository:
         self.search_embedding_model = embedding_model
         self.search_top_k = top_k
         return self.results
+
+    async def deactivate_missing_documents(
+        self,
+        session,
+        *,
+        source_type,
+        course_name,
+        seen_source_paths,
+    ):
+        self.reconciliation = {
+            "source_type": source_type,
+            "course_name": course_name,
+            "seen_source_paths": seen_source_paths,
+        }
+        return self.deactivated_count
 
 
 class FakeDocument:

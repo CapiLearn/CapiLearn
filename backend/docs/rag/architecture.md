@@ -2,150 +2,219 @@
 
 ## Purpose
 
-The RAG layer turns course source files into searchable embeddings and supplies
-relevant course context to the chat generation flow. PostgreSQL with pgvector
-is the preferred runtime for this branch. The existing Chroma implementation
-remains available through `RAG_BACKEND=chroma` as a rollback path.
+The RAG layer converts course source files into structured, searchable chunks
+and supplies retained retrieval results to the existing chat generation flow.
+PostgreSQL with pgvector is the preferred runtime. Chroma remains available
+through `RAG_BACKEND=chroma` as an application rollback path.
 
-The RAG layer retrieves context; the existing LLM service remains responsible
-for guardrails, prompt construction, generation, and response handling.
+The RAG layer owns source ingestion, chunk contracts, embeddings, retrieval,
+deduplication, and retrieval tracing. `LLMService` continues to own guardrails,
+prompt construction, generation, and response handling.
 
 ## End-to-End Flow
 
 ```text
 Raw course repository
     |
-    | backend/ingestion/ingest_pgvector.py
-    | - reads supported files
-    | - filters English source paths
-    | - applies Markdown-aware chunking
-    | - generates 384-dimensional embeddings
+    | source loading and English-path filtering
     v
-PostgreSQL
-    rag_documents
-    rag_chunks
-    rag_embeddings vector(384)
-    rag_retrieval_logs
+markdown-structure-v3
+    | typed chunks, UUIDv5 IDs, hashes, offsets, headings, types
+    v
+PostgreSQL / pgvector
+    | active documents only, cosine candidate retrieval
+    v
+bounded candidate oversampling
     |
-    | cosine similarity search through pgvector
     v
-RAG retrieval provider
+conservative deduplication and final top-k
     |
-    | RetrievalResult / RetrievedChunk
     v
-LLMService
+compact source labels in <retrieved_context>
     |
-    | build_messages() injects retrieved context
     v
-Chat generation
+LLMService and chat generation
 ```
 
-Input guardrail evaluation and retrieval still run concurrently. Query
-embedding uses a worker thread because `sentence-transformers` is synchronous;
-the pgvector query uses the asynchronous SQLAlchemy session layer.
+Input guardrail evaluation and retrieval run concurrently. Query embedding runs
+in a worker thread because `sentence-transformers` is synchronous; pgvector
+queries use asynchronous SQLAlchemy sessions.
 
-The verified local corpus contains 72 documents, 2,353 chunks, and 2,353
-embeddings. These counts describe the current bundled corpus and may change
-when its source files or chunking configuration change.
+The June 10, 2026 verified active corpus contains 72 documents, 4,274 chunks,
+and 4,274 embeddings. All active chunks use `markdown-structure-v3`.
 
-## Ingestion
+## Source Loading and Ingestion
 
-`backend/ingestion/ingest_pgvector.py` reads the raw course repository directly
-and reuses:
+`backend/ingestion/ingest_pgvector.py` reads supported files from the Full
+Stack Open repository using `find_course_files()` and `make_document()`.
+English source paths are selected using the existing `/en/` convention.
 
-- `find_course_files()` and `make_document()` from `ingest_repo.py`
-- `is_english_source()` and `chunk_document()` from `chunk_documents.py`
-- `sentence-transformers/all-MiniLM-L6-v2` for embeddings
+Each source document is identified by `(source_type, source_path)` and replaced
+atomically:
 
-Chunking splits on Markdown headings, then applies a 1,000-character sliding
-window with 200-character overlap to oversized sections.
+1. Upsert and reactivate the document.
+2. Delete its previous chunks, which cascades to embeddings.
+3. Insert the new typed chunks.
+4. Insert one embedding per chunk and model.
+5. Commit the document replacement as one transaction.
 
-Each document is replaced atomically. A rerun updates the matching
-`(source_type, source_path)` document, deletes its old chunks and embeddings,
-and writes the replacement records in one transaction.
+An individual document failure rolls back that replacement. The corpus is not
+one global transaction, but stale-source reconciliation is suppressed after
+any preprocessing or database failure.
 
-## Storage
+## Typed Chunk Contract
 
-- `rag_documents` stores source identity, content hashes, and source metadata,
-  with a unique constraint on `(source_type, source_path)`.
-- `rag_chunks` stores chunk text, order, and chunk metadata.
-- `rag_embeddings` stores one `vector(384)` embedding per chunk.
-- `rag_retrieval_logs` stores the query, retrieved chunk IDs, cosine distances,
-  similarities, and optional RAG index version when
-  `RAG_WRITE_RETRIEVAL_LOGS=true`.
+`backend/rag/chunking.py` produces `PreparedChunk` records with:
 
-The embedding column has an HNSW index using `vector_cosine_ops`.
-Durable retrieval logging runs through `PostgresRagTraceSink`, using the
-existing fail-open `LLMTraceSink` path so logging failures do not discard valid
-retrieval results.
+- deterministic UUIDv5 `chunk_id`
+- sequential `chunk_index`
+- SHA-256 `content_hash`
+- half-open `char_start` and `char_end`
+- `heading_path` breadcrumbs and `section_heading`
+- meaningful `chunk_type`
+- `chunker_version`
+- source and diagnostic metadata
+
+Chunk identity includes source type, canonical source path, chunker version,
+heading path, content hash, and same-hash occurrence. Identical source and
+configuration reproduce IDs and ordering; source renames or chunker-version
+changes intentionally create new identities.
+
+## Markdown Structure
+
+`markdown-structure-v3` parses Markdown into heading, prose, list, table, and
+fenced-code blocks before assembling chunks.
+
+- ATX headings update hierarchical breadcrumbs outside code fences.
+- Backtick and tilde fences are preserved.
+- Unclosed fences receive a synthetic closing fence and diagnostics.
+- Complete code blocks may exceed the preferred 1,000-character size up to the
+  configured hard maximum.
+- Code above the hard maximum is split by lines with balanced synthetic fences.
+- Tables split by row and repeat their header.
+- Lists split on item/line boundaries.
+- Prose prefers paragraph, sentence, and whitespace boundaries before using
+  overlapping character fallback.
+- Tiny compatible prose chunks merge within the same section; meaningful tiny
+  code and table chunks remain independent.
+
+Synthetic fences and repeated table headers set metadata indicating rendered
+content differs from the exact source slice. Stored offsets continue to point
+into the original source.
+
+## Persistence and Migrations
+
+Migration `20260610_0007` adds nullable chunk-contract columns and unique
+constraints on `(document_id, chunk_index)` and
+`(chunk_id, embedding_model)`. The columns are nullable so existing rows remain
+readable during rollout; fresh re-ingestion is required to populate them.
+
+Migration `20260610_0008` adds:
+
+- non-null `rag_documents.is_active`, defaulting to `true`
+- nullable `rag_documents.deleted_at`
+- an activity index
+
+Fresh ingestion after migration establishes the Phase 2 active corpus and
+populates `markdown-structure-v3` metadata. Deployment preflight must check for
+duplicates before applying `0007`; see `runbook.md`.
+
+`rag_embeddings.embedding` remains `vector(384)` with an HNSW cosine index.
+Chroma metadata is flattened to scalar values so the retained Chroma builder
+can persist the same contract.
+
+## Soft Deletion
+
+Stale-source reconciliation is explicitly enabled with
+`--reconcile-deletions`. It is scoped by `source_type` and `course_name` and
+runs only after a non-empty, complete ingestion without preprocessing or
+database failures.
+
+Missing sources are soft-deactivated:
+
+- `is_active` becomes `false`
+- `deleted_at` records the reconciliation time
+- document, chunk, and embedding rows remain for audit/history
+
+Reappearing sources are reactivated by the normal document upsert, which sets
+`is_active=true` and clears `deleted_at`. Empty scans, dry runs, and partial or
+failed ingestions cannot reconcile stale sources.
 
 ## Runtime Retrieval
 
-`backend/rag/retrieval.py` implements both providers behind the
-`RetrievalProvider` protocol from `backend/rag/schemas.py`:
+`PgvectorRagRetrievalProvider` embeds the query, then delegates to
+`RagService`. The repository filters by embedding model and
+`rag_documents.is_active IS TRUE` directly in the nearest-neighbor SQL query,
+so inactive sources never enter the pgvector candidate set.
 
-- `PgvectorRagRetrievalProvider` embeds the query, then delegates vector
-  retrieval to `RagService`.
-- `ChromaRagRetrievalProvider` preserves the legacy Chroma path for rollback.
+Both pgvector and Chroma retrieve up to:
 
-`RAG_BACKEND` selects the provider at application startup. Both providers
-return `RetrievalResult` containing `RetrievedChunk` objects, so prompt behavior
-does not change. Retrieval errors propagate to `LLMService`, which logs
-`rag.retrieve.failed`, degrades to empty context, and still allows generation.
+```text
+min(RAG_TOP_K * 3, 50)
+```
 
-Both runtime retrieval backends use `backend/rag/embeddings.py` for query-time
-`SentenceTransformer` loading, caching, and lock handling. Chroma's query
-engine owns text-query embedding plus collection lookup for rollback and dev
-scripts; pgvector still owns database retrieval and logging.
+Candidates are conservatively deduplicated in rank order by:
 
-The verified pgvector path embeds the query with
-`sentence-transformers/all-MiniLM-L6-v2`, filters stored embeddings by the same
-model name, orders results by cosine distance, and returns `RAG_TOP_K` chunks.
-The default configured value is five chunks.
+- identical chunk ID
+- identical non-empty content hash
+- normalized exact content when a hash is unavailable
+- at least 80% overlap of the shorter source range within the same document
 
-## Prompt Injection
+Adjacent chunks remain eligible. The retained list is truncated to
+`RAG_TOP_K`.
 
-`LLMService` starts retrieval while input guardrails run. After guardrails pass,
-the retrieved chunks are passed to `build_messages()`.
+Provider events report candidate count, retained count, and suppression
+reasons. Logged chunk metadata describes retained chunks and excludes chunk
+content. Durable PostgreSQL retrieval traces are built from the final retained
+result used by the prompt. Trace-sink failures are fail-open and do not discard
+retrieval results.
 
-`backend/llm/prompts.py` wraps those chunks in a `<retrieved_context>` block
-before the student message. No separate retrieval endpoint or frontend change
-is required.
+Retrieval failures propagate to `LLMService`, which records
+`rag.retrieve.failed`, substitutes empty context, and allows generation to
+continue.
 
-Structured runtime events include `rag.provider.retrieve.completed` with the
-selected backend, chunk count, source paths, distances, and similarities.
-`rag.retrieve.completed` records successful chunks accepted by `LLMService`.
-Retrieval failures emit `rag.retrieve.failed` without a matching
-`rag.retrieve.completed` event. There is no separate prompt-injection event;
-successful retrieval followed by
-`llm.generation.completed` exercises the existing `build_messages()` context
-injection path.
+## Prompt Context
 
-## Chroma Fallback
+`backend/llm/prompts.py` wraps retained chunks in `<retrieved_context>`.
+Source labels prefer:
 
-Chroma remains available for fallback and rollback:
+```text
+source path | heading > breadcrumb | useful chunk type
+```
+
+Plain prose and unknown type labels are omitted. Missing metadata degrades to a
+numbered context block without failing prompt construction.
+
+## Chroma Rollback Compatibility
+
+Chroma remains selectable with:
 
 ```dotenv
 RAG_BACKEND=chroma
 ```
 
-Its JSON preprocessing, Chroma vector-store builder
-(`backend/rag/build_chroma_vector_store.py`), query engine, and evaluation
-script have not been removed.
+The legacy JSON wrapper now uses the typed chunker, and the Chroma builder
+flattens heading paths and Phase 2 metadata into scalar-compatible values.
+Both runtime providers apply the same bounded oversampling and deduplication
+policy.
 
-If `RAG_BACKEND` is omitted, the current code-level settings default remains
-Chroma. The branch's `.env.example` explicitly selects pgvector, so copy or set
-that value before starting FastAPI.
+Application rollback to Chroma or a previous backend version must occur before
+any schema downgrade. The PostgreSQL schema and inactive rows can remain in
+place during application rollback.
 
-## Known Limitations
+## Deferred Work
 
-- Retrieval uses semantic cosine similarity only.
-- There is no hybrid keyword search, reranking, metadata filtering, or score
-  threshold.
-- Retrieval quality depends on the fixed English source-path convention.
-- Chunks may retain Markdown, HTML fragments, frontmatter, and code blocks.
-- Removed source files are not automatically deleted from PostgreSQL.
-- Retrieval quality evaluation remains manual and qualitative.
-- The first embedding-model use may require a network download.
-- Retrieval failures intentionally produce empty context, which can reduce
-  answer grounding without failing the chat turn.
+The following are intentionally outside Phase 2:
+
+- retrieval reranking
+- hybrid semantic and keyword retrieval
+- neighbor expansion
+- similarity thresholds
+- citation UI
+- AST-aware Python chunking
+- notebook-specific chunking refinements
+- corpus-level retrieval evaluation and regression datasets
+
+Retrieval currently uses semantic cosine similarity only. Quality evaluation
+remains qualitative until an evaluation set and acceptance thresholds are
+defined.

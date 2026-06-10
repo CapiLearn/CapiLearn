@@ -3,8 +3,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from backend.rag.models import EMBEDDING_DIMENSIONS, RagDocument, RagEmbedding
-from backend.rag.repository import RagRepository, SimilarChunk
+from backend.rag.models import EMBEDDING_DIMENSIONS, RagChunk, RagDocument, RagEmbedding
+from backend.rag.repository import ChunkRecord, RagRepository, SimilarChunk
 
 
 def test_rag_embedding_uses_384_dimension_vector_and_cosine_index() -> None:
@@ -23,6 +23,49 @@ def test_rag_document_source_identity_is_unique() -> None:
     constraint_names = {constraint.name for constraint in RagDocument.__table__.constraints}
 
     assert "rag_documents_source_type_source_path_key" in constraint_names
+    assert RagDocument.__table__.c.is_active.default.arg is True
+
+
+def test_rag_chunk_and_embedding_identity_constraints_are_unique() -> None:
+    chunk_constraints = {constraint.name for constraint in RagChunk.__table__.constraints}
+    embedding_constraints = {constraint.name for constraint in RagEmbedding.__table__.constraints}
+
+    assert "rag_chunks_document_id_chunk_index_key" in chunk_constraints
+    assert "rag_embeddings_chunk_id_embedding_model_key" in embedding_constraints
+
+
+@pytest.mark.asyncio
+async def test_insert_chunks_maps_contract_fields_to_model() -> None:
+    session = InsertSession()
+    document_id = uuid4()
+    record = ChunkRecord(
+        id=uuid4(),
+        chunk_index=0,
+        content="# State\n\nCourse content",
+        content_hash="abc123",
+        char_start=0,
+        char_end=23,
+        heading_path=("State",),
+        section_heading="State",
+        chunk_type="unknown",
+        chunker_version="markdown-window-v2-contract",
+        metadata={"source_path": "state.md"},
+    )
+
+    rows = await RagRepository().insert_chunks(
+        session,
+        document_id=document_id,
+        chunks=[record],
+    )
+
+    assert rows[0].document_id == document_id
+    assert rows[0].content_hash == "abc123"
+    assert rows[0].char_start == 0
+    assert rows[0].char_end == 23
+    assert rows[0].heading_path == ["State"]
+    assert rows[0].section_heading == "State"
+    assert rows[0].chunk_type == "unknown"
+    assert rows[0].chunker_version == "markdown-window-v2-contract"
 
 
 @pytest.mark.asyncio
@@ -81,9 +124,35 @@ async def test_upsert_document_updates_mutable_fields_for_existing_source() -> N
     assert "course_name = " in sql
     assert "content_hash = " in sql
     assert "metadata = " in sql
+    assert "is_active = " in sql
+    assert "deleted_at = " in sql
     assert "updated_at = " in sql
     assert "source_type = " not in sql.split("DO UPDATE SET", 1)[1]
     assert "source_path = " not in sql.split("DO UPDATE SET", 1)[1]
+
+
+@pytest.mark.asyncio
+async def test_upsert_document_reactivates_reappearing_source() -> None:
+    document = RagDocument(
+        source_type="course_repo",
+        source_path="src/content/en/state.md",
+        content_hash="old-hash",
+        is_active=False,
+        deleted_at=None,
+        extra_metadata={},
+    )
+    session = UpsertSession(document=document)
+
+    await RagRepository().upsert_document(
+        session,
+        source_type=document.source_type,
+        source_path=document.source_path,
+        content_hash="new-hash",
+    )
+
+    update_sql = _compiled_sql(session.statements[0]).split("DO UPDATE SET", 1)[1]
+    assert "is_active = " in update_sql
+    assert "deleted_at = " in update_sql
 
 
 @pytest.mark.asyncio
@@ -126,6 +195,13 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
                 document_id,
                 "React state stores component data.",
                 {"week": "1"},
+                "chunk-hash",
+                10,
+                45,
+                ["State"],
+                "State",
+                "prose",
+                "markdown-window-v2-contract",
                 "course_repo",
                 "src/content/en/state.md",
                 "State",
@@ -150,13 +226,23 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
     )
     assert "rag_embeddings.embedding <=>" in sql
     assert "rag_embeddings.embedding_model" in sql
+    assert "rag_documents.is_active IS true" in sql
     assert "LIMIT" in sql
     assert results == [
         SimilarChunk(
             chunk_id=chunk_id,
             document_id=document_id,
             content="React state stores component data.",
-            metadata={"week": "1"},
+            metadata={
+                "week": "1",
+                "content_hash": "chunk-hash",
+                "char_start": 10,
+                "char_end": 45,
+                "heading_path": ["State"],
+                "section_heading": "State",
+                "chunk_type": "prose",
+                "chunker_version": "markdown-window-v2-contract",
+            },
             source_type="course_repo",
             source_path="src/content/en/state.md",
             title="State",
@@ -167,6 +253,39 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
     ]
 
 
+@pytest.mark.asyncio
+async def test_deactivate_missing_documents_soft_deletes_only_unseen_active_sources() -> None:
+    session = RowCountSession(rowcount=2)
+
+    count = await RagRepository().deactivate_missing_documents(
+        session,
+        source_type="course_repo",
+        course_name="Full Stack Open",
+        seen_source_paths=["active.md"],
+    )
+
+    sql = _compiled_sql(session.statement)
+    assert count == 2
+    assert "UPDATE rag_documents" in sql
+    assert "rag_documents.is_active IS true" in sql
+    assert "rag_documents.course_name =" in sql
+    assert "rag_documents.source_path NOT IN" in sql
+    assert "is_active=" in sql
+    assert "deleted_at=" in sql
+    assert "DELETE" not in sql
+
+
+@pytest.mark.asyncio
+async def test_deactivate_missing_documents_rejects_empty_scan() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        await RagRepository().deactivate_missing_documents(
+            RowCountSession(rowcount=0),
+            source_type="course_repo",
+            course_name="Full Stack Open",
+            seen_source_paths=[],
+        )
+
+
 class CapturingSession:
     def __init__(self, *, rows: list[tuple]) -> None:
         self.statement = None
@@ -175,6 +294,27 @@ class CapturingSession:
     async def execute(self, statement):
         self.statement = statement
         return FakeResult(self._rows)
+
+
+class RowCountSession:
+    def __init__(self, *, rowcount: int) -> None:
+        self.rowcount = rowcount
+        self.statement = None
+
+    async def execute(self, statement):
+        self.statement = statement
+        return RowCountResult(self.rowcount)
+
+
+class InsertSession:
+    def __init__(self) -> None:
+        self.rows = []
+
+    def add_all(self, rows) -> None:
+        self.rows.extend(rows)
+
+    async def flush(self) -> None:
+        return None
 
 
 class UpsertSession:
@@ -204,6 +344,11 @@ class ScalarResult:
 
     def scalar_one(self):
         return self._value
+
+
+class RowCountResult:
+    def __init__(self, rowcount: int) -> None:
+        self.rowcount = rowcount
 
 
 def _compiled_sql(statement) -> str:

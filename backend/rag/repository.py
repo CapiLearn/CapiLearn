@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,13 @@ class ChunkRecord:
     chunk_index: int
     content: str
     token_count: int | None = None
+    content_hash: str | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    heading_path: tuple[str, ...] = ()
+    section_heading: str | None = None
+    chunk_type: str | None = None
+    chunker_version: str | None = None
     metadata: dict[str, Any] | None = None
     id: UUID | None = None
 
@@ -66,6 +73,8 @@ class RagRepository:
                 title=title,
                 course_name=course_name,
                 content_hash=content_hash,
+                is_active=True,
+                deleted_at=None,
                 extra_metadata=metadata or {},
             )
             .on_conflict_do_update(
@@ -77,6 +86,8 @@ class RagRepository:
                     "title": title,
                     "course_name": course_name,
                     "content_hash": content_hash,
+                    "is_active": True,
+                    "deleted_at": None,
                     "metadata": metadata or {},
                     "updated_at": utc_now(),
                 },
@@ -86,6 +97,29 @@ class RagRepository:
         )
         result = await session.execute(statement)
         return result.scalar_one()
+
+    async def deactivate_missing_documents(
+        self,
+        session: AsyncSession,
+        *,
+        source_type: str,
+        course_name: str,
+        seen_source_paths: Sequence[str],
+    ) -> int:
+        if not seen_source_paths:
+            raise ValueError("seen_source_paths must not be empty")
+        statement = (
+            update(RagDocument)
+            .where(
+                RagDocument.source_type == source_type,
+                RagDocument.course_name == course_name,
+                RagDocument.is_active.is_(True),
+                RagDocument.source_path.not_in(list(seen_source_paths)),
+            )
+            .values(is_active=False, deleted_at=utc_now(), updated_at=utc_now())
+        )
+        result = await session.execute(statement)
+        return result.rowcount or 0
 
     async def insert_chunks(
         self,
@@ -101,6 +135,13 @@ class RagRepository:
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
                 token_count=chunk.token_count,
+                content_hash=chunk.content_hash,
+                char_start=chunk.char_start,
+                char_end=chunk.char_end,
+                heading_path=list(chunk.heading_path),
+                section_heading=chunk.section_heading,
+                chunk_type=chunk.chunk_type,
+                chunker_version=chunk.chunker_version,
                 extra_metadata=chunk.metadata or {},
             )
             if chunk.id is not None
@@ -109,6 +150,13 @@ class RagRepository:
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
                 token_count=chunk.token_count,
+                content_hash=chunk.content_hash,
+                char_start=chunk.char_start,
+                char_end=chunk.char_end,
+                heading_path=list(chunk.heading_path),
+                section_heading=chunk.section_heading,
+                chunk_type=chunk.chunk_type,
+                chunker_version=chunk.chunker_version,
                 extra_metadata=chunk.metadata or {},
             )
             for chunk in chunks
@@ -158,6 +206,13 @@ class RagRepository:
                 RagChunk.document_id,
                 RagChunk.content,
                 RagChunk.extra_metadata,
+                RagChunk.content_hash,
+                RagChunk.char_start,
+                RagChunk.char_end,
+                RagChunk.heading_path,
+                RagChunk.section_heading,
+                RagChunk.chunk_type,
+                RagChunk.chunker_version,
                 RagDocument.source_type,
                 RagDocument.source_path,
                 RagDocument.title,
@@ -166,7 +221,10 @@ class RagRepository:
             )
             .join(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
             .join(RagDocument, RagDocument.id == RagChunk.document_id)
-            .where(RagEmbedding.embedding_model == embedding_model)
+            .where(
+                RagEmbedding.embedding_model == embedding_model,
+                RagDocument.is_active.is_(True),
+            )
             .order_by(distance)
             .limit(top_k)
         )
@@ -176,13 +234,22 @@ class RagRepository:
                 chunk_id=row[0],
                 document_id=row[1],
                 content=row[2],
-                metadata=row[3] or {},
-                source_type=row[4],
-                source_path=row[5],
-                title=row[6],
-                course_name=row[7],
-                distance=float(row[8]),
-                similarity=1.0 - float(row[8]),
+                metadata={
+                    **(row[3] or {}),
+                    "content_hash": row[4],
+                    "char_start": row[5],
+                    "char_end": row[6],
+                    "heading_path": row[7] or [],
+                    "section_heading": row[8],
+                    "chunk_type": row[9],
+                    "chunker_version": row[10],
+                },
+                source_type=row[11],
+                source_path=row[12],
+                title=row[13],
+                course_name=row[14],
+                distance=float(row[15]),
+                similarity=1.0 - float(row[15]),
             )
             for row in rows
         ]

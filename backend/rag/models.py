@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -34,6 +35,7 @@ class RagDocument(Base):
             "source_path",
             name="rag_documents_source_type_source_path_key",
         ),
+        Index("rag_documents_is_active_idx", "is_active"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -42,6 +44,8 @@ class RagDocument(Base):
     title: Mapped[str | None] = mapped_column(String(255))
     course_name: Mapped[str | None] = mapped_column(String(160), index=True)
     content_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -58,6 +62,13 @@ class RagDocument(Base):
 
 class RagChunk(Base):
     __tablename__ = "rag_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "chunk_index",
+            name="rag_chunks_document_id_chunk_index_key",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     document_id: Mapped[UUID] = mapped_column(
@@ -68,6 +79,13 @@ class RagChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int | None] = mapped_column(Integer)
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    char_start: Mapped[int | None] = mapped_column(Integer)
+    char_end: Mapped[int | None] = mapped_column(Integer)
+    heading_path: Mapped[list[str] | None] = mapped_column(JSON)
+    section_heading: Mapped[str | None] = mapped_column(Text)
+    chunk_type: Mapped[str | None] = mapped_column(String(40))
+    chunker_version: Mapped[str | None] = mapped_column(String(120))
     extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -81,6 +99,11 @@ class RagChunk(Base):
 class RagEmbedding(Base):
     __tablename__ = "rag_embeddings"
     __table_args__ = (
+        UniqueConstraint(
+            "chunk_id",
+            "embedding_model",
+            name="rag_embeddings_chunk_id_embedding_model_key",
+        ),
         Index(
             "rag_embeddings_embedding_cosine_idx",
             "embedding",

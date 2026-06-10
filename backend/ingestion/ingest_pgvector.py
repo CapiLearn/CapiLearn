@@ -2,21 +2,27 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import logging
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
-from uuid import UUID
 
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import SessionFactory
 from backend.ingestion.ingest_repo import find_course_files, make_document
-from backend.rag.chunk_documents import chunk_document, is_english_source
+from backend.rag.chunk_documents import is_english_source
+from backend.rag.chunk_identity import content_hash
+from backend.rag.chunking import (
+    DEFAULT_MAX_OVERSIZED_CODE_CHARS,
+    DEFAULT_MIN_CHUNK_CHARS,
+    PreparedChunk,
+    SourceDocument,
+    prepare_chunks,
+)
 from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME, validate_pgvector_model_name
 from backend.rag.models import EMBEDDING_DIMENSIONS
 from backend.rag.repository import ChunkRecord, EmbeddingRecord
@@ -53,9 +59,12 @@ class IngestionConfig:
     model_name: str = DEFAULT_MODEL_NAME
     chunk_size: int = DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+    min_chunk_chars: int = DEFAULT_MIN_CHUNK_CHARS
+    max_oversized_code_chars: int = DEFAULT_MAX_OVERSIZED_CODE_CHARS
     embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE
     dry_run: bool = False
     fail_fast: bool = False
+    reconcile_deletions: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,7 +73,7 @@ class PreparedDocument:
     title: str | None
     content_hash: str
     metadata: dict[str, Any]
-    chunks: list[dict[str, Any]]
+    chunks: list[PreparedChunk]
 
 
 @dataclass
@@ -78,8 +87,10 @@ class IngestionSummary:
     documents_written: int = 0
     chunks_written: int = 0
     embeddings_written: int = 0
+    documents_deactivated: int = 0
     database_failures: int = 0
     failed_paths: list[str] = field(default_factory=list)
+    seen_source_paths: set[str] = field(default_factory=set, repr=False)
 
 
 def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], IngestionSummary]:
@@ -90,6 +101,10 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
         raise ValueError("chunk_size must be at least 1")
     if config.chunk_overlap < 0 or config.chunk_overlap >= config.chunk_size:
         raise ValueError("chunk_overlap must be between 0 and chunk_size - 1")
+    if config.min_chunk_chars < 0:
+        raise ValueError("min_chunk_chars must be at least 0")
+    if config.max_oversized_code_chars < config.chunk_size:
+        raise ValueError("max_oversized_code_chars must be at least chunk_size")
     if config.embedding_batch_size < 1:
         raise ValueError("embedding_batch_size must be at least 1")
 
@@ -103,17 +118,26 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
             document = make_document(path, repo_root)
             document["id"] = relative_path
             document["metadata"]["source_path"] = relative_path
-            if not document["content"]:
-                summary.skipped_empty += 1
-                continue
             if not is_english_source(document):
                 summary.skipped_non_english += 1
                 continue
+            summary.seen_source_paths.add(relative_path)
+            if not document["content"]:
+                summary.skipped_empty += 1
+                continue
 
-            chunks = chunk_document(
-                document,
+            chunks = prepare_chunks(
+                SourceDocument(
+                    content=document["content"],
+                    source_type=config.source_type,
+                    source_path=relative_path,
+                    document_id=relative_path,
+                    metadata=dict(document["metadata"]),
+                ),
                 chunk_size=config.chunk_size,
                 overlap=config.chunk_overlap,
+                min_chunk_chars=config.min_chunk_chars,
+                max_oversized_code_chars=config.max_oversized_code_chars,
             )
             if not chunks:
                 summary.skipped_empty += 1
@@ -123,7 +147,7 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
                 PreparedDocument(
                     source_path=relative_path,
                     title=document["metadata"].get("file_name"),
-                    content_hash=_content_hash(document["content"]),
+                    content_hash=content_hash(document["content"]),
                     metadata=dict(document["metadata"]),
                     chunks=chunks,
                 )
@@ -180,7 +204,7 @@ async def ingest_corpus(
         config.embedding_batch_size,
     )
     encoded = model.encode(
-        [chunk["content"] for chunk in all_chunks],
+        [chunk.content for chunk in all_chunks],
         batch_size=config.embedding_batch_size,
         show_progress_bar=True,
     )
@@ -197,10 +221,17 @@ async def ingest_corpus(
             try:
                 chunks = [
                     ChunkRecord(
-                        id=UUID(chunk["chunk_id"]),
-                        chunk_index=chunk["chunk_index"],
-                        content=chunk["content"],
-                        metadata=dict(chunk.get("metadata") or {}),
+                        id=chunk.chunk_id,
+                        chunk_index=chunk.chunk_index,
+                        content=chunk.content,
+                        content_hash=chunk.content_hash,
+                        char_start=chunk.char_start,
+                        char_end=chunk.char_end,
+                        heading_path=chunk.heading_path,
+                        section_heading=chunk.section_heading,
+                        chunk_type=chunk.chunk_type,
+                        chunker_version=chunk.chunker_version,
+                        metadata=chunk.persistence_metadata(),
                     )
                     for chunk in document.chunks
                 ]
@@ -238,12 +269,42 @@ async def ingest_corpus(
                 if config.fail_fast:
                     raise
 
+        if _can_reconcile(config, summary):
+            try:
+                summary.documents_deactivated = await service.reconcile_documents(
+                    source_type=config.source_type,
+                    course_name=config.course_name,
+                    seen_source_paths=sorted(summary.seen_source_paths),
+                )
+            except Exception:
+                summary.database_failures += 1
+                logger.exception("Failed to reconcile missing source documents.")
+                if config.fail_fast:
+                    raise
+        elif config.reconcile_deletions:
+            logger.warning(
+                "Deletion reconciliation skipped: dry_run=%s prepared=%d "
+                "preprocessing_failures=%d database_failures=%d seen=%d",
+                config.dry_run,
+                summary.prepared_documents,
+                summary.preprocessing_failures,
+                summary.database_failures,
+                len(summary.seen_source_paths),
+            )
+
     _log_write_summary(summary)
     return summary
 
 
-def _content_hash(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+def _can_reconcile(config: IngestionConfig, summary: IngestionSummary) -> bool:
+    return (
+        config.reconcile_deletions
+        and not config.dry_run
+        and summary.prepared_documents > 0
+        and bool(summary.seen_source_paths)
+        and summary.preprocessing_failures == 0
+        and summary.database_failures == 0
+    )
 
 
 def _log_preprocessing_summary(summary: IngestionSummary) -> None:
@@ -263,10 +324,14 @@ def _log_preprocessing_summary(summary: IngestionSummary) -> None:
 
 def _log_write_summary(summary: IngestionSummary) -> None:
     logger.info(
-        "Postgres ingestion complete: documents=%d chunks=%d embeddings=%d failures=%d",
+        (
+            "Postgres ingestion complete: documents=%d chunks=%d embeddings=%d "
+            "deactivated=%d failures=%d"
+        ),
         summary.documents_written,
         summary.chunks_written,
         summary.embeddings_written,
+        summary.documents_deactivated,
         summary.database_failures,
     )
 
@@ -281,6 +346,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
     parser.add_argument("--chunk-overlap", type=int, default=DEFAULT_CHUNK_OVERLAP)
+    parser.add_argument("--min-chunk-chars", type=int, default=DEFAULT_MIN_CHUNK_CHARS)
+    parser.add_argument(
+        "--max-oversized-code-chars",
+        type=int,
+        default=DEFAULT_MAX_OVERSIZED_CODE_CHARS,
+    )
     parser.add_argument(
         "--embedding-batch-size",
         type=int,
@@ -296,6 +367,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stop on the first preprocessing or database failure.",
     )
+    parser.add_argument(
+        "--reconcile-deletions",
+        action="store_true",
+        help="Deactivate previously indexed source documents missing from a successful scan.",
+    )
     return parser
 
 
@@ -309,9 +385,12 @@ def main() -> None:
         model_name=args.model_name,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
+        min_chunk_chars=args.min_chunk_chars,
+        max_oversized_code_chars=args.max_oversized_code_chars,
         embedding_batch_size=args.embedding_batch_size,
         dry_run=args.dry_run,
         fail_fast=args.fail_fast,
+        reconcile_deletions=args.reconcile_deletions,
     )
     asyncio.run(ingest_corpus(config))
 
