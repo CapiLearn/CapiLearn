@@ -56,7 +56,7 @@ class LLMEventRecorder:
             "guardrail.check.failed",
             level=logging.ERROR,
             **fields,
-            exc_info=True,
+            exc_info=exc,
         )
 
     async def record_retrieval_result(
@@ -93,7 +93,7 @@ class LLMEventRecorder:
             "rag.retrieve.failed",
             level=logging.ERROR,
             **fields,
-            exc_info=True,
+            exc_info=exc,
         )
 
     async def record_generation_error(
@@ -115,7 +115,7 @@ class LLMEventRecorder:
             "llm.generation.failed",
             level=logging.ERROR,
             **fields,
-            exc_info=True,
+            exc_info=exc,
         )
 
     async def record_generation_result(

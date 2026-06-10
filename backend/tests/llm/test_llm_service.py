@@ -625,6 +625,7 @@ async def test_llm_service_error_exposes_failed_cost_components(monkeypatch, cap
     assert component.estimated_cost_usd is None
     failed_events = _events(caplog.records, "llm.generation.failed")
     assert failed_events[-1].exc_info[0] is RuntimeError
+    assert failed_events[-1].exc_info[1] is exc_info.value.original_exception
 
 
 @pytest.mark.asyncio

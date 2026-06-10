@@ -38,7 +38,7 @@ class LLMTraceSink:
                     "sink_type": type(self).__name__,
                     "error_type": type(exc).__name__,
                 },
-                exc_info=True,
+                exc_info=exc,
             )
 
     async def _start_chat_turn(self, metadata: dict[str, Any]) -> None:
