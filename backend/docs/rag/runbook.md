@@ -80,6 +80,10 @@ RAG_WRITE_RETRIEVAL_LOGS=true
 # RAG_INDEX_VERSION=full-stack-open-2026-06
 ```
 
+The pgvector schema is fixed at `vector(384)`. The backend validates that
+`RAG_MODEL_NAME` is `sentence-transformers/all-MiniLM-L6-v2` during startup,
+and pgvector ingestion rejects any other model before loading it.
+
 Restart FastAPI after changing RAG settings:
 
 ```bash
@@ -226,7 +230,8 @@ and verify `DATABASE_URL` points to the same database used by FastAPI.
 
 The database column is `vector(384)`. Both ingestion and retrieval must use
 `sentence-transformers/all-MiniLM-L6-v2`, unless a future migration changes the
-stored dimension.
+stored dimension. Any other pgvector model now fails configuration validation
+instead of silently producing empty retrieval context.
 
 Check:
 

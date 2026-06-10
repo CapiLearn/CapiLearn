@@ -49,7 +49,7 @@ async def test_insert_embeddings_writes_and_commits_valid_vectors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retrieve_returns_results_and_optionally_writes_log() -> None:
+async def test_retrieve_returns_results_without_logging_side_effects() -> None:
     session = FakeSession()
     result = SimilarChunk(
         chunk_id=uuid4(),
@@ -67,20 +67,14 @@ async def test_retrieve_returns_results_and_optionally_writes_log() -> None:
     service = RagService(session=session, repository=repository)
 
     results = await service.retrieve(
-        query_text="What is state?",
         query_embedding=[0.0] * EMBEDDING_DIMENSIONS,
         embedding_model="sentence-transformers/all-MiniLM-L6-v2",
         top_k=4,
-        write_log=True,
-        conversation_id=uuid4(),
-        message_id=uuid4(),
-        rag_index_version="fso-2026-06",
     )
 
     assert results == [result]
     assert repository.search_top_k == 4
-    assert repository.logged_results == [result]
-    assert session.commit_count == 1
+    assert session.commit_count == 0
 
 
 @pytest.mark.asyncio
@@ -163,11 +157,6 @@ class CapturingRepository:
         self.search_query_embedding = None
         self.search_embedding_model = None
         self.search_top_k = None
-        self.logged_query_text = None
-        self.logged_results = None
-        self.logged_conversation_id = None
-        self.logged_message_id = None
-        self.logged_rag_index_version = None
 
     async def insert_embeddings(self, session, *, embeddings):
         if self.error is not None:
@@ -197,23 +186,6 @@ class CapturingRepository:
         self.search_embedding_model = embedding_model
         self.search_top_k = top_k
         return self.results
-
-    async def write_retrieval_log(
-        self,
-        session,
-        *,
-        query_text,
-        results,
-        conversation_id,
-        message_id,
-        rag_index_version,
-    ):
-        self.logged_query_text = query_text
-        self.logged_results = results
-        self.logged_conversation_id = conversation_id
-        self.logged_message_id = message_id
-        self.logged_rag_index_version = rag_index_version
-        return object()
 
 
 class FakeDocument:

@@ -187,7 +187,8 @@ class RagRepository:
         session: AsyncSession,
         *,
         query_text: str,
-        results: Sequence[SimilarChunk],
+        retrieved_chunk_ids: Sequence[str],
+        scores: Sequence[dict[str, Any]],
         conversation_id: UUID | None = None,
         message_id: UUID | None = None,
         rag_index_version: str | None = None,
@@ -196,15 +197,8 @@ class RagRepository:
             conversation_id=conversation_id,
             message_id=message_id,
             query_text=query_text,
-            retrieved_chunk_ids=[str(result.chunk_id) for result in results],
-            scores=[
-                {
-                    "chunk_id": str(result.chunk_id),
-                    "distance": result.distance,
-                    "similarity": result.similarity,
-                }
-                for result in results
-            ],
+            retrieved_chunk_ids=list(retrieved_chunk_ids),
+            scores=list(scores),
             rag_index_version=rag_index_version,
         )
         session.add(log)

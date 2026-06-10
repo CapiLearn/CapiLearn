@@ -19,6 +19,12 @@ def test_rag_embedding_uses_384_dimension_vector_and_cosine_index() -> None:
     assert index.dialect_options["postgresql"]["ops"] == {"embedding": "vector_cosine_ops"}
 
 
+def test_rag_document_source_identity_is_unique() -> None:
+    constraint_names = {constraint.name for constraint in RagDocument.__table__.constraints}
+
+    assert "rag_documents_source_type_source_path_key" in constraint_names
+
+
 @pytest.mark.asyncio
 async def test_upsert_document_updates_existing_source() -> None:
     document = RagDocument(

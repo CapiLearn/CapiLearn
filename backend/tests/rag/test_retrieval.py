@@ -98,7 +98,6 @@ def test_build_rag_retrieval_provider_selects_configured_backend() -> None:
     pgvector = build_rag_retrieval_provider(
         RagSettings(
             backend=RagBackend.PGVECTOR,
-            model_name="custom-pgvector-model",
             top_k=4,
         )
     )
@@ -110,7 +109,15 @@ def test_build_rag_retrieval_provider_selects_configured_backend() -> None:
     assert chroma._top_k == 3
     assert isinstance(pgvector, PgvectorRagRetrievalProvider)
     assert pgvector._top_k == 4
-    assert pgvector._model_name == "custom-pgvector-model"
+    assert pgvector._model_name == DEFAULT_RAG_MODEL_NAME
+
+
+def test_pgvector_settings_reject_unsupported_embedding_model() -> None:
+    with pytest.raises(ValueError, match="database schema stores 384-dimensional"):
+        RagSettings(
+            backend=RagBackend.PGVECTOR,
+            model_name="custom-pgvector-model",
+        )
 
 
 @pytest.mark.asyncio
@@ -125,7 +132,6 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
         service_factory=lambda *, session: service,
         embedding_provider=embedding_provider,
         top_k=3,
-        rag_index_version="fso-2026-06",
     )
     conversation_id = uuid4()
     message_id = uuid4()
@@ -142,14 +148,9 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
     ]
     assert service.calls == [
         {
-            "query_text": "What is React state?",
             "query_embedding": [0.0] * EMBEDDING_DIMENSIONS,
             "embedding_model": DEFAULT_RAG_MODEL_NAME,
             "top_k": 3,
-            "write_log": True,
-            "conversation_id": conversation_id,
-            "message_id": message_id,
-            "rag_index_version": "fso-2026-06",
         }
     ]
     assert result.model_dump(mode="json") == {
