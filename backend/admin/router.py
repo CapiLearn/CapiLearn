@@ -3,14 +3,27 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
-from backend.admin.dependencies import AdminUsageServiceDep, require_admin
-from backend.admin.schemas import AdminUsageSummaryResponse, CostComponentsResponse
+from backend.admin.dependencies import AdminHealthServiceDep, AdminUsageServiceDep, require_admin
+from backend.admin.schemas import (
+    AdminHealthResponse,
+    AdminUsageSummaryResponse,
+    CostComponentsResponse,
+)
 
 router = APIRouter(
     prefix="/admin",
     tags=["admin"],
     dependencies=[Depends(require_admin)],
 )
+
+
+@router.get(
+    "/health",
+    operation_id="getAdminHealth",
+    summary="Get admin health status",
+)
+async def get_admin_health(service: AdminHealthServiceDep) -> AdminHealthResponse:
+    return await service.get_health()
 
 
 @router.get(

@@ -5,12 +5,15 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from backend.admin.dependencies import get_admin_usage_service
+from backend.admin.dependencies import get_admin_health_service, get_admin_usage_service
 from backend.admin.repository import UsageMetricsAggregate
 from backend.admin.schemas import (
+    AdminHealthCheck,
+    AdminHealthResponse,
     AdminUsageSummaryResponse,
     CostComponentResponse,
     CostComponentsResponse,
+    HealthStatus,
     UsageMetrics,
     UsageRange,
 )
@@ -27,8 +30,10 @@ def clear_overrides():
 def test_admin_openapi_exposes_usage_summary_route() -> None:
     schema = app.openapi()
 
+    assert "/api/admin/health" in schema["paths"]
     assert "/api/admin/usage/summary" in schema["paths"]
     assert "/api/admin/usage/cost-components" in schema["paths"]
+    assert schema["paths"]["/api/admin/health"]["get"]["operationId"] == "getAdminHealth"
     assert (
         schema["paths"]["/api/admin/usage/summary"]["get"]["operationId"] == "getAdminUsageSummary"
     )
@@ -206,6 +211,56 @@ async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
     assert response.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_admin_health_requires_admin_header() -> None:
+    app.dependency_overrides[get_admin_health_service] = lambda: FakeAdminHealthService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/admin/health")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "admin_required"
+
+
+@pytest.mark.asyncio
+async def test_admin_health_returns_camel_case_response() -> None:
+    app.dependency_overrides[get_admin_health_service] = lambda: FakeAdminHealthService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/health",
+            headers={"X-Admin-User": "true"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "degraded",
+        "checkedAt": "2026-06-09T12:00:00Z",
+        "checks": [
+            {
+                "name": "database",
+                "status": "ok",
+                "latencyMs": 8,
+                "message": "Database connectivity check succeeded.",
+                "details": {"backend": "postgres"},
+            },
+            {
+                "name": "llmModelAccess",
+                "status": "degraded",
+                "latencyMs": None,
+                "message": "Provider metadata returned no available models.",
+                "details": {"returnedModelCount": 0},
+            },
+        ],
+    }
+
+
 class FakeAdminUsageService:
     def __init__(self) -> None:
         self.limit = None
@@ -278,6 +333,29 @@ class FakeAdminUsageService:
                     metadata={},
                     created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
                 )
+            ],
+        )
+
+
+class FakeAdminHealthService:
+    async def get_health(self) -> AdminHealthResponse:
+        return AdminHealthResponse(
+            status=HealthStatus.DEGRADED,
+            checked_at=datetime(2026, 6, 9, 12, tzinfo=UTC),
+            checks=[
+                AdminHealthCheck(
+                    name="database",
+                    status=HealthStatus.OK,
+                    latency_ms=8,
+                    message="Database connectivity check succeeded.",
+                    details={"backend": "postgres"},
+                ),
+                AdminHealthCheck(
+                    name="llmModelAccess",
+                    status=HealthStatus.DEGRADED,
+                    message="Provider metadata returned no available models.",
+                    details={"returnedModelCount": 0},
+                ),
             ],
         )
 
