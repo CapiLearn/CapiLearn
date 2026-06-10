@@ -5,17 +5,19 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
 from sentence_transformers import SentenceTransformer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import SessionFactory
 from backend.ingestion.ingest_repo import find_course_files, make_document
 from backend.rag.chunk_documents import chunk_document, is_english_source
-from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
+from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME, validate_pgvector_model_name
 from backend.rag.models import EMBEDDING_DIMENSIONS
 from backend.rag.repository import ChunkRecord, EmbeddingRecord
 from backend.rag.service import RagService
@@ -27,6 +29,8 @@ DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_EMBEDDING_BATCH_SIZE = 64
 DEFAULT_REPO_PATH = Path(__file__).parent / "data" / "raw" / "fullstack-hy2020.github.io"
+SessionFactoryCallable = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+RagServiceFactory = Callable[..., RagService]
 
 
 class EmbeddingModel(Protocol):
@@ -140,9 +144,10 @@ async def ingest_corpus(
     config: IngestionConfig,
     *,
     model_factory: Callable[[str], EmbeddingModel] = SentenceTransformer,
-    session_factory=SessionFactory,
-    service_factory=RagService,
+    session_factory: SessionFactoryCallable = SessionFactory,
+    service_factory: RagServiceFactory = RagService,
 ) -> IngestionSummary:
+    validate_pgvector_model_name(config.model_name)
     prepared, summary = prepare_corpus(config)
     _log_preprocessing_summary(summary)
 

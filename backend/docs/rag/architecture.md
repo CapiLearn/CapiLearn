@@ -66,7 +66,8 @@ and writes the replacement records in one transaction.
 
 ## Storage
 
-- `rag_documents` stores source identity, content hashes, and source metadata.
+- `rag_documents` stores source identity, content hashes, and source metadata,
+  with a unique constraint on `(source_type, source_path)`.
 - `rag_chunks` stores chunk text, order, and chunk metadata.
 - `rag_embeddings` stores one `vector(384)` embedding per chunk.
 - `rag_retrieval_logs` stores the query, retrieved chunk IDs, cosine distances,
@@ -74,6 +75,9 @@ and writes the replacement records in one transaction.
   `RAG_WRITE_RETRIEVAL_LOGS=true`.
 
 The embedding column has an HNSW index using `vector_cosine_ops`.
+Durable retrieval logging runs through `PostgresRagTraceSink`, using the
+existing fail-open `LLMTraceSink` path so logging failures do not discard valid
+retrieval results.
 
 ## Runtime Retrieval
 

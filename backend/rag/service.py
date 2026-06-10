@@ -133,14 +133,9 @@ class RagService:
     async def retrieve(
         self,
         *,
-        query_text: str,
         query_embedding: Sequence[float],
         embedding_model: str,
         top_k: int = 5,
-        write_log: bool = False,
-        conversation_id: UUID | None = None,
-        message_id: UUID | None = None,
-        rag_index_version: str | None = None,
     ) -> list[SimilarChunk]:
         _validate_embedding(query_embedding)
         if top_k < 1:
@@ -152,16 +147,6 @@ class RagService:
             embedding_model=embedding_model,
             top_k=top_k,
         )
-        if write_log:
-            await self._repository.write_retrieval_log(
-                self._session,
-                query_text=query_text,
-                results=results,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                rag_index_version=rag_index_version,
-            )
-            await self._session.commit()
         return results
 
 

@@ -24,6 +24,25 @@ class RetrievalResult(RagBaseModel):
     chunks: list[RetrievedChunk] = Field(default_factory=list)
 
 
+class RagRetrievedChunkLogRecord(RagBaseModel):
+    chunk_id: UUID | str
+    document_id: UUID | str | None = None
+    rank: int | None = None
+    score: float | None = None
+    distance: float | None = None
+    similarity: float | None = None
+    source_type: str | None = None
+    source_path: str | None = None
+    title: str | None = None
+
+
+class RagRetrievalLogRecord(RagBaseModel):
+    query_text: str
+    conversation_id: UUID | str | None = None
+    user_message_id: UUID | str | None = None
+    chunks: list[RagRetrievedChunkLogRecord] = Field(default_factory=list)
+
+
 class RetrievalProvider(Protocol):
     async def retrieve(
         self,
@@ -33,6 +52,40 @@ class RetrievalProvider(Protocol):
         conversation_id: UUID,
         user_message_id: UUID,
     ) -> RetrievalResult: ...
+
+
+def build_rag_retrieval_log_record(
+    *,
+    query_text: str,
+    result: RetrievalResult,
+    conversation_id: UUID | str | None = None,
+    user_message_id: UUID | str | None = None,
+) -> RagRetrievalLogRecord:
+    chunks = []
+    for rank, chunk in enumerate(result.chunks, start=1):
+        metadata = chunk.metadata or {}
+        chunk_id = metadata.get("chunk_id")
+        if chunk_id is None:
+            continue
+        chunks.append(
+            RagRetrievedChunkLogRecord(
+                chunk_id=chunk_id,
+                document_id=metadata.get("document_id"),
+                rank=rank,
+                score=metadata.get("score"),
+                distance=chunk.distance,
+                similarity=chunk.similarity,
+                source_type=metadata.get("source_type"),
+                source_path=metadata.get("source_path"),
+                title=metadata.get("title"),
+            )
+        )
+    return RagRetrievalLogRecord(
+        query_text=query_text,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        chunks=chunks,
+    )
 
 
 def retrieval_chunk_log_metadata(chunk: RetrievedChunk) -> dict[str, Any]:

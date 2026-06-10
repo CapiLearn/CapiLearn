@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from backend.ingestion.ingest_pgvector import IngestionConfig, ingest_corpus, prepare_corpus
+from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS
 
 
@@ -43,6 +44,21 @@ async def test_dry_run_does_not_load_model_or_open_database(tmp_path: Path) -> N
     assert summary.prepared_documents == 1
     assert summary.prepared_chunks == 1
     assert summary.documents_written == 0
+
+
+@pytest.mark.asyncio
+async def test_ingestion_rejects_unsupported_pgvector_model_before_loading_it(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="database schema stores 384-dimensional"):
+        await ingest_corpus(
+            IngestionConfig(
+                repo_path=tmp_path,
+                model_name=f"{DEFAULT_RAG_MODEL_NAME}-other",
+                dry_run=True,
+            ),
+            model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        )
 
 
 @pytest.mark.asyncio

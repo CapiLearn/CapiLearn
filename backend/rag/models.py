@@ -3,12 +3,23 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base
+from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_DIMENSIONS
 
-EMBEDDING_DIMENSIONS = 384
+EMBEDDING_DIMENSIONS = DEFAULT_RAG_EMBEDDING_DIMENSIONS
 
 
 def utc_now() -> datetime:
@@ -17,6 +28,13 @@ def utc_now() -> datetime:
 
 class RagDocument(Base):
     __tablename__ = "rag_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type",
+            "source_path",
+            name="rag_documents_source_type_source_path_key",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     source_type: Mapped[str] = mapped_column(String(80), nullable=False)
