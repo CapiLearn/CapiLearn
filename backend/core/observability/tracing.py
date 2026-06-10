@@ -17,6 +17,9 @@ class LLMTraceSink:
     async def record_generation(self, metadata: dict[str, Any]) -> None:
         await self._safe_record("record_generation", metadata)
 
+    async def record_repair(self, metadata: dict[str, Any]) -> None:
+        await self._safe_record("record_repair", metadata)
+
     async def record_error(self, metadata: dict[str, Any]) -> None:
         await self._safe_record("record_error", metadata)
 
@@ -48,6 +51,9 @@ class LLMTraceSink:
         return None
 
     async def _record_generation(self, metadata: dict[str, Any]) -> None:
+        return None
+
+    async def _record_repair(self, metadata: dict[str, Any]) -> None:
         return None
 
     async def _record_error(self, metadata: dict[str, Any]) -> None:

@@ -203,6 +203,11 @@ class BlockingInputGuardrails(AllowGuardrails):
         return GuardrailResult(blocked=True, reason="Input blocked.", rail="input")
 
 
+class FailingInputGuardrails(AllowGuardrails):
+    async def check_input(self, content: str) -> GuardrailResult:
+        raise RuntimeError("guardrail unavailable")
+
+
 class WaitForRetrievalGuardrails(AllowGuardrails):
     def __init__(self, started: asyncio.Event, *, blocked: bool = False) -> None:
         self._started = started
@@ -521,10 +526,12 @@ async def test_llm_service_repairs_blocked_direct_answer_output(caplog) -> None:
             "What is the first relationship you can write from the problem?",
         ]
     )
+    trace_sink = RecordingTraceSink()
     service = LLMService(
         provider=provider,
         guardrails=RepairableOutputGuardrails(),
         retriever=FakeRetriever(),
+        trace_sink=trace_sink,
     )
 
     result = await service.complete(_request("Solve this homework problem."))
@@ -541,6 +548,11 @@ async def test_llm_service_repairs_blocked_direct_answer_output(caplog) -> None:
     repair_events = _events(caplog.records, "chat.repair.completed")
     assert repair_events
     assert repair_events[-1].repair_passed is True
+    assert [generation["generation_stage"] for generation in trace_sink.generations] == [
+        "primary",
+        "repair",
+    ]
+    assert trace_sink.repairs[-1]["repair_passed"] is True
 
 
 @pytest.mark.asyncio
@@ -587,7 +599,9 @@ async def test_llm_service_records_repair_flow_cost_components(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_llm_service_error_exposes_failed_cost_components(monkeypatch) -> None:
+async def test_llm_service_error_exposes_failed_cost_components(monkeypatch, caplog) -> None:
+    caplog.set_level(logging.ERROR, logger="backend.llm.service")
+
     async def fake_acompletion(**kwargs):
         raise RuntimeError("provider unavailable")
 
@@ -609,6 +623,28 @@ async def test_llm_service_error_exposes_failed_cost_components(monkeypatch) -> 
     assert component.status == "failed"
     assert component.error_type == "RuntimeError"
     assert component.estimated_cost_usd is None
+    failed_events = _events(caplog.records, "llm.generation.failed")
+    assert failed_events[-1].exc_info[0] is RuntimeError
+
+
+@pytest.mark.asyncio
+async def test_llm_service_guardrail_error_log_includes_exception_info(caplog) -> None:
+    caplog.set_level(logging.ERROR, logger="backend.llm.service")
+    provider = FakeProvider()
+    service = LLMService(
+        provider=provider,
+        guardrails=FailingInputGuardrails(),
+        retriever=FakeRetriever(),
+    )
+
+    with pytest.raises(LLMServiceError) as exc_info:
+        await service.complete(_request("What is photosynthesis?"))
+
+    assert isinstance(exc_info.value.original_exception, RuntimeError)
+    assert not provider.complete_called
+    failed_events = _events(caplog.records, "guardrail.check.failed")
+    assert failed_events[-1].guardrail_stage == "input"
+    assert failed_events[-1].exc_info[0] is RuntimeError
 
 
 @pytest.mark.asyncio
@@ -1284,6 +1320,9 @@ class FailingTraceSink(LLMTraceSink):
     async def _record_generation(self, metadata):
         raise RuntimeError("trace sink unavailable")
 
+    async def _record_repair(self, metadata):
+        raise RuntimeError("trace sink unavailable")
+
     async def _record_error(self, metadata):
         raise RuntimeError("trace sink unavailable")
 
@@ -1291,6 +1330,14 @@ class FailingTraceSink(LLMTraceSink):
 class RecordingTraceSink(LLMTraceSink):
     def __init__(self) -> None:
         self.errors = []
+        self.generations = []
+        self.repairs = []
+
+    async def _record_generation(self, metadata):
+        self.generations.append(metadata)
+
+    async def _record_repair(self, metadata):
+        self.repairs.append(metadata)
 
     async def _record_error(self, metadata):
         self.errors.append(metadata)
