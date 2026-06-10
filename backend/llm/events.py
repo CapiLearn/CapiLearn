@@ -5,6 +5,7 @@ from backend.core.observability import LLMTraceSink, elapsed_ms, log_event
 from backend.llm.schemas import GuardrailResult, LLMRequest, ProviderResponse
 from backend.rag.schemas import (
     RetrievalResult,
+    build_rag_retrieval_log_record,
     retrieval_chunk_log_metadata,
 )
 
@@ -70,7 +71,12 @@ class LLMEventRecorder:
         await self._trace_sink.record_retrieval(
             {
                 **fields,
-                "query_text": self._query_text,
+                "rag_retrieval": build_rag_retrieval_log_record(
+                    query_text=self._query_text,
+                    result=result,
+                    conversation_id=self._request_fields["conversation_id"],
+                    user_message_id=self._request_fields["user_message_id"],
+                ),
             }
         )
         log_event(

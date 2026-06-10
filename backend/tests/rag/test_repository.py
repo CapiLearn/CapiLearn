@@ -26,7 +26,37 @@ def test_rag_document_source_identity_is_unique() -> None:
 
 
 @pytest.mark.asyncio
-async def test_upsert_document_updates_existing_source() -> None:
+async def test_upsert_document_inserts_with_atomic_conflict_handling() -> None:
+    document = RagDocument(
+        source_type="course_repo",
+        source_path="src/content/en/state.md",
+        content_hash="new-hash",
+        title="State",
+        course_name="Full Stack Open",
+        extra_metadata={"week": "1"},
+    )
+    session = UpsertSession(document=document)
+
+    result = await RagRepository().upsert_document(
+        session,
+        source_type="course_repo",
+        source_path="src/content/en/state.md",
+        content_hash="new-hash",
+        title="State",
+        course_name="Full Stack Open",
+        metadata={"week": "1"},
+    )
+
+    assert result is document
+    sql = _compiled_sql(session.statements[0])
+    assert "INSERT INTO rag_documents" in sql
+    assert "ON CONFLICT (source_type, source_path) DO UPDATE SET" in sql
+    assert "RETURNING rag_documents.id" in sql
+    assert "SELECT" not in sql
+
+
+@pytest.mark.asyncio
+async def test_upsert_document_updates_mutable_fields_for_existing_source() -> None:
     document = RagDocument(
         source_type="course_repo",
         source_path="src/content/en/state.md",
@@ -46,12 +76,43 @@ async def test_upsert_document_updates_existing_source() -> None:
     )
 
     assert result is document
-    assert document.content_hash == "new-hash"
-    assert document.title == "State"
-    assert document.course_name == "Full Stack Open"
-    assert document.extra_metadata == {"week": "1"}
-    assert session.added == []
-    assert session.flush_count == 1
+    sql = _compiled_sql(session.statements[0])
+    assert "title = " in sql
+    assert "course_name = " in sql
+    assert "content_hash = " in sql
+    assert "metadata = " in sql
+    assert "updated_at = " in sql
+    assert "source_type = " not in sql.split("DO UPDATE SET", 1)[1]
+    assert "source_path = " not in sql.split("DO UPDATE SET", 1)[1]
+
+
+@pytest.mark.asyncio
+async def test_upsert_document_reuses_source_identity_without_duplicate_rows() -> None:
+    document = RagDocument(
+        source_type="course_repo",
+        source_path="src/content/en/state.md",
+        content_hash="old-hash",
+        extra_metadata={},
+    )
+    session = UpsertSession(document=document)
+    repository = RagRepository()
+
+    first = await repository.upsert_document(
+        session,
+        source_type=document.source_type,
+        source_path=document.source_path,
+        content_hash="first-hash",
+    )
+    second = await repository.upsert_document(
+        session,
+        source_type=document.source_type,
+        source_path=document.source_path,
+        content_hash="second-hash",
+    )
+
+    assert first is second is document
+    assert len(session.rows) == 1
+    assert all("ON CONFLICT" in _compiled_sql(statement) for statement in session.statements)
 
 
 @pytest.mark.asyncio
@@ -119,17 +180,14 @@ class CapturingSession:
 class UpsertSession:
     def __init__(self, *, document: RagDocument | None) -> None:
         self.document = document
-        self.added = []
-        self.flush_count = 0
+        self.rows = (
+            {(document.source_type, document.source_path): document} if document is not None else {}
+        )
+        self.statements = []
 
-    async def scalar(self, statement):
-        return self.document
-
-    def add(self, value) -> None:
-        self.added.append(value)
-
-    async def flush(self) -> None:
-        self.flush_count += 1
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return ScalarResult(self.document)
 
 
 class FakeResult:
@@ -138,3 +196,20 @@ class FakeResult:
 
     def all(self) -> list[tuple]:
         return self._rows
+
+
+class ScalarResult:
+    def __init__(self, value) -> None:
+        self._value = value
+
+    def scalar_one(self):
+        return self._value
+
+
+def _compiled_sql(statement) -> str:
+    return str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": False},
+        )
+    )

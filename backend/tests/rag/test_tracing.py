@@ -2,11 +2,57 @@ from uuid import uuid4
 
 import pytest
 
+from backend.rag.schemas import (
+    RagRetrievalLogRecord,
+    RetrievalResult,
+    RetrievedChunk,
+    build_rag_retrieval_log_record,
+)
 from backend.rag.tracing import PostgresRagTraceSink
 
 
+def test_build_rag_retrieval_log_record_maps_retrieval_result() -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    chunk_id = uuid4()
+    document_id = uuid4()
+
+    record = build_rag_retrieval_log_record(
+        query_text="What is state?",
+        conversation_id=conversation_id,
+        user_message_id=message_id,
+        result=RetrievalResult(
+            chunks=[
+                RetrievedChunk(
+                    content="State belongs to a component.",
+                    metadata={
+                        "chunk_id": str(chunk_id),
+                        "document_id": str(document_id),
+                        "source_type": "course_repo",
+                        "source_path": "src/content/en/state.md",
+                        "title": "State",
+                        "score": 0.8,
+                    },
+                    distance=0.2,
+                    similarity=0.8,
+                )
+            ]
+        ),
+    )
+
+    assert record.query_text == "What is state?"
+    assert record.conversation_id == conversation_id
+    assert record.user_message_id == message_id
+    assert record.chunks[0].chunk_id == str(chunk_id)
+    assert record.chunks[0].document_id == str(document_id)
+    assert record.chunks[0].rank == 1
+    assert record.chunks[0].source_path == "src/content/en/state.md"
+    assert record.chunks[0].distance == 0.2
+    assert record.chunks[0].similarity == 0.8
+
+
 @pytest.mark.asyncio
-async def test_postgres_rag_trace_sink_persists_retrieval_metadata() -> None:
+async def test_postgres_rag_trace_sink_persists_typed_retrieval_record() -> None:
     session_factory = FakeSessionFactory()
     repository = CapturingRepository()
     sink = PostgresRagTraceSink(
@@ -20,16 +66,18 @@ async def test_postgres_rag_trace_sink_persists_retrieval_metadata() -> None:
 
     await sink.record_retrieval(
         {
-            "query_text": "What is state?",
-            "conversation_id": str(conversation_id),
-            "user_message_id": str(message_id),
-            "chunks": [
-                {
-                    "chunk_id": str(chunk_id),
-                    "distance": 0.2,
-                    "similarity": 0.8,
-                }
-            ],
+            "rag_retrieval": RagRetrievalLogRecord(
+                query_text="What is state?",
+                conversation_id=conversation_id,
+                user_message_id=message_id,
+                chunks=[
+                    {
+                        "chunk_id": chunk_id,
+                        "distance": 0.2,
+                        "similarity": 0.8,
+                    }
+                ],
+            )
         }
     )
 
@@ -60,10 +108,11 @@ async def test_postgres_rag_trace_sink_failure_does_not_escape() -> None:
 
     await sink.record_retrieval(
         {
-            "query_text": "What is state?",
-            "conversation_id": str(uuid4()),
-            "user_message_id": str(uuid4()),
-            "chunks": [],
+            "rag_retrieval": RagRetrievalLogRecord(
+                query_text="What is state?",
+                conversation_id=uuid4(),
+                user_message_id=uuid4(),
+            )
         }
     )
 

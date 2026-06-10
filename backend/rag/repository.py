@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.rag.models import (
@@ -57,13 +58,9 @@ class RagRepository:
         course_name: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> RagDocument:
-        statement = select(RagDocument).where(
-            RagDocument.source_type == source_type,
-            RagDocument.source_path == source_path,
-        )
-        document = await session.scalar(statement)
-        if document is None:
-            document = RagDocument(
+        statement = (
+            insert(RagDocument)
+            .values(
                 source_type=source_type,
                 source_path=source_path,
                 title=title,
@@ -71,16 +68,24 @@ class RagRepository:
                 content_hash=content_hash,
                 extra_metadata=metadata or {},
             )
-            session.add(document)
-        else:
-            document.title = title
-            document.course_name = course_name
-            document.content_hash = content_hash
-            document.extra_metadata = metadata or {}
-            document.updated_at = utc_now()
-
-        await session.flush()
-        return document
+            .on_conflict_do_update(
+                index_elements=[
+                    RagDocument.source_type,
+                    RagDocument.source_path,
+                ],
+                set_={
+                    "title": title,
+                    "course_name": course_name,
+                    "content_hash": content_hash,
+                    "metadata": metadata or {},
+                    "updated_at": utc_now(),
+                },
+            )
+            .returning(RagDocument)
+            .execution_options(populate_existing=True)
+        )
+        result = await session.execute(statement)
+        return result.scalar_one()
 
     async def insert_chunks(
         self,
