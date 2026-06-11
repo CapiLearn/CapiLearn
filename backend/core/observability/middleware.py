@@ -33,7 +33,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         )
         try:
             response = await call_next(request)
-        except Exception:
+        except Exception as exc:
             log_event(
                 logger,
                 "http.request.failed",
@@ -42,7 +42,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 route=_route_path(request),
                 latency_ms=elapsed_ms(started_at),
-                exc_info=True,
+                exc_info=exc,
             )
             raise
         else:

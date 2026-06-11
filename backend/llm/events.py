@@ -53,7 +53,13 @@ class LLMEventRecorder:
             "error_type": type(exc).__name__,
         }
         await self._trace_sink.record_error(fields)
-        log_event(self._logger, "guardrail.check.failed", level=logging.ERROR, **fields)
+        log_event(
+            self._logger,
+            "guardrail.check.failed",
+            level=logging.ERROR,
+            **fields,
+            exc_info=exc,
+        )
 
     async def record_retrieval_result(
         self,
@@ -104,7 +110,7 @@ class LLMEventRecorder:
             "rag.retrieve.failed",
             level=logging.ERROR,
             **fields,
-            exc_info=True,
+            exc_info=exc,
         )
 
     async def record_generation_error(
@@ -121,7 +127,13 @@ class LLMEventRecorder:
             "error_type": type(exc).__name__,
         }
         await self._trace_sink.record_error(fields)
-        log_event(self._logger, "llm.generation.failed", level=logging.ERROR, **fields)
+        log_event(
+            self._logger,
+            "llm.generation.failed",
+            level=logging.ERROR,
+            **fields,
+            exc_info=exc,
+        )
 
     async def record_generation_result(
         self,
@@ -157,7 +169,7 @@ class LLMEventRecorder:
             "initial_rail": initial_result.rail,
             "final_rail": repair_result.rail,
         }
-        await self._trace_sink.record_generation(fields)
+        await self._trace_sink.record_repair(fields)
         log_event(self._logger, "chat.repair.completed", **fields)
 
 

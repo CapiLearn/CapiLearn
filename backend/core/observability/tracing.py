@@ -17,6 +17,9 @@ class LLMTraceSink:
     async def record_generation(self, metadata: dict[str, Any]) -> None:
         await self._safe_record("record_generation", metadata)
 
+    async def record_repair(self, metadata: dict[str, Any]) -> None:
+        await self._safe_record("record_repair", metadata)
+
     async def record_error(self, metadata: dict[str, Any]) -> None:
         await self._safe_record("record_error", metadata)
 
@@ -35,7 +38,7 @@ class LLMTraceSink:
                     "sink_type": type(self).__name__,
                     "error_type": type(exc).__name__,
                 },
-                exc_info=True,
+                exc_info=exc,
             )
 
     async def _start_chat_turn(self, metadata: dict[str, Any]) -> None:
@@ -48,6 +51,9 @@ class LLMTraceSink:
         return None
 
     async def _record_generation(self, metadata: dict[str, Any]) -> None:
+        return None
+
+    async def _record_repair(self, metadata: dict[str, Any]) -> None:
         return None
 
     async def _record_error(self, metadata: dict[str, Any]) -> None:
