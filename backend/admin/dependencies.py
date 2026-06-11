@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, status
 
+from backend.admin.health_service import AdminHealthService
 from backend.admin.service import AdminUsageService
 from backend.core.database import DbSession
 from backend.core.exceptions import ApiError
@@ -22,4 +23,9 @@ def get_admin_usage_service(session: DbSession) -> AdminUsageService:
     return AdminUsageService(session=session)
 
 
+def get_admin_health_service(session: DbSession) -> AdminHealthService:
+    return AdminHealthService(session=session)
+
+
 AdminUsageServiceDep = Annotated[AdminUsageService, Depends(get_admin_usage_service)]
+AdminHealthServiceDep = Annotated[AdminHealthService, Depends(get_admin_health_service)]
