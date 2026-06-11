@@ -3,13 +3,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
-from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import SessionFactory
@@ -23,8 +22,18 @@ from backend.rag.chunking import (
     SourceDocument,
     prepare_chunks,
 )
-from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME, validate_pgvector_model_name
-from backend.rag.models import EMBEDDING_DIMENSIONS
+from backend.rag.config import (
+    RagBackend,
+    RagEmbeddingProvider,
+    RagSettings,
+    validate_embedding_contract,
+)
+from backend.rag.defaults import (
+    DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+    DEFAULT_RAG_EMBEDDING_PROVIDER,
+    DEFAULT_RAG_MODEL_NAME,
+)
+from backend.rag.embeddings import EmbeddingProvider, get_embedding_provider
 from backend.rag.repository import ChunkRecord, EmbeddingRecord
 from backend.rag.service import RagService
 
@@ -39,24 +48,15 @@ SessionFactoryCallable = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 RagServiceFactory = Callable[..., RagService]
 
 
-class EmbeddingModel(Protocol):
-    def get_sentence_embedding_dimension(self) -> int | None: ...
-
-    def encode(
-        self,
-        sentences: Sequence[str],
-        *,
-        batch_size: int,
-        show_progress_bar: bool,
-    ) -> Any: ...
-
-
 @dataclass(frozen=True)
 class IngestionConfig:
     repo_path: Path = DEFAULT_REPO_PATH
     source_type: str = "course_repo"
     course_name: str = "Full Stack Open"
+    embedding_provider: RagEmbeddingProvider = RagEmbeddingProvider(DEFAULT_RAG_EMBEDDING_PROVIDER)
     model_name: str = DEFAULT_MODEL_NAME
+    embedding_dimensions: int = DEFAULT_RAG_EMBEDDING_DIMENSIONS
+    openai_api_key: str | None = None
     chunk_size: int = DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
     min_chunk_chars: int = DEFAULT_MIN_CHUNK_CHARS
@@ -167,11 +167,16 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
 async def ingest_corpus(
     config: IngestionConfig,
     *,
-    model_factory: Callable[[str], EmbeddingModel] = SentenceTransformer,
+    embedding_provider: EmbeddingProvider | None = None,
     session_factory: SessionFactoryCallable = SessionFactory,
     service_factory: RagServiceFactory = RagService,
 ) -> IngestionSummary:
-    validate_pgvector_model_name(config.model_name)
+    validate_embedding_contract(
+        provider=config.embedding_provider,
+        model_name=config.model_name,
+        dimensions=config.embedding_dimensions,
+        openai_api_key=config.openai_api_key,
+    )
     prepared, summary = prepare_corpus(config)
     _log_preprocessing_summary(summary)
 
@@ -188,29 +193,30 @@ async def ingest_corpus(
         logger.warning("No documents were prepared; nothing will be written.")
         return summary
 
-    model = model_factory(config.model_name)
-    dimensions = model.get_sentence_embedding_dimension()
-    if dimensions != EMBEDDING_DIMENSIONS:
-        raise ValueError(
-            f"Embedding model must produce {EMBEDDING_DIMENSIONS} dimensions; "
-            f"{config.model_name} reports {dimensions}."
-        )
+    provider = embedding_provider or get_embedding_provider(
+        config.embedding_provider,
+        config.model_name,
+        config.embedding_dimensions,
+        config.openai_api_key,
+    )
 
     all_chunks = [chunk for document in prepared for chunk in document.chunks]
     logger.info(
-        "Generating embeddings: model=%s chunks=%d batch_size=%d",
+        "Generating embeddings: provider=%s model=%s dimensions=%d chunks=%d batch_size=%d",
+        provider.provider_name,
         config.model_name,
+        config.embedding_dimensions,
         len(all_chunks),
         config.embedding_batch_size,
     )
-    encoded = model.encode(
-        [chunk.content for chunk in all_chunks],
-        batch_size=config.embedding_batch_size,
-        show_progress_bar=True,
-    )
-    vectors = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
+    vectors = []
+    chunk_texts = [chunk.content for chunk in all_chunks]
+    for offset in range(0, len(chunk_texts), config.embedding_batch_size):
+        vectors.extend(
+            provider.embed_texts(chunk_texts[offset : offset + config.embedding_batch_size])
+        )
     if len(vectors) != len(all_chunks):
-        raise ValueError("Embedding model returned a different number of vectors than chunks.")
+        raise ValueError("Embedding provider returned a different number of vectors than chunks.")
 
     vector_offset = 0
     async with session_factory() as session:
@@ -336,14 +342,25 @@ def _log_write_summary(summary: IngestionSummary) -> None:
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(settings: RagSettings | None = None) -> argparse.ArgumentParser:
+    settings = settings or RagSettings()
     parser = argparse.ArgumentParser(
         description="Rebuild PostgreSQL/pgvector RAG records from a course repository."
     )
     parser.add_argument("--repo-path", type=Path, default=DEFAULT_REPO_PATH)
     parser.add_argument("--source-type", default="course_repo")
     parser.add_argument("--course-name", default="Full Stack Open")
-    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument(
+        "--embedding-provider",
+        choices=[provider.value for provider in RagEmbeddingProvider],
+        default=settings.embedding_provider.value,
+    )
+    parser.add_argument("--model-name", default=settings.model_name)
+    parser.add_argument(
+        "--embedding-dimensions",
+        type=int,
+        default=settings.embedding_dimensions,
+    )
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
     parser.add_argument("--chunk-overlap", type=int, default=DEFAULT_CHUNK_OVERLAP)
     parser.add_argument("--min-chunk-chars", type=int, default=DEFAULT_MIN_CHUNK_CHARS)
@@ -377,12 +394,32 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    args = build_parser().parse_args()
-    config = IngestionConfig(
+    settings = RagSettings()
+    args = build_parser(settings).parse_args()
+    config = build_ingestion_config(args, settings)
+    asyncio.run(ingest_corpus(config))
+
+
+def build_ingestion_config(
+    args: argparse.Namespace,
+    settings: RagSettings,
+) -> IngestionConfig:
+    embedding_settings = RagSettings(
+        _env_file=None,
+        backend=RagBackend.PGVECTOR,
+        embedding_provider=args.embedding_provider,
+        model_name=args.model_name,
+        embedding_dimensions=args.embedding_dimensions,
+        OPENAI_API_KEY=settings.openai_api_key,
+    )
+    return IngestionConfig(
         repo_path=args.repo_path,
         source_type=args.source_type,
         course_name=args.course_name,
-        model_name=args.model_name,
+        embedding_provider=embedding_settings.embedding_provider,
+        model_name=embedding_settings.model_name,
+        embedding_dimensions=embedding_settings.embedding_dimensions,
+        openai_api_key=embedding_settings.openai_api_key,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
         min_chunk_chars=args.min_chunk_chars,
@@ -392,7 +429,6 @@ def main() -> None:
         fail_fast=args.fail_fast,
         reconcile_deletions=args.reconcile_deletions,
     )
-    asyncio.run(ingest_corpus(config))
 
 
 if __name__ == "__main__":

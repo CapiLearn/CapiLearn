@@ -8,8 +8,13 @@ version; use the newest verified snapshot here when comparing ingestion runs.
 
 **Verified:** June 10, 2026  
 **Chunker version:** `markdown-structure-v3`  
-**Embedding model:** `sentence-transformers/all-MiniLM-L6-v2`  
+**Historical embedding model:** `sentence-transformers/all-MiniLM-L6-v2`
 **Embedding dimensions:** 384
+
+These measurements describe the historical local MiniLM corpus and are not
+production OpenAI retrieval-quality metrics. MiniLM and OpenAI
+`text-embedding-3-small` vectors are incompatible even at the same dimension.
+New deployment metrics must be captured after a complete OpenAI re-ingestion.
 
 ### Ingestion Results
 

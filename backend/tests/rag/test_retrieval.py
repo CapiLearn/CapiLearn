@@ -4,119 +4,55 @@ from uuid import uuid4
 
 import pytest
 
-from backend.rag.config import RagBackend, RagSettings
+from backend.rag.config import RagBackend, RagEmbeddingProvider, RagSettings
 from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS
 from backend.rag.repository import SimilarChunk
 from backend.rag.retrieval import (
-    ChromaRagRetrievalProvider,
     PgvectorRagRetrievalProvider,
     build_rag_retrieval_provider,
 )
-from backend.rag.schemas import RetrievalProvider
 
 
-@pytest.mark.asyncio
-async def test_rag_retrieval_provider_delegates_to_configured_engine() -> None:
-    engine = FakeChromaRagQueryEngine()
-    provider = ChromaRagRetrievalProvider(
-        engine=engine,
-        top_k=3,
-    )
-    retrieval_provider: RetrievalProvider = provider
-
-    result = await retrieval_provider.retrieve(
-        "What is a cell?",
-        user_id=uuid4(),
-        conversation_id=uuid4(),
-        user_message_id=uuid4(),
-    )
-
-    assert engine.calls == [("What is a cell?", 9)]
-    assert len(result.chunks) == 1
-    assert result.chunks[0].content == "Retrieved course chunk."
-    assert result.chunks[0].metadata == {
-        "source_id": "doc_1",
-        "title": "Course Notes",
-    }
-    assert result.chunks[0].distance == 0.18
-    assert result.chunks[0].similarity is None
-
-
-@pytest.mark.asyncio
-async def test_rag_retrieval_provider_runs_sync_engine_in_thread() -> None:
-    engine = FakeChromaRagQueryEngine()
-    provider = ChromaRagRetrievalProvider(
-        engine=engine,
-    )
-    loop_thread_id = threading.get_ident()
-
-    result = await provider.retrieve(
-        "What is a cell?",
-        user_id=uuid4(),
-        conversation_id=uuid4(),
-        user_message_id=uuid4(),
-    )
-
-    assert result.chunks
-    assert engine.thread_ids
-    assert engine.thread_ids[0] != loop_thread_id
-
-
-@pytest.mark.asyncio
-async def test_rag_retrieval_provider_propagates_engine_error() -> None:
-    engine = FakeChromaRagQueryEngine(error=RuntimeError("vector store unavailable"))
-    provider = ChromaRagRetrievalProvider(
-        engine=engine,
-    )
-
-    with pytest.raises(RuntimeError, match="vector store unavailable"):
-        await provider.retrieve(
-            "What is a cell?",
-            user_id=uuid4(),
-            conversation_id=uuid4(),
-            user_message_id=uuid4(),
-        )
-
-
-def test_chroma_provider_rejects_ignored_embedding_provider() -> None:
-    with pytest.raises(ValueError, match="Pass either engine or embedding_provider"):
-        ChromaRagRetrievalProvider(
-            engine=FakeChromaRagQueryEngine(),
-            embedding_provider=FakeEmbeddingProvider(),
-        )
-
-
-def test_build_rag_retrieval_provider_selects_configured_backend() -> None:
-    chroma = build_rag_retrieval_provider(
-        RagSettings(
-            backend=RagBackend.CHROMA,
-            model_name="custom-chroma-model",
-            top_k=3,
-        )
-    )
+def test_build_rag_retrieval_provider_builds_only_pgvector() -> None:
     pgvector = build_rag_retrieval_provider(
         RagSettings(
+            _env_file=None,
             backend=RagBackend.PGVECTOR,
+            embedding_provider=RagEmbeddingProvider.OPENAI,
+            model_name="text-embedding-3-small",
             top_k=4,
+            OPENAI_API_KEY="test-key",
         )
     )
 
-    assert isinstance(chroma, ChromaRagRetrievalProvider)
-    assert chroma._model_name == "custom-chroma-model"
-    assert chroma._engine.config.model_name == "custom-chroma-model"
-    assert chroma._engine.config.top_k == 3
-    assert chroma._top_k == 3
     assert isinstance(pgvector, PgvectorRagRetrievalProvider)
     assert pgvector._top_k == 4
-    assert pgvector._model_name == DEFAULT_RAG_MODEL_NAME
+    assert pgvector._model_name == "text-embedding-3-small"
 
 
-def test_pgvector_settings_reject_unsupported_embedding_model() -> None:
-    with pytest.raises(ValueError, match="database schema stores 384-dimensional"):
+def test_build_rag_retrieval_provider_defensively_rejects_chroma() -> None:
+    invalid_settings = RagSettings.model_construct(
+        backend=RagBackend.CHROMA,
+        embedding_provider=RagEmbeddingProvider.SENTENCE_TRANSFORMERS,
+        model_name=DEFAULT_RAG_MODEL_NAME,
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
+        top_k=5,
+        write_retrieval_logs=True,
+        index_version=None,
+        openai_api_key=None,
+    )
+
+    with pytest.raises(ValueError, match="Unsupported runtime RAG backend"):
+        build_rag_retrieval_provider(invalid_settings)
+
+
+def test_pgvector_settings_reject_unsupported_embedding_dimensions() -> None:
+    with pytest.raises(ValueError, match="current database schema stores vector\\(384\\)"):
         RagSettings(
+            _env_file=None,
             backend=RagBackend.PGVECTOR,
-            model_name="custom-pgvector-model",
+            embedding_dimensions=1536,
         )
 
 
@@ -143,9 +79,7 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
         user_message_id=message_id,
     )
 
-    assert embedding_provider.calls == [
-        {"query_text": "What is React state?", "model_name": DEFAULT_RAG_MODEL_NAME}
-    ]
+    assert embedding_provider.calls == ["What is React state?"]
     assert service.calls == [
         {
             "query_embedding": [0.0] * EMBEDDING_DIMENSIONS,
@@ -188,6 +122,9 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
     assert completed[-1].candidate_count == 1
     assert completed[-1].retained_count == 1
     assert completed[-1].suppression_reasons == {}
+    assert completed[-1].embedding_provider == "fake"
+    assert completed[-1].embedding_model == DEFAULT_RAG_MODEL_NAME
+    assert completed[-1].embedding_dimensions == EMBEDDING_DIMENSIONS
     assert completed[-1].latency_ms >= 0
     assert completed[-1].chunks[0]["source_path"] == "src/content/1/en/part1.md"
     assert completed[-1].chunks[0]["distance"] == 0.125
@@ -264,71 +201,6 @@ async def test_pgvector_provider_deduplicates_candidates_before_logging(caplog) 
     assert "State content" not in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_chroma_provider_deduplicates_rollback_results() -> None:
-    engine = FakeChromaRagQueryEngine(
-        results=[
-            {
-                "content": "Same content",
-                "metadata": {"content_hash": "same", "source_path": "one.md"},
-                "distance": 0.1,
-            },
-            {
-                "content": "Duplicate",
-                "metadata": {"content_hash": "same", "source_path": "one.md"},
-                "distance": 0.2,
-            },
-        ]
-    )
-    provider = ChromaRagRetrievalProvider(engine=engine, top_k=2)
-
-    result = await provider.retrieve(
-        "Question",
-        user_id=uuid4(),
-        conversation_id=uuid4(),
-        user_message_id=uuid4(),
-    )
-
-    assert len(result.chunks) == 1
-    assert engine.calls == [("Question", 6)]
-
-
-class FakeChromaRagQueryEngine:
-    def __init__(
-        self,
-        *,
-        error: Exception | None = None,
-        results: list[dict] | None = None,
-    ) -> None:
-        self._error = error
-        self._results = results
-        self.config = FakeChromaRagConfig()
-        self.calls: list[tuple[str, int | None]] = []
-        self.thread_ids: list[int] = []
-
-    def retrieve(
-        self,
-        query: str,
-        top_k: int | None = None,
-    ) -> list[dict]:
-        self.calls.append((query, top_k))
-        self.thread_ids.append(threading.get_ident())
-        if self._error is not None:
-            raise self._error
-        return self._results or [
-            {
-                "content": "Retrieved course chunk.",
-                "metadata": {"source_id": "doc_1", "title": "Course Notes"},
-                "distance": 0.18,
-            }
-        ]
-
-
-class FakeChromaRagConfig:
-    model_name = DEFAULT_RAG_MODEL_NAME
-    top_k = 5
-
-
 class FakeSessionFactory:
     async def __aenter__(self):
         return object()
@@ -362,10 +234,25 @@ class FakeEmbeddingProvider:
         self.calls = []
         self.thread_ids = []
 
-    def embed_query(self, query_text: str, *, model_name: str) -> list[float]:
-        self.calls.append({"query_text": query_text, "model_name": model_name})
+    @property
+    def provider_name(self) -> str:
+        return "fake"
+
+    @property
+    def model_name(self) -> str:
+        return DEFAULT_RAG_MODEL_NAME
+
+    @property
+    def dimensions(self) -> int:
+        return len(self.vector)
+
+    def embed_text(self, query_text: str) -> list[float]:
+        self.calls.append(query_text)
         self.thread_ids.append(threading.get_ident())
         return self.vector
+
+    def embed_texts(self, query_texts: list[str]) -> list[list[float]]:
+        return [self.embed_text(text) for text in query_texts]
 
 
 def _similar_chunk(

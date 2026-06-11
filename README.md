@@ -96,17 +96,36 @@ frontend/
     Restart Uvicorn after changing `CORS_ORIGINS`; the FastAPI settings are
     loaded when the server starts.
 
-3. Configure LLM access in `.env`.
+3. Configure OpenAI access and the RAG embedding contract in `.env`.
 
     For OpenAI directly through LiteLLM:
 
     ```env
     OPENAI_API_KEY=sk-...
     LLM_MODEL=openai/gpt-4o-mini
+    RAG_EMBEDDING_PROVIDER=openai
+    RAG_MODEL_NAME=text-embedding-3-small
+    RAG_EMBEDDING_DIMENSIONS=384
     ```
 
     An OpenAI API key requires active API billing or credits. A ChatGPT
     subscription alone does not provide API credits.
+
+    Render and other deployed environments use OpenAI embeddings so the
+    FastAPI web service does not load PyTorch or Sentence Transformers.
+    `text-embedding-3-small` is requested with 384 dimensions to match the
+    current `vector(384)` schema. OpenAI and MiniLM vectors are incompatible
+    even when both contain 384 values, so changing provider or model requires
+    a full corpus re-ingestion.
+
+    Local Sentence Transformers support is optional:
+
+    ```bash
+    uv sync --extra local-embeddings
+    ```
+
+    Then set `RAG_EMBEDDING_PROVIDER=sentence_transformers` and
+    `RAG_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2`.
 
     For OpenRouter through LiteLLM, set `OPENROUTER_API_KEY` and prefix model
     names with `openrouter/`. The prefix tells LiteLLM to route the request
@@ -155,6 +174,10 @@ frontend/
     uv run python -m backend.ingestion.ingest_pgvector
     ```
 
+    Ingestion uses the same provider, model, and dimensions as query-time
+    retrieval. It is a manual command and must never run during application
+    startup. For OpenAI ingestion, set `OPENAI_API_KEY` first.
+
     The current corpus should produce 72 active documents, 4,274 active chunks,
     and 4,274 active 384-dimensional embeddings. Stale-source reconciliation is
     intentionally opt-in:
@@ -167,15 +190,17 @@ frontend/
     `deleted_at` populated; inactive documents are excluded from retrieval.
     See the RAG runbook before enabling this flag on a shared environment.
 
-7. Confirm `.env` selects the preferred backend:
+7. Confirm `.env` selects the supported runtime backend:
 
     ```env
     RAG_BACKEND=pgvector
     RAG_WRITE_RETRIEVAL_LOGS=true
     ```
 
-    Chroma remains available as a rollback path with `RAG_BACKEND=chroma`.
-    Restart the backend whenever this setting changes.
+    pgvector is the only supported runtime RAG backend. The legacy Chroma path
+    was disabled because MiniLM-built stores could be queried with a different
+    embedding provider, silently mixing vector spaces. `RAG_BACKEND=chroma`
+    now fails configuration validation.
 
 8. Start the FastAPI backend:
 
@@ -211,6 +236,43 @@ frontend/
 
     The frontend runs on `http://localhost:5173` by default. That origin must be
     present in the backend `.env` `CORS_ORIGINS` value.
+
+    `VITE_API_BASE_URL` controls the backend origin at frontend build time and
+    defaults to `http://127.0.0.1:8001`. Set it to the deployed FastAPI URL for
+    Render.
+
+## Render Configuration
+
+Use a Render static site for `frontend/`, a Python web service for FastAPI, and
+managed Postgres with pgvector. The backend start command must bind to Render's
+port:
+
+```bash
+uv run uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+```
+
+Render-style `postgresql://` `DATABASE_URL` values are normalized to
+`postgresql+asyncpg://`; psycopg is not used. Required deployed settings are:
+
+```env
+RAG_BACKEND=pgvector
+RAG_EMBEDDING_PROVIDER=openai
+RAG_MODEL_NAME=text-embedding-3-small
+RAG_EMBEDDING_DIMENSIONS=384
+RAG_WRITE_RETRIEVAL_LOGS=true
+OPENAI_API_KEY=...
+CORS_ORIGINS=["https://your-frontend.onrender.com"]
+VITE_API_BASE_URL=https://your-api.onrender.com
+```
+
+Do not deploy retrieval until the hosted corpus has been fully re-ingested
+with OpenAI `text-embedding-3-small` embeddings at 384 dimensions. Existing
+MiniLM vectors are incompatible even though they also contain 384 values. A
+clean hosted ingestion also requires resolving the corpus gitlink/source
+availability issue documented in the RAG runbook.
+
+Moving to 1536 dimensions is deferred. It requires a dedicated pgvector schema
+migration, vector-index rebuild, and full corpus re-ingestion.
 
 ## Common Development Commands
 

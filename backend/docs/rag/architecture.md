@@ -4,8 +4,9 @@
 
 The RAG layer converts course source files into structured, searchable chunks
 and supplies retained retrieval results to the existing chat generation flow.
-PostgreSQL with pgvector is the preferred runtime. Chroma remains available
-through `RAG_BACKEND=chroma` as an application rollback path.
+PostgreSQL with pgvector is the only supported application runtime. The legacy
+Chroma path was disabled because MiniLM-built stores could be queried with a
+different embedding provider, silently mixing vector spaces.
 
 The RAG layer owns source ingestion, chunk contracts, embeddings, retrieval,
 deduplication, and retrieval tracing. `LLMService` continues to own guardrails,
@@ -36,9 +37,9 @@ compact source labels in <retrieved_context>
 LLMService and chat generation
 ```
 
-Input guardrail evaluation and retrieval run concurrently. Query embedding runs
-in a worker thread because `sentence-transformers` is synchronous; pgvector
-queries use asynchronous SQLAlchemy sessions.
+Input guardrail evaluation and retrieval run concurrently. The configured
+embedding client runs in a worker thread because the provider boundary is
+synchronous; pgvector queries use asynchronous SQLAlchemy sessions.
 
 The June 10, 2026 verified active corpus contains 72 documents, 4,274 chunks,
 and 4,274 embeddings. All active chunks use `markdown-structure-v3`.
@@ -120,8 +121,13 @@ populates `markdown-structure-v3` metadata. Deployment preflight must check for
 duplicates before applying `0007`; see `runbook.md`.
 
 `rag_embeddings.embedding` remains `vector(384)` with an HNSW cosine index.
-Chroma metadata is flattened to scalar values so the retained Chroma builder
-can persist the same contract.
+
+The deployed embedding contract is OpenAI `text-embedding-3-small` with
+`dimensions=384`. Keeping 384 dimensions avoids an immediate schema migration,
+but OpenAI vectors are not compatible with the previous 384-dimensional MiniLM
+vectors. Provider or model changes require full re-ingestion. The schema
+currently persists the model name but not provider and dimensions; those
+fields should be added before simultaneous embedding contracts are supported.
 
 ## Soft Deletion
 
@@ -142,12 +148,13 @@ failed ingestions cannot reconcile stale sources.
 
 ## Runtime Retrieval
 
-`PgvectorRagRetrievalProvider` embeds the query, then delegates to
-`RagService`. The repository filters by embedding model and
+`PgvectorRagRetrievalProvider` embeds the query through the configured provider,
+validates its dimensions, then delegates to `RagService`. The repository
+filters by embedding model and
 `rag_documents.is_active IS TRUE` directly in the nearest-neighbor SQL query,
 so inactive sources never enter the pgvector candidate set.
 
-Both pgvector and Chroma retrieve up to:
+pgvector retrieves up to:
 
 ```text
 min(RAG_TOP_K * 3, 50)
@@ -173,6 +180,10 @@ Retrieval failures propagate to `LLMService`, which records
 `rag.retrieve.failed`, substitutes empty context, and allows generation to
 continue.
 
+Sentence Transformers is an optional local-only dependency and is imported
+only when `RAG_EMBEDDING_PROVIDER=sentence_transformers`. Production web
+services should use `openai` and do not need PyTorch.
+
 ## Prompt Context
 
 `backend/llm/prompts.py` wraps retained chunks in `<retrieved_context>`.
@@ -185,22 +196,19 @@ source path | heading > breadcrumb | useful chunk type
 Plain prose and unknown type labels are omitted. Missing metadata degrades to a
 numbered context block without failing prompt construction.
 
-## Chroma Rollback Compatibility
+## Legacy Chroma Tooling
 
-Chroma remains selectable with:
+Chroma is not an application runtime backend. `RAG_BACKEND=chroma` is rejected
+during configuration validation. Historical local scripts remain temporarily
+available behind `uv sync --extra legacy-chroma`, but they are not imported by
+FastAPI and must not be used as a deployment rollback.
 
-```dotenv
-RAG_BACKEND=chroma
-```
+Production deployment remains blocked until the hosted corpus is fully
+re-ingested with OpenAI embeddings. The corpus gitlink/source availability
+issue must be resolved before that hosted ingestion can run reliably.
 
-The legacy JSON wrapper now uses the typed chunker, and the Chroma builder
-flattens heading paths and Phase 2 metadata into scalar-compatible values.
-Both runtime providers apply the same bounded oversampling and deduplication
-policy.
-
-Application rollback to Chroma or a previous backend version must occur before
-any schema downgrade. The PostgreSQL schema and inactive rows can remain in
-place during application rollback.
+A future move from 384 to 1536 dimensions requires a dedicated schema
+migration, vector-index rebuild, and full re-ingestion.
 
 ## Deferred Work
 

@@ -1,5 +1,5 @@
 from backend.chat.dependencies import get_llm_service, get_rag_retrieval_provider
-from backend.rag.config import RagBackend, RagSettings
+from backend.rag.config import RagBackend, RagEmbeddingProvider, RagSettings
 from backend.rag.retrieval import build_rag_retrieval_provider
 from backend.rag.schemas import RetrievalResult
 
@@ -25,7 +25,15 @@ def test_get_llm_service_uses_supplied_retriever() -> None:
 
 
 def test_dependency_selector_can_build_pgvector_provider() -> None:
-    provider = build_rag_retrieval_provider(RagSettings(backend=RagBackend.PGVECTOR))
+    provider = build_rag_retrieval_provider(
+        RagSettings(
+            _env_file=None,
+            backend=RagBackend.PGVECTOR,
+            embedding_provider=RagEmbeddingProvider.OPENAI,
+            model_name="text-embedding-3-small",
+            OPENAI_API_KEY="test-key",
+        )
+    )
 
     assert provider.__class__.__name__ == "PgvectorRagRetrievalProvider"
 

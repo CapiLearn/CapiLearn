@@ -16,7 +16,7 @@ from backend.llm.config import (
     OutputGuardrailMode,
     llm_settings,
 )
-from backend.rag.config import RagBackend, RagSettings, rag_settings
+from backend.rag.config import RagSettings, rag_settings
 from backend.rag.models import RagChunk, RagDocument, RagEmbedding, RagRetrievalLog
 
 PROVIDER_METADATA_CACHE_TTL_SECONDS = 300
@@ -175,18 +175,6 @@ class AdminHealthService:
         )
 
     async def _check_rag(self) -> AdminHealthCheck:
-        if self._rag_config.backend == RagBackend.CHROMA:
-            return AdminHealthCheck(
-                name="rag",
-                status=HealthStatus.NOT_CHECKED,
-                message="Chroma RAG backend does not expose a cheap admin health probe.",
-                details={
-                    "backend": self._rag_config.backend.value,
-                    "modelName": self._rag_config.model_name,
-                    "indexVersion": self._rag_config.index_version,
-                },
-            )
-
         started_at = timer_start()
         try:
             document_count = await self._count(RagDocument.id)
@@ -211,7 +199,9 @@ class AdminHealthService:
                 message="RAG storage health check failed.",
                 details={
                     "backend": self._rag_config.backend.value,
+                    "embeddingProvider": self._rag_config.embedding_provider.value,
                     "modelName": self._rag_config.model_name,
+                    "embeddingDimensions": self._rag_config.embedding_dimensions,
                     "indexVersion": self._rag_config.index_version,
                 },
             )
@@ -233,7 +223,9 @@ class AdminHealthService:
             message=message,
             details={
                 "backend": self._rag_config.backend.value,
+                "embeddingProvider": self._rag_config.embedding_provider.value,
                 "modelName": self._rag_config.model_name,
+                "embeddingDimensions": self._rag_config.embedding_dimensions,
                 "indexVersion": self._rag_config.index_version,
                 "documents": document_count,
                 "chunks": chunk_count,

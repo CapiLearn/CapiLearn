@@ -9,9 +9,10 @@
 - `DATABASE_URL` using `postgresql+asyncpg://`
 - A database backup or snapshot before production schema changes
 
-PostgreSQL uses pgvector with 384-dimensional
-`sentence-transformers/all-MiniLM-L6-v2` embeddings. No psycopg package is
-used.
+PostgreSQL uses pgvector with a `vector(384)` column. Deployed environments use
+OpenAI `text-embedding-3-small` with `dimensions=384`; no psycopg package is
+used. Local Sentence Transformers support requires
+`uv sync --extra local-embeddings`.
 
 ## Phase 2 Deployment Order
 
@@ -53,6 +54,12 @@ Preview ingestion without loading the model or opening PostgreSQL:
 ```bash
 uv run python -m backend.ingestion.ingest_pgvector --dry-run --fail-fast
 ```
+
+Before a hosted/manual ingestion, confirm
+`backend/ingestion/data/raw/fullstack-hy2020.github.io/` exists and contains
+the expected course source. The current repository contains a corpus gitlink
+without a matching `.gitmodules` entry, so a clean hosted checkout must not
+assume the source corpus is available.
 
 Run a fresh ingestion without stale-source reconciliation:
 
@@ -274,7 +281,9 @@ Set these values before application startup:
 
 ```dotenv
 RAG_BACKEND=pgvector
-RAG_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+RAG_EMBEDDING_PROVIDER=openai
+RAG_MODEL_NAME=text-embedding-3-small
+RAG_EMBEDDING_DIMENSIONS=384
 RAG_TOP_K=5
 RAG_WRITE_RETRIEVAL_LOGS=true
 # RAG_INDEX_VERSION=full-stack-open-2026-06
@@ -309,25 +318,14 @@ contain the final retained chunks used by the prompt.
 
 ## Rollback
 
-Application rollback must happen before schema downgrade.
+Chroma is not a runtime rollback path. `RAG_BACKEND=chroma` is rejected because
+legacy stores were built with MiniLM and could silently be queried with
+incompatible embedding providers.
 
-1. Set `RAG_BACKEND=chroma` or deploy the previous application version.
-2. Restart the backend and verify Chroma retrieval.
-3. Leave the Phase 2 PostgreSQL schema and soft-deleted rows in place unless a
-   separately approved rollback requires schema downgrade.
-4. Only then consider `alembic downgrade`. Downgrading removes Phase 2 columns
-   and constraints and must not occur while Phase 2 application code is live.
-
-Inactive rows remain retained unless a later, explicit hard-deletion process
-is approved. Switching to Chroma does not require deleting PostgreSQL data.
-
-If the Chroma store must be rebuilt:
-
-```bash
-uv run python backend/ingestion/ingest_repo.py
-uv run python backend/rag/chunk_documents.py
-uv run python backend/rag/build_chroma_vector_store.py
-```
+Application rollback means deploying a previously approved pgvector-compatible
+application version. Leave the PostgreSQL schema and inactive rows in place
+unless a separately approved rollback requires schema downgrade. Never run an
+Alembic downgrade while code that depends on the newer schema remains live.
 
 ## Troubleshooting
 
@@ -354,9 +352,12 @@ reconciliation while diagnosing incomplete source discovery.
 
 ### Embedding Dimension Mismatch
 
-The pgvector schema stores `vector(384)`. Both ingestion and retrieval must use
-`sentence-transformers/all-MiniLM-L6-v2`; unsupported pgvector models fail
-configuration validation.
+The pgvector schema stores `vector(384)`, so configuration rejects any other
+dimension. OpenAI `text-embedding-3-small` must be called with
+`dimensions=384`. Matching dimensions do not imply matching vector spaces:
+OpenAI and MiniLM embeddings cannot be mixed. Retrieval filters by the
+configured model name, and every provider or model change requires full
+re-ingestion.
 
 ### Alembic Migration Issues
 
@@ -372,8 +373,9 @@ destructive volume reset for shared, staging, or production data.
 
 ### Backend Selection
 
-Valid values are `RAG_BACKEND=pgvector` and `RAG_BACKEND=chroma`. Settings are
-cached at startup, so restart FastAPI after changing the value.
+The only valid runtime value is `RAG_BACKEND=pgvector`. Chroma and unknown
+values fail configuration validation. Settings are cached at startup, so
+restart FastAPI after changing RAG configuration.
 
 ### Downstream LLM Failure
 
@@ -381,7 +383,27 @@ An external LLM authentication or billing failure after successful
 `rag.provider.retrieve.completed` and `rag.retrieve.completed` events is not a
 pgvector retrieval failure.
 
-### Embedding Model Download
+### Embedding Provider
 
-The first model load may download files from Hugging Face. Use `--dry-run` when
-only preprocessing counts are needed.
+Render should use `RAG_EMBEDDING_PROVIDER=openai`; the web service must not
+load Sentence Transformers or PyTorch. `OPENAI_API_KEY` is required and is
+never logged. OpenAI failures leave retrieval without context and are handled
+by the existing downstream RAG failure path.
+
+For optional local embeddings only:
+
+```bash
+uv sync --extra local-embeddings
+```
+
+The first local model load may download files from Hugging Face. Use
+`--dry-run` when only preprocessing counts are needed. Ingestion is always a
+manual operation and must not run in FastAPI startup.
+
+Do not deploy retrieval until the hosted corpus has been fully re-ingested
+with OpenAI `text-embedding-3-small` embeddings. Hosted ingestion still
+requires resolving the corpus gitlink/source availability issue described in
+the deployment preflight.
+
+A future 1536-dimensional OpenAI contract requires a dedicated pgvector
+migration, vector-index rebuild, and full corpus re-ingestion.

@@ -1,8 +1,7 @@
 """
 retriever.py
 
-Queries the local ChromaDB vector store and returns relevant course chunks
-for a student question.
+Queries a legacy local ChromaDB vector store for historical evaluation tooling.
 
 Input:
     A natural language student question
@@ -20,12 +19,12 @@ This module does not:
     - Apply guardrails
     - Store memory
     - Expose API endpoints
+    - Provide a supported application runtime backend
 """
 
 from collections.abc import Sequence
 from pathlib import Path
-
-import chromadb
+from typing import Any
 
 # Directory that contains this script (backend/rag/)
 _HERE = Path(__file__).parent
@@ -37,7 +36,7 @@ _DATA_DIR = _HERE.parent / "ingestion"
 def get_collection(
     persist_path: str,
     collection_name: str,
-) -> chromadb.Collection:
+) -> Any:
     """
     Connect to the persistent ChromaDB store and return the named collection.
 
@@ -47,6 +46,13 @@ def get_collection(
     path = Path(persist_path)
     if not path.is_absolute():
         path = _DATA_DIR / path
+
+    try:
+        import chromadb
+    except ImportError as exc:
+        raise RuntimeError(
+            "Legacy Chroma tooling requires `uv sync --extra legacy-chroma`."
+        ) from exc
 
     client = chromadb.PersistentClient(path=str(path))
     collection = client.get_collection(name=collection_name)
@@ -61,7 +67,7 @@ def get_collection(
 def retrieve_context(
     *,
     query_embedding: Sequence[float],
-    collection: chromadb.Collection,
+    collection: Any,
     top_k: int = 5,
 ) -> list[dict]:
     """

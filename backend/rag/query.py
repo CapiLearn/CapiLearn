@@ -1,12 +1,12 @@
 """
 query.py
 
-Lazy public entry point for the Chroma RAG retrieval pipeline.
+Legacy local entry point for the retired Chroma RAG retrieval pipeline.
 
 Importing this module does not load the embedding model or connect to the
 vector store. Those resources are created only when retrieval is first used,
-which keeps FastAPI startup safe and lets callers decide how to handle a
-missing local vector store.
+This module is historical tooling and is not imported by FastAPI or active
+application retrieval. Install `legacy-chroma` explicitly before using it.
 
 Usage::
 
@@ -22,9 +22,11 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
+from .config import RagEmbeddingProvider
 from .defaults import (
     DEFAULT_CHROMA_COLLECTION_NAME,
     DEFAULT_CHROMA_PERSIST_PATH,
+    DEFAULT_RAG_EMBEDDING_DIMENSIONS,
     DEFAULT_RAG_MODEL_NAME,
     DEFAULT_RAG_TOP_K,
 )
@@ -56,7 +58,11 @@ class ChromaRagQueryEngine:
         embedding_provider: QueryEmbeddingProvider | None = None,
     ) -> None:
         self._config = config
-        self._embedding_provider = embedding_provider or get_embedding_provider()
+        self._embedding_provider = embedding_provider or get_embedding_provider(
+            RagEmbeddingProvider.SENTENCE_TRANSFORMERS,
+            config.model_name,
+            DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+        )
         self._collection: Any | None = None
 
     @property
@@ -74,10 +80,7 @@ class ChromaRagQueryEngine:
 
     def retrieve(self, question: str, top_k: int | None = None) -> list[dict]:
         """Retrieve raw context chunks for *question*."""
-        query_embedding = self._embedding_provider.embed_query(
-            question,
-            model_name=self._config.model_name,
-        )
+        query_embedding = self._embedding_provider.embed_text(question)
         return self._retrieve_by_embedding(query_embedding, top_k=top_k)
 
     def _retrieve_by_embedding(

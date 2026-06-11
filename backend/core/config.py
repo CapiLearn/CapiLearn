@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,21 @@ class Settings(BaseSettings):
     )
     cors_origins: list[str] = Field(default_factory=list)
     local_dev_user_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: object) -> object:
+        if isinstance(value, str):
+            return normalize_async_database_url(value)
+        return value
+
+
+def normalize_async_database_url(database_url: str) -> str:
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return database_url
 
 
 @lru_cache

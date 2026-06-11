@@ -3,8 +3,14 @@ from uuid import UUID
 
 import pytest
 
-from backend.ingestion.ingest_pgvector import IngestionConfig, ingest_corpus, prepare_corpus
-from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
+from backend.ingestion.ingest_pgvector import (
+    IngestionConfig,
+    build_ingestion_config,
+    build_parser,
+    ingest_corpus,
+    prepare_corpus,
+)
+from backend.rag.config import RagEmbeddingProvider, RagSettings
 from backend.rag.models import EMBEDDING_DIMENSIONS
 
 
@@ -40,7 +46,7 @@ async def test_dry_run_does_not_load_model_or_open_database(tmp_path: Path) -> N
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, dry_run=True, reconcile_deletions=True),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        embedding_provider=FailingEmbeddingProvider(),
         session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
     )
 
@@ -54,7 +60,7 @@ async def test_dry_run_does_not_load_model_or_open_database(tmp_path: Path) -> N
 async def test_empty_scan_does_not_open_database_or_reconcile(tmp_path: Path) -> None:
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        embedding_provider=FailingEmbeddingProvider(),
         session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
     )
 
@@ -63,18 +69,53 @@ async def test_empty_scan_does_not_open_database_or_reconcile(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_ingestion_rejects_unsupported_pgvector_model_before_loading_it(
+async def test_ingestion_rejects_unsupported_pgvector_dimensions_before_loading_provider(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="database schema stores 384-dimensional"):
+    with pytest.raises(ValueError, match="current database schema stores vector\\(384\\)"):
         await ingest_corpus(
             IngestionConfig(
                 repo_path=tmp_path,
-                model_name=f"{DEFAULT_RAG_MODEL_NAME}-other",
+                embedding_dimensions=1536,
                 dry_run=True,
             ),
-            model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+            embedding_provider=FailingEmbeddingProvider(),
         )
+
+
+def test_cli_overrides_reject_crossed_provider_and_model() -> None:
+    settings = RagSettings(
+        _env_file=None,
+        embedding_provider=RagEmbeddingProvider.OPENAI,
+        model_name="text-embedding-3-small",
+        OPENAI_API_KEY="test-key",
+    )
+    args = build_parser(settings).parse_args(
+        [
+            "--embedding-provider",
+            "openai",
+            "--model-name",
+            "sentence-transformers/all-MiniLM-L6-v2",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="must be 'text-embedding-3-small'"):
+        build_ingestion_config(args, settings)
+
+
+def test_cli_overrides_reject_openai_model_for_sentence_transformers() -> None:
+    settings = RagSettings(_env_file=None)
+    args = build_parser(settings).parse_args(
+        [
+            "--embedding-provider",
+            "sentence_transformers",
+            "--model-name",
+            "text-embedding-3-small",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="all-MiniLM-L6-v2"):
+        build_ingestion_config(args, settings)
 
 
 @pytest.mark.asyncio
@@ -84,7 +125,7 @@ async def test_ingest_corpus_embeds_and_replaces_each_document(tmp_path: Path) -
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        embedding_provider=FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -114,7 +155,7 @@ async def test_reconciliation_is_opt_in_and_uses_seen_english_paths(tmp_path: Pa
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        embedding_provider=FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -139,7 +180,7 @@ async def test_reconciliation_does_not_run_without_opt_in(tmp_path: Path) -> Non
 
     await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        embedding_provider=FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -155,7 +196,7 @@ async def test_partial_database_failure_skips_reconciliation(tmp_path: Path) -> 
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        embedding_provider=FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -172,7 +213,7 @@ async def test_preprocessing_failure_skips_reconciliation(tmp_path: Path) -> Non
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        embedding_provider=FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -186,12 +227,21 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-class FakeEmbeddingModel:
-    def get_sentence_embedding_dimension(self) -> int:
-        return EMBEDDING_DIMENSIONS
+class FakeEmbeddingProvider:
+    provider_name = "fake"
+    model_name = "fake-model"
+    dimensions = EMBEDDING_DIMENSIONS
 
-    def encode(self, sentences, *, batch_size, show_progress_bar):
-        return [[0.0] * EMBEDDING_DIMENSIONS for _ in sentences]
+    def embed_text(self, text: str) -> list[float]:
+        return [0.0] * EMBEDDING_DIMENSIONS
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed_text(text) for text in texts]
+
+
+class FailingEmbeddingProvider(FakeEmbeddingProvider):
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        raise AssertionError("embedding provider used")
 
 
 class FakeSessionFactory:

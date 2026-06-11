@@ -1,7 +1,7 @@
 """
 build_chroma_vector_store.py
 
-Builds a local ChromaDB vector store from processed course chunks.
+Builds a legacy local ChromaDB vector store from processed course chunks.
 
 Input:
     data/processed/chunks.json
@@ -19,13 +19,11 @@ This module does not:
     - Retrieve context for student questions
     - Generate final student answers
     - Call external LLM services
+    - Provide a supported application runtime backend
 """
 
 import json
 from pathlib import Path
-
-import chromadb
-from sentence_transformers import SentenceTransformer
 
 # Directory that contains this script (backend/rag/)
 _HERE = Path(__file__).parent
@@ -110,6 +108,14 @@ def build_chroma_vector_store(
     6. Add everything to Chroma with cleaned metadata.
     7. Print a summary.
     """
+    try:
+        import chromadb
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise RuntimeError(
+            "Legacy Chroma tooling requires `uv sync --extra legacy-chroma`."
+        ) from exc
+
     # 1. Load chunks
     chunks = load_chunks(chunks_path)
     print(f"Loaded {len(chunks)} chunk(s) from '{chunks_path}'.")

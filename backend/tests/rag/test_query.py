@@ -7,7 +7,6 @@ from unittest.mock import Mock
 from backend.rag.defaults import (
     DEFAULT_CHROMA_COLLECTION_NAME,
     DEFAULT_CHROMA_PERSIST_PATH,
-    DEFAULT_RAG_MODEL_NAME,
 )
 
 
@@ -83,12 +82,7 @@ class ChromaRagQueryTests(unittest.TestCase):
         engine = query.ChromaRagQueryEngine(embedding_provider=provider)
         result = engine.query("What is React state?", top_k=3)
 
-        assert provider.calls == [
-            {
-                "query_text": "What is React state?",
-                "model_name": DEFAULT_RAG_MODEL_NAME,
-            }
-        ]
+        assert provider.calls == ["What is React state?"]
         retriever.get_collection.assert_called_once_with(
             DEFAULT_CHROMA_PERSIST_PATH,
             DEFAULT_CHROMA_COLLECTION_NAME,
@@ -114,21 +108,12 @@ class ChromaRagQueryTests(unittest.TestCase):
         query.query_chroma_rag("first")
         query.query_chroma_rag("second")
 
-        embeddings.get_embedding_provider.assert_called_once_with()
+        embeddings.get_embedding_provider.assert_called_once()
         retriever.get_collection.assert_called_once_with(
             DEFAULT_CHROMA_PERSIST_PATH,
             DEFAULT_CHROMA_COLLECTION_NAME,
         )
-        assert provider.calls == [
-            {
-                "query_text": "first",
-                "model_name": DEFAULT_RAG_MODEL_NAME,
-            },
-            {
-                "query_text": "second",
-                "model_name": DEFAULT_RAG_MODEL_NAME,
-            },
-        ]
+        assert provider.calls == ["first", "second"]
         self.assertEqual(retriever.retrieve_context.call_count, 2)
 
     def test_chroma_query_engine_retrieves_text_query(self) -> None:
@@ -152,12 +137,7 @@ class ChromaRagQueryTests(unittest.TestCase):
         result = engine.retrieve("How do embeddings work?", top_k=2)
 
         assert result == chunks
-        assert provider.calls == [
-            {
-                "query_text": "How do embeddings work?",
-                "model_name": DEFAULT_RAG_MODEL_NAME,
-            }
-        ]
+        assert provider.calls == ["How do embeddings work?"]
         retriever.retrieve_context.assert_called_once_with(
             query_embedding=[0.3, 0.4],
             collection="collection",
@@ -170,8 +150,8 @@ class FakeEmbeddingProvider:
         self.vector = vector or [0.0]
         self.calls = []
 
-    def embed_query(self, query_text: str, *, model_name: str) -> list[float]:
-        self.calls.append({"query_text": query_text, "model_name": model_name})
+    def embed_text(self, query_text: str) -> list[float]:
+        self.calls.append(query_text)
         return self.vector
 
 
