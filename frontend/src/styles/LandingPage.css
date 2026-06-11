@@ -31,8 +31,8 @@ button {
 
 .capilearn-page {
   min-height: 100vh;
-  padding: 44px 56px 56px;
-  background: #f6f8f8;
+  padding: 0;
+  background: #fbf8e8;
 }
 
 /* Presentation slide title */
@@ -50,11 +50,8 @@ button {
 
 .capilearn-card {
   width: 100%;
-  max-width: 1280px;
-  min-height: 840px;
-  margin: 0 auto;
+  min-height: 100vh;
   background: #fbf8e8;
-  border: 1px solid #e0d8bd;
 }
 
 /* Header */
@@ -127,8 +124,8 @@ button {
 /* Hero section */
 
 .capilearn-hero {
-  min-height: 768px;
-  padding: 118px 24px 130px;
+  min-height: calc(100vh - 72px);
+  padding: 80px 24px 90px;
 
   display: flex;
   align-items: center;
@@ -285,7 +282,9 @@ button {
 
 @media (max-width: 800px) {
   .capilearn-page {
-    padding: 24px 18px;
+    min-height: 100vh;
+    padding: 0;
+    background: #fbf8e8;
   }
 
   .capilearn-slide-title {
@@ -294,7 +293,9 @@ button {
   }
 
   .capilearn-card {
-    min-height: auto;
+     width: 100%;
+     min-height: 100vh;
+     background: #fbf8e8;
   }
 
   .capilearn-nav {
@@ -306,8 +307,15 @@ button {
   }
 
   .capilearn-hero {
-    min-height: auto;
-    padding: 80px 18px 90px;
+    min-height: calc(100vh - 72px);
+    padding: 80px 24px 90px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    position: relative;
+    overflow: hidden;
   }
 
   .capilearn-headline {

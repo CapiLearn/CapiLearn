@@ -26,6 +26,8 @@ class LLMSettings(BaseSettings):
     temperature: float | None = None
     max_tokens: int = 8000
     request_timeout_seconds: float = 30.0
+    max_retries: int = Field(default=0, ge=0)
+    retry_backoff_seconds: float = Field(default=0.5, ge=0)
     guardrails_enabled: bool = True
     input_guardrail_mode: InputGuardrailMode = InputGuardrailMode.POLICY
     output_guardrail_mode: OutputGuardrailMode = OutputGuardrailMode.POLICY

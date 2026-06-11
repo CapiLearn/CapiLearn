@@ -9,9 +9,11 @@ from backend.chat.service import ChatService
 from backend.core.config import settings
 from backend.core.database import DbSession
 from backend.core.exceptions import ApiError
-from backend.llm.retrieval import RagRetrievalProvider
-from backend.llm.schemas import RetrievalProvider
 from backend.llm.service import LLMService
+from backend.rag.config import RagBackend, rag_settings
+from backend.rag.retrieval import build_rag_retrieval_provider
+from backend.rag.schemas import RetrievalProvider
+from backend.rag.tracing import PostgresRagTraceSink
 
 
 async def get_current_user(
@@ -38,17 +40,20 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 @lru_cache(maxsize=1)
 def get_rag_retrieval_provider() -> RetrievalProvider:
-    return RagRetrievalProvider()
+    return build_rag_retrieval_provider(rag_settings)
 
 
-RagRetrievalProviderDep = Annotated[
+RetrievalProviderDep = Annotated[
     RetrievalProvider,
     Depends(get_rag_retrieval_provider),
 ]
 
 
-def get_llm_service(retriever: RagRetrievalProviderDep) -> LLMService:
-    return LLMService(retriever=retriever)
+def get_llm_service(retriever: RetrievalProviderDep) -> LLMService:
+    trace_sink = None
+    if rag_settings.backend == RagBackend.PGVECTOR and rag_settings.write_retrieval_logs:
+        trace_sink = PostgresRagTraceSink(rag_index_version=rag_settings.index_version)
+    return LLMService(retriever=retriever, trace_sink=trace_sink)
 
 
 LLMServiceDep = Annotated[LLMService, Depends(get_llm_service)]

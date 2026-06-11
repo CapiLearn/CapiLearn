@@ -22,10 +22,9 @@ from backend.llm.schemas import (
     LLMCostComponent,
     LLMResult,
     ProviderResponse,
-    RetrievalResult,
-    RetrievedChunk,
 )
 from backend.llm.service import LLMServiceError
+from backend.rag.schemas import RetrievalResult, RetrievedChunk
 
 
 @pytest.mark.asyncio
@@ -42,6 +41,7 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
                 RetrievedChunk(
                     content="Cell note",
                     metadata={"source_id": "doc_1", "title": "Biology Notes"},
+                    distance=0.42,
                 )
             ],
             provider_response=ProviderResponse(
@@ -75,6 +75,7 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
         {
             "content": "Cell note",
             "metadata": {"source_id": "doc_1", "title": "Biology Notes"},
+            "distance": 0.42,
         }
     ]
     request_id = repository.messages[0].extra_metadata["requestId"]
@@ -213,6 +214,8 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
                             "source_id": "doc_1",
                             "title": "Biology Notes",
                             "page": index,
+                            "distance": 0.12,
+                            "similarity": 0.88,
                         },
                     }
                 ],

@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://localhost:8001";
+import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
 // Set to true while backend branch is unavailable.
 // Change to false when backend is running locally.
@@ -117,23 +117,6 @@ async function mockListMessages(conversationId) {
   };
 }
 
-async function handleResponse(response) {
-  if (!response.ok) {
-    try {
-      const errorData = await response.json();
-      throw new Error(errorData.message || "Request failed.");
-    } catch {
-      throw new Error("Request failed.");
-    }
-  }
-
-  if (response.status === 204) {
-    return null;
-  }
-
-  return response.json();
-}
-
 export async function listConversations() {
   if (USE_MOCK_API) {
     return {
@@ -148,7 +131,7 @@ export async function listConversations() {
     },
   });
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to load conversations.");
 }
 export async function createConversation(content) {
   if (USE_MOCK_API) {
@@ -166,7 +149,7 @@ export async function createConversation(content) {
     }),
   });
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to create conversation.");
 }
 
 export async function listMessages(conversationId) {
@@ -184,7 +167,7 @@ export async function listMessages(conversationId) {
     }
   );
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to load conversation messages.");
 }
 
 export async function createMessage(conversationId, content) {
@@ -206,5 +189,5 @@ export async function createMessage(conversationId, content) {
     }
   );
 
-  return handleResponse(response);
+  return handleApiResponse(response, "Unable to send message.");
 }

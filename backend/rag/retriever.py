@@ -11,7 +11,6 @@ Output:
     A ranked list of retrieved chunks with source metadata and distances
 
 Responsibilities:
-    - Load the local embedding model
     - Connect to the persisted ChromaDB collection
     - Retrieve relevant course chunks
     - Format retrieved context for future answer generation
@@ -23,26 +22,16 @@ This module does not:
     - Expose API endpoints
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import chromadb
-from sentence_transformers import SentenceTransformer
 
 # Directory that contains this script (backend/rag/)
 _HERE = Path(__file__).parent
 
 # The data folder sits one level up, inside the ingestion package
 _DATA_DIR = _HERE.parent / "ingestion"
-
-# ---------------------------------------------------------------------------
-# Model and collection helpers
-# ---------------------------------------------------------------------------
-
-
-def get_embedding_model(model_name: str) -> SentenceTransformer:
-    """Load and return a local SentenceTransformer embedding model."""
-    print(f"Loading embedding model '{model_name}' …")
-    return SentenceTransformer(model_name)
 
 
 def get_collection(
@@ -70,23 +59,21 @@ def get_collection(
 
 
 def retrieve_context(
-    question: str,
+    *,
+    query_embedding: Sequence[float],
     collection: chromadb.Collection,
-    model: SentenceTransformer,
     top_k: int = 5,
 ) -> list[dict]:
     """
-    Embed *question* and query *collection* for the *top_k* closest chunks.
+    Query *collection* for the *top_k* closest chunks using *query_embedding*.
 
     Returns a list of dicts, each containing:
     - content  : the chunk text
     - metadata : the chunk metadata dict
     - distance : cosine distance from the query embedding (lower = more similar)
     """
-    query_embedding = model.encode(question).tolist()
-
     results = collection.query(
-        query_embeddings=[query_embedding],
+        query_embeddings=[list(query_embedding)],
         n_results=top_k,
         include=["documents", "metadatas", "distances"],
     )
@@ -134,31 +121,3 @@ def format_context(results: list[dict]) -> str:
         lines.append("")  # blank line between chunks
 
     return "\n".join(lines).strip()
-
-
-# ---------------------------------------------------------------------------
-# Entry point – simple command-line test
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    PERSIST_PATH = "data/vector_store/chroma"
-    COLLECTION_NAME = "capilearn_course_chunks"
-    MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-    TOP_K = 5
-    TEST_QUESTION = "What is React state?"
-
-    model = get_embedding_model(MODEL_NAME)
-    collection = get_collection(PERSIST_PATH, COLLECTION_NAME)
-
-    print(f"\nQuestion: {TEST_QUESTION}\n")
-    results = retrieve_context(TEST_QUESTION, collection, model, top_k=TOP_K)
-
-    for i, result in enumerate(results, start=1):
-        meta = result["metadata"]
-        source = meta.get("source_path") or meta.get("file_name") or "unknown"
-        print(f"[{i}] source: {source}  |  distance: {result['distance']:.4f}")
-        print(result["content"][:300])
-        print()
-
-    print("=== Formatted context block ===")
-    print(format_context(results))

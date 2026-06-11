@@ -136,6 +136,7 @@ function LearningWorkspace() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [messageSearchTerm, setMessageSearchTerm] = useState("");
+  const [conversationSearchTerm, setConversationSearchTerm] = useState("");
 
   useEffect(() => {
     async function loadConversations() {
@@ -213,6 +214,7 @@ function LearningWorkspace() {
     setErrorMessage("");
     setIsLoadingMessages(false);
     setMessageSearchTerm("");
+    setConversationSearchTerm("");
   }
 
   async function handleSelectConversation(selectedConversationId) {
@@ -240,6 +242,18 @@ function LearningWorkspace() {
       setIsLoadingMessages(false);
     }
   }
+
+  const normalizedConversationSearchTerm = conversationSearchTerm
+    .trim()
+    .toLowerCase();
+
+  const filteredConversations = normalizedConversationSearchTerm
+    ? conversations.filter((conversation) =>
+        (conversation.title || "Untitled conversation")
+          .toLowerCase()
+          .includes(normalizedConversationSearchTerm)
+      )
+    : conversations;
 
   const normalizedSearchTerm = messageSearchTerm.trim();
 
@@ -275,7 +289,12 @@ function LearningWorkspace() {
 
         <div className="search-box">
           <span>⌕</span>
-          <input type="text" placeholder="Search conversations" />
+          <input
+            type="text"
+            placeholder="Search conversations"
+            value={conversationSearchTerm}
+            onChange={(event) => setConversationSearchTerm(event.target.value)}
+          />
         </div>
 
         <div className="chat-history">
@@ -291,7 +310,13 @@ function LearningWorkspace() {
             )}
 
             {!isLoadingConversations &&
-              conversations.map((conversation) => (
+              conversations.length > 0 &&
+              filteredConversations.length === 0 && (
+              <p className="sidebar-helper-text">No conversations found.</p>
+            )}
+
+            {!isLoadingConversations &&
+              filteredConversations.map((conversation) => (
                 <button
                   className={`chat-history-item ${
                     conversation.id === conversationId

@@ -6,6 +6,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from backend.rag.schemas import RetrievalResult, RetrievedChunk
+
 
 class LLMBaseModel(BaseModel):
     model_config = ConfigDict(
@@ -24,15 +26,6 @@ class ChatRole(StrEnum):
 class ChatMessage(LLMBaseModel):
     role: ChatRole
     content: str
-
-
-class RetrievedChunk(LLMBaseModel):
-    content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class RetrievalResult(LLMBaseModel):
-    chunks: list[RetrievedChunk] = Field(default_factory=list)
 
 
 class GuardrailResult(LLMBaseModel):
@@ -92,17 +85,6 @@ class LLMResult(LLMBaseModel):
     output_guardrail_result: GuardrailResult = Field(default_factory=GuardrailResult)
     provider_response: ProviderResponse | None = None
     cost_components: list[LLMCostComponent] = Field(default_factory=list)
-
-
-class RetrievalProvider(Protocol):
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        user_id: UUID,
-        conversation_id: UUID,
-        user_message_id: UUID,
-    ) -> RetrievalResult: ...
 
 
 class LLMProvider(Protocol):
