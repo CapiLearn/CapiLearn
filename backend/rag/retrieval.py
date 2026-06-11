@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.database import SessionFactory
 from backend.core.observability import elapsed_ms, log_event, timer_start
 from backend.rag.config import RagBackend, RagSettings
+from backend.rag.deduplication import DeduplicationResult, deduplicate_chunks
 from backend.rag.defaults import (
     DEFAULT_RAG_MODEL_NAME,
     DEFAULT_RAG_TOP_K,
@@ -66,9 +67,11 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
             self._retrieve_raw,
             query,
         )
-        result = RetrievalResult(
-            chunks=[_retrieved_chunk_from_raw(item) for item in raw_chunks],
+        deduplicated = deduplicate_chunks(
+            [_retrieved_chunk_from_raw(item) for item in raw_chunks],
+            top_k=self._effective_top_k,
         )
+        result = RetrievalResult(chunks=deduplicated.chunks)
         _log_retrieval_completed(
             backend=RagBackend.CHROMA,
             result=result,
@@ -76,14 +79,23 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
             user_id=user_id,
             conversation_id=conversation_id,
             user_message_id=user_message_id,
+            deduplication=deduplicated,
         )
         return result
 
     def _retrieve_raw(self, query: str) -> list[dict[str, Any]]:
         return self._engine.retrieve(
             query,
-            top_k=self._top_k,
+            top_k=self._candidate_top_k,
         )
+
+    @property
+    def _effective_top_k(self) -> int:
+        return self._engine.config.top_k if self._top_k is None else self._top_k
+
+    @property
+    def _candidate_top_k(self) -> int:
+        return min(self._effective_top_k * 3, 50)
 
 
 class PgvectorRagRetrievalProvider(RetrievalProvider):
@@ -120,11 +132,13 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
             rows = await service.retrieve(
                 query_embedding=query_embedding,
                 embedding_model=self._model_name,
-                top_k=self._top_k,
+                top_k=min(self._top_k * 3, 50),
             )
-        result = RetrievalResult(
-            chunks=[_retrieved_chunk_from_similar_chunk(row) for row in rows],
+        deduplicated = deduplicate_chunks(
+            [_retrieved_chunk_from_similar_chunk(row) for row in rows],
+            top_k=self._top_k,
         )
+        result = RetrievalResult(chunks=deduplicated.chunks)
         _log_retrieval_completed(
             backend=RagBackend.PGVECTOR,
             result=result,
@@ -132,6 +146,7 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
             user_id=user_id,
             conversation_id=conversation_id,
             user_message_id=user_message_id,
+            deduplication=deduplicated,
         )
         return result
 
@@ -180,6 +195,7 @@ def _log_retrieval_completed(
     user_id: UUID,
     conversation_id: UUID,
     user_message_id: UUID,
+    deduplication: DeduplicationResult,
 ) -> None:
     log_event(
         logger,
@@ -187,6 +203,9 @@ def _log_retrieval_completed(
         backend=backend.value,
         latency_ms=elapsed_ms(started_at),
         chunk_count=len(result.chunks),
+        candidate_count=deduplication.candidate_count,
+        retained_count=len(result.chunks),
+        suppression_reasons=deduplication.suppression_reasons,
         chunks=[retrieval_chunk_log_metadata(chunk) for chunk in result.chunks[:5]],
         user_id=str(user_id),
         conversation_id=str(conversation_id),

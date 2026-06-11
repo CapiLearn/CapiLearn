@@ -88,6 +88,28 @@ class RagService:
         await self._session.commit()
         return rows
 
+    async def reconcile_documents(
+        self,
+        *,
+        source_type: str,
+        course_name: str,
+        seen_source_paths: Sequence[str],
+    ) -> int:
+        if not seen_source_paths:
+            raise ValueError("seen_source_paths must not be empty")
+        try:
+            count = await self._repository.deactivate_missing_documents(
+                self._session,
+                source_type=source_type,
+                course_name=course_name,
+                seen_source_paths=seen_source_paths,
+            )
+            await self._session.commit()
+            return count
+        except Exception:
+            await self._session.rollback()
+            raise
+
     async def replace_document_index(
         self,
         *,
@@ -168,6 +190,9 @@ def _validate_chunk_embeddings(
         raise ValueError("Chunk IDs are required when replacing a document index.")
     if len(chunk_ids) != len(chunks):
         raise ValueError("Chunk IDs must be unique when replacing a document index.")
+    chunk_indexes = {chunk.chunk_index for chunk in chunks}
+    if len(chunk_indexes) != len(chunks):
+        raise ValueError("Chunk indexes must be unique within a document.")
     if len(embeddings) != len(chunks):
         raise ValueError("Each chunk must have exactly one embedding.")
 

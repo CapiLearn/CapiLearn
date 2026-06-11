@@ -8,6 +8,8 @@ This folder contains engineering documentation for backend systems in CapiLearn.
 |---|---|
 | [rag/architecture.md](./rag/architecture.md) | Design decisions, system boundaries, and known limitations for the RAG layer |
 | [rag/runbook.md](./rag/runbook.md) | How to run, rebuild, evaluate, and troubleshoot the RAG pipeline |
+| [rag/metrics.md](./rag/metrics.md) | Dated live-ingestion measurements, schema population checks, and validation results |
+| [rag/engineering-notes.md](./rag/engineering-notes.md) | Reusable chunker rollout, verification, and development process notes |
 
 ## Documentation Conventions
 

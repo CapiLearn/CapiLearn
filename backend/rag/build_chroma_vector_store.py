@@ -65,7 +65,8 @@ def clean_metadata(chunk: dict) -> dict:
     """
     raw: dict = chunk.get("metadata", {})
 
-    return {
+    heading_path = raw.get("heading_path") or []
+    cleaned = {
         "source_path": raw.get("source_path") or "",
         "file_name": raw.get("file_name") or "",
         "file_type": raw.get("file_type") or "",
@@ -73,7 +74,17 @@ def clean_metadata(chunk: dict) -> dict:
         "day": raw.get("day") or "",
         "document_id": chunk.get("document_id") or "",
         "chunk_index": int(chunk.get("chunk_index", 0)),
+        "heading_path": " > ".join(str(part) for part in heading_path),
+        "section_heading": raw.get("section_heading") or "",
+        "chunk_type": raw.get("chunk_type") or "unknown",
+        "content_hash": raw.get("content_hash") or "",
+        "chunker_version": raw.get("chunker_version") or "",
     }
+    if raw.get("char_start") is not None:
+        cleaned["char_start"] = int(raw["char_start"])
+    if raw.get("char_end") is not None:
+        cleaned["char_end"] = int(raw["char_end"])
+    return cleaned
 
 
 # ---------------------------------------------------------------------------

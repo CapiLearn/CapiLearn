@@ -138,11 +138,16 @@ frontend/
 5. Run database migrations:
 
     ```bash
+    uv run alembic heads
     uv run alembic upgrade head
     uv run alembic current
     ```
 
-    The migration graph should have one head; verify it with `uv run alembic heads`.
+    The migration graph should have one head at `20260610_0008`. Phase 2
+    migration `0007` adds nullable chunk-contract fields and uniqueness
+    constraints; `0008` adds document activity fields. A fresh re-ingestion is
+    required after upgrading so the active corpus uses the new metadata and
+    `markdown-structure-v3` chunker.
 
 6. Ingest the pgvector corpus:
 
@@ -150,8 +155,17 @@ frontend/
     uv run python -m backend.ingestion.ingest_pgvector
     ```
 
-    The current corpus should produce 72 documents, 2,353 chunks, and 2,353
-    384-dimensional embeddings.
+    The current corpus should produce 72 active documents, 4,274 active chunks,
+    and 4,274 active 384-dimensional embeddings. Stale-source reconciliation is
+    intentionally opt-in:
+
+    ```bash
+    uv run python -m backend.ingestion.ingest_pgvector --fail-fast --reconcile-deletions
+    ```
+
+    Reconciliation retains stale documents with `is_active=false` and
+    `deleted_at` populated; inactive documents are excluded from retrieval.
+    See the RAG runbook before enabling this flag on a shared environment.
 
 7. Confirm `.env` selects the preferred backend:
 
