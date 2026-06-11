@@ -182,6 +182,9 @@ class AdminHealthService:
             embedding_count = await self._count(RagEmbedding.id)
             chunks_missing_embeddings = await self._count_chunks_missing_embeddings()
             configured_model_embedding_count = await self._count_configured_model_embeddings()
+            configured_model_active_document_count = (
+                await self._count_configured_model_active_documents()
+            )
             chunks_missing_configured_model_embeddings = (
                 await self._count_chunks_missing_configured_model_embeddings()
             )
@@ -208,14 +211,17 @@ class AdminHealthService:
 
         status = (
             HealthStatus.DEGRADED
-            if chunk_count > 0 and chunks_missing_configured_model_embeddings > 0
+            if configured_model_active_document_count == 0
+            or configured_model_embedding_count == 0
+            or (chunk_count > 0 and chunks_missing_configured_model_embeddings > 0)
             else HealthStatus.OK
         )
-        message = (
-            "RAG storage has chunks missing configured model embeddings."
-            if status == HealthStatus.DEGRADED
-            else "RAG storage counts are available."
-        )
+        if configured_model_active_document_count == 0 or configured_model_embedding_count == 0:
+            message = "RAG storage is not ready for the configured embedding model."
+        elif status == HealthStatus.DEGRADED:
+            message = "RAG storage has chunks missing configured model embeddings."
+        else:
+            message = "RAG storage counts are available."
         return AdminHealthCheck(
             name="rag",
             status=status,
@@ -232,6 +238,7 @@ class AdminHealthService:
                 "embeddings": embedding_count,
                 "chunksMissingEmbeddings": chunks_missing_embeddings,
                 "configuredModelEmbeddings": configured_model_embedding_count,
+                "configuredModelActiveDocuments": configured_model_active_document_count,
                 "chunksMissingConfiguredModelEmbeddings": (
                     chunks_missing_configured_model_embeddings
                 ),
@@ -402,6 +409,18 @@ class AdminHealthService:
         value = await self._session.scalar(
             select(func.count(RagEmbedding.id)).where(
                 RagEmbedding.embedding_model == self._rag_config.model_name
+            )
+        )
+        return int(value or 0)
+
+    async def _count_configured_model_active_documents(self) -> int:
+        value = await self._session.scalar(
+            select(func.count(func.distinct(RagDocument.id)))
+            .join(RagChunk, RagChunk.document_id == RagDocument.id)
+            .join(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
+            .where(
+                RagDocument.is_active.is_(True),
+                RagEmbedding.embedding_model == self._rag_config.model_name,
             )
         )
         return int(value or 0)

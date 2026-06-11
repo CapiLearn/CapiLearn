@@ -168,7 +168,18 @@ frontend/
     required after upgrading so the active corpus uses the new metadata and
     `markdown-structure-v3` chunker.
 
-6. Ingest the pgvector corpus:
+6. Fetch and preflight the pgvector corpus:
+
+    ```bash
+    uv run python -m backend.ingestion.fetch_corpus
+    uv run python -m backend.ingestion.ingest_pgvector --preflight-only
+    ```
+
+    The fetch command retrieves only the English Full Stack Open sources from
+    pinned upstream commit `33aa47f115a666c8c18de7b89e7a4d5bc24034cf`.
+    `RAG_CORPUS_SOURCE_PATH` controls the destination and ingestion source.
+
+7. Ingest the pgvector corpus:
 
     ```bash
     uv run python -m backend.ingestion.ingest_pgvector
@@ -190,7 +201,7 @@ frontend/
     `deleted_at` populated; inactive documents are excluded from retrieval.
     See the RAG runbook before enabling this flag on a shared environment.
 
-7. Confirm `.env` selects the supported runtime backend:
+8. Confirm `.env` selects the supported runtime backend:
 
     ```env
     RAG_BACKEND=pgvector
@@ -202,13 +213,13 @@ frontend/
     embedding provider, silently mixing vector spaces. `RAG_BACKEND=chroma`
     now fails configuration validation.
 
-8. Start the FastAPI backend:
+9. Start the FastAPI backend:
 
     ```bash
     uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001
     ```
 
-9. Smoke-test the backend:
+10. Smoke-test the backend:
 
     ```bash
     curl -sS http://127.0.0.1:8001/health
@@ -259,17 +270,18 @@ RAG_BACKEND=pgvector
 RAG_EMBEDDING_PROVIDER=openai
 RAG_MODEL_NAME=text-embedding-3-small
 RAG_EMBEDDING_DIMENSIONS=384
+RAG_CORPUS_SOURCE_PATH=backend/rag/source_corpus/fullstack_hy2020
 RAG_WRITE_RETRIEVAL_LOGS=true
 OPENAI_API_KEY=...
 CORS_ORIGINS=["https://your-frontend.onrender.com"]
 VITE_API_BASE_URL=https://your-api.onrender.com
 ```
 
-Do not deploy retrieval until the hosted corpus has been fully re-ingested
-with OpenAI `text-embedding-3-small` embeddings at 384 dimensions. Existing
-MiniLM vectors are incompatible even though they also contain 384 values. A
-clean hosted ingestion also requires resolving the corpus gitlink/source
-availability issue documented in the RAG runbook.
+Before enabling deployed retrieval, run the pinned corpus fetch, ingestion
+preflight, migrations, and full OpenAI re-ingestion from a Render shell or a
+trusted operator checkout. Existing MiniLM vectors are incompatible even
+though they also contain 384 values. The exact sequence and verification SQL
+are in the RAG runbook.
 
 Moving to 1536 dimensions is deferred. It requires a dedicated pgvector schema
 migration, vector-index rebuild, and full corpus re-ingestion.

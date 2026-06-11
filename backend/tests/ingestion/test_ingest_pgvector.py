@@ -9,8 +9,9 @@ from backend.ingestion.ingest_pgvector import (
     build_parser,
     ingest_corpus,
     prepare_corpus,
+    run_ingestion_preflight,
 )
-from backend.rag.config import RagEmbeddingProvider, RagSettings
+from backend.rag.config import RagBackend, RagEmbeddingProvider, RagSettings
 from backend.rag.models import EMBEDDING_DIMENSIONS
 
 
@@ -57,15 +58,13 @@ async def test_dry_run_does_not_load_model_or_open_database(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_empty_scan_does_not_open_database_or_reconcile(tmp_path: Path) -> None:
-    summary = await ingest_corpus(
-        IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        embedding_provider=FailingEmbeddingProvider(),
-        session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
-    )
-
-    assert summary.prepared_documents == 0
-    assert summary.documents_deactivated == 0
+async def test_empty_corpus_fails_before_database_or_provider_use(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="contains no supported files"):
+        await ingest_corpus(
+            IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
+            embedding_provider=FailingEmbeddingProvider(),
+            session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
+        )
 
 
 @pytest.mark.asyncio
@@ -116,6 +115,59 @@ def test_cli_overrides_reject_openai_model_for_sentence_transformers() -> None:
 
     with pytest.raises(ValueError, match="all-MiniLM-L6-v2"):
         build_ingestion_config(args, settings)
+
+
+def test_preflight_rejects_missing_corpus_path(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing"
+
+    with pytest.raises(FileNotFoundError, match="backend.ingestion.fetch_corpus"):
+        run_ingestion_preflight(
+            IngestionConfig(repo_path=missing_path),
+            require_database_url=False,
+        )
+
+
+def test_preflight_rejects_corpus_without_english_sources(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/es/part1.md", "# Estado")
+
+    with pytest.raises(ValueError, match="no non-empty English course files"):
+        run_ingestion_preflight(
+            IngestionConfig(repo_path=tmp_path),
+            require_database_url=False,
+        )
+
+
+def test_preflight_accepts_fixture_corpus_and_valid_contract(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/en/part1.md", "# State")
+    config = IngestionConfig(
+        repo_path=tmp_path,
+        backend=RagBackend.PGVECTOR,
+        database_url="postgresql+asyncpg://user:password@host/capilearn",
+    )
+
+    result = run_ingestion_preflight(config, require_database_url=True)
+
+    assert result.corpus_path == tmp_path.resolve()
+    assert result.supported_files == 1
+    assert result.nonempty_english_files == 1
+
+
+def test_preflight_requires_database_url_for_ingestion(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/en/part1.md", "# State")
+
+    with pytest.raises(ValueError, match="DATABASE_URL is required"):
+        run_ingestion_preflight(
+            IngestionConfig(repo_path=tmp_path, database_url=""),
+            require_database_url=True,
+        )
+
+
+def test_corpus_source_path_setting_is_used_by_parser(tmp_path: Path) -> None:
+    settings = RagSettings(_env_file=None, corpus_source_path=tmp_path)
+
+    args = build_parser(settings).parse_args([])
+
+    assert args.repo_path == tmp_path
 
 
 @pytest.mark.asyncio

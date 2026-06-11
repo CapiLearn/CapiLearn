@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.config import settings as app_settings
 from backend.core.database import SessionFactory
 from backend.ingestion.ingest_repo import find_course_files, make_document
 from backend.rag.chunk_documents import is_english_source
@@ -43,20 +44,21 @@ DEFAULT_MODEL_NAME = DEFAULT_RAG_MODEL_NAME
 DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_EMBEDDING_BATCH_SIZE = 64
-DEFAULT_REPO_PATH = Path(__file__).parent / "data" / "raw" / "fullstack-hy2020.github.io"
 SessionFactoryCallable = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 RagServiceFactory = Callable[..., RagService]
 
 
 @dataclass(frozen=True)
 class IngestionConfig:
-    repo_path: Path = DEFAULT_REPO_PATH
+    repo_path: Path = Path("backend/rag/source_corpus/fullstack_hy2020")
+    backend: RagBackend = RagBackend.PGVECTOR
     source_type: str = "course_repo"
     course_name: str = "Full Stack Open"
     embedding_provider: RagEmbeddingProvider = RagEmbeddingProvider(DEFAULT_RAG_EMBEDDING_PROVIDER)
     model_name: str = DEFAULT_MODEL_NAME
     embedding_dimensions: int = DEFAULT_RAG_EMBEDDING_DIMENSIONS
     openai_api_key: str | None = None
+    database_url: str | None = field(default=None, repr=False)
     chunk_size: int = DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
     min_chunk_chars: int = DEFAULT_MIN_CHUNK_CHARS
@@ -93,10 +95,69 @@ class IngestionSummary:
     seen_source_paths: set[str] = field(default_factory=set, repr=False)
 
 
+@dataclass(frozen=True)
+class IngestionPreflight:
+    corpus_path: Path
+    supported_files: int
+    nonempty_english_files: int
+
+
+def run_ingestion_preflight(
+    config: IngestionConfig,
+    *,
+    require_database_url: bool,
+) -> IngestionPreflight:
+    if config.backend != RagBackend.PGVECTOR:
+        raise ValueError("Ingestion requires RAG_BACKEND=pgvector.")
+    validate_embedding_contract(
+        provider=config.embedding_provider,
+        model_name=config.model_name,
+        dimensions=config.embedding_dimensions,
+        openai_api_key=config.openai_api_key,
+    )
+    corpus_path = config.repo_path.resolve()
+    if not corpus_path.exists():
+        raise FileNotFoundError(
+            f"RAG corpus source path does not exist: {corpus_path}. "
+            "Run `uv run python -m backend.ingestion.fetch_corpus` or set "
+            "RAG_CORPUS_SOURCE_PATH to an existing Full Stack Open checkout."
+        )
+    if not corpus_path.is_dir():
+        raise ValueError(f"RAG corpus source path is not a directory: {corpus_path}")
+
+    supported_files = sorted(find_course_files(corpus_path))
+    if not supported_files:
+        raise ValueError(
+            f"RAG corpus source path contains no supported files: {corpus_path}. "
+            "Expected .md, .txt, .py, or .ipynb course sources."
+        )
+    nonempty_english_files = [
+        path
+        for path in supported_files
+        if is_english_source(
+            {"metadata": {"source_path": path.relative_to(corpus_path).as_posix()}}
+        )
+        and path.stat().st_size > 0
+    ]
+    if not nonempty_english_files:
+        raise ValueError(
+            f"RAG corpus source path contains no non-empty English course files: {corpus_path}. "
+            "Expected files under an `/en/` source directory."
+        )
+    if require_database_url and not (config.database_url or "").strip():
+        raise ValueError(
+            "DATABASE_URL is required for pgvector ingestion. Set it to the target Render "
+            "PostgreSQL URL before running ingestion."
+        )
+    return IngestionPreflight(
+        corpus_path=corpus_path,
+        supported_files=len(supported_files),
+        nonempty_english_files=len(nonempty_english_files),
+    )
+
+
 def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], IngestionSummary]:
     repo_root = config.repo_path.resolve()
-    if not repo_root.exists():
-        raise FileNotFoundError(f"Repository path does not exist: {repo_root}")
     if config.chunk_size < 1:
         raise ValueError("chunk_size must be at least 1")
     if config.chunk_overlap < 0 or config.chunk_overlap >= config.chunk_size:
@@ -171,11 +232,9 @@ async def ingest_corpus(
     session_factory: SessionFactoryCallable = SessionFactory,
     service_factory: RagServiceFactory = RagService,
 ) -> IngestionSummary:
-    validate_embedding_contract(
-        provider=config.embedding_provider,
-        model_name=config.model_name,
-        dimensions=config.embedding_dimensions,
-        openai_api_key=config.openai_api_key,
+    run_ingestion_preflight(
+        config,
+        require_database_url=not config.dry_run and config.database_url is not None,
     )
     prepared, summary = prepare_corpus(config)
     _log_preprocessing_summary(summary)
@@ -347,7 +406,12 @@ def build_parser(settings: RagSettings | None = None) -> argparse.ArgumentParser
     parser = argparse.ArgumentParser(
         description="Rebuild PostgreSQL/pgvector RAG records from a course repository."
     )
-    parser.add_argument("--repo-path", type=Path, default=DEFAULT_REPO_PATH)
+    parser.add_argument(
+        "--repo-path",
+        type=Path,
+        default=settings.corpus_source_path,
+        help="Corpus source directory; defaults to RAG_CORPUS_SOURCE_PATH.",
+    )
     parser.add_argument("--source-type", default="course_repo")
     parser.add_argument("--course-name", default="Full Stack Open")
     parser.add_argument(
@@ -375,6 +439,11 @@ def build_parser(settings: RagSettings | None = None) -> argparse.ArgumentParser
         default=DEFAULT_EMBEDDING_BATCH_SIZE,
     )
     parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Validate corpus, embedding configuration, and DATABASE_URL without ingestion.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Preprocess and report counts without loading the model or connecting to Postgres.",
@@ -397,6 +466,19 @@ def main() -> None:
     settings = RagSettings()
     args = build_parser(settings).parse_args()
     config = build_ingestion_config(args, settings)
+    preflight = run_ingestion_preflight(config, require_database_url=not args.dry_run)
+    logger.info(
+        "Ingestion preflight passed: corpus=%s supported_files=%d english_files=%d "
+        "provider=%s model=%s dimensions=%d",
+        preflight.corpus_path,
+        preflight.supported_files,
+        preflight.nonempty_english_files,
+        config.embedding_provider.value,
+        config.model_name,
+        config.embedding_dimensions,
+    )
+    if args.preflight_only:
+        return
     asyncio.run(ingest_corpus(config))
 
 
@@ -414,12 +496,14 @@ def build_ingestion_config(
     )
     return IngestionConfig(
         repo_path=args.repo_path,
+        backend=embedding_settings.backend,
         source_type=args.source_type,
         course_name=args.course_name,
         embedding_provider=embedding_settings.embedding_provider,
         model_name=embedding_settings.model_name,
         embedding_dimensions=embedding_settings.embedding_dimensions,
         openai_api_key=embedding_settings.openai_api_key,
+        database_url=app_settings.database_url,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
         min_chunk_chars=args.min_chunk_chars,

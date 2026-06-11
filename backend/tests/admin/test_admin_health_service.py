@@ -67,7 +67,7 @@ async def test_admin_health_response_is_cached_for_short_ttl() -> None:
 
     assert first_response.checked_at == second_response.checked_at
     assert second_response.checks[0].message == "Backend process is responding."
-    assert first_load_statement_count == 9
+    assert first_load_statement_count == 10
     assert len(session.scalar_statements) == first_load_statement_count
     assert provider.requested_providers == ["openai"]
 
@@ -114,6 +114,7 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
             4,
             1,
             4,
+            2,
             1,
             datetime(2026, 6, 9, 11, tzinfo=UTC),
             datetime(2026, 6, 9, 11, 30, tzinfo=UTC),
@@ -143,6 +144,7 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
     assert rag_check.details["embeddings"] == 4
     assert rag_check.details["chunksMissingEmbeddings"] == 1
     assert rag_check.details["configuredModelEmbeddings"] == 4
+    assert rag_check.details["configuredModelActiveDocuments"] == 2
     assert rag_check.details["chunksMissingConfiguredModelEmbeddings"] == 1
     assert rag_check.details["latestDocumentUpdatedAt"] == "2026-06-09T11:00:00+00:00"
 
@@ -155,6 +157,7 @@ async def test_pgvector_rag_is_degraded_when_only_old_model_embeddings_exist() -
                 2,
                 5,
                 5,
+                0,
                 0,
                 0,
                 5,
@@ -180,6 +183,7 @@ async def test_pgvector_rag_is_degraded_when_only_old_model_embeddings_exist() -
     assert rag_check.details["embeddings"] == 5
     assert rag_check.details["chunksMissingEmbeddings"] == 0
     assert rag_check.details["configuredModelEmbeddings"] == 0
+    assert rag_check.details["configuredModelActiveDocuments"] == 0
     assert rag_check.details["chunksMissingConfiguredModelEmbeddings"] == 5
 
 
@@ -193,6 +197,7 @@ async def test_pgvector_rag_is_ok_when_all_chunks_have_configured_model_embeddin
                 7,
                 0,
                 5,
+                2,
                 0,
                 datetime(2026, 6, 9, 11, tzinfo=UTC),
                 None,
@@ -213,6 +218,7 @@ async def test_pgvector_rag_is_ok_when_all_chunks_have_configured_model_embeddin
 
     assert rag_check.status == HealthStatus.OK
     assert rag_check.details["configuredModelEmbeddings"] == 5
+    assert rag_check.details["configuredModelActiveDocuments"] == 2
     assert rag_check.details["chunksMissingConfiguredModelEmbeddings"] == 0
 
 

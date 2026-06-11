@@ -66,3 +66,4 @@ logs/
 backend/ingestion/data/vector_store/chroma/
 backend/ingestion/data/processed/*.json
 backend/ingestion/data/raw/
+backend/rag/source_corpus/

@@ -3,9 +3,10 @@
 ## Prerequisites
 
 - Python 3.13 and project dependencies installed with `uv sync`
+- Git and outbound access to GitHub for the pinned corpus fetch
 - Docker and Docker Compose
-- Raw Full Stack Open repository at
-  `backend/ingestion/data/raw/fullstack-hy2020.github.io/`
+- `RAG_CORPUS_SOURCE_PATH`, defaulting to
+  `backend/rag/source_corpus/fullstack_hy2020`
 - `DATABASE_URL` using `postgresql+asyncpg://`
 - A database backup or snapshot before production schema changes
 
@@ -13,6 +14,44 @@ PostgreSQL uses pgvector with a `vector(384)` column. Deployed environments use
 OpenAI `text-embedding-3-small` with `dimensions=384`; no psycopg package is
 used. Local Sentence Transformers support requires
 `uv sync --extra local-embeddings`.
+
+## Render Manual Deployment And Re-Ingestion
+
+Set these backend environment variables in Render:
+
+```dotenv
+DATABASE_URL=postgresql://...
+OPENAI_API_KEY=...
+RAG_BACKEND=pgvector
+RAG_EMBEDDING_PROVIDER=openai
+RAG_MODEL_NAME=text-embedding-3-small
+RAG_EMBEDDING_DIMENSIONS=384
+RAG_CORPUS_SOURCE_PATH=backend/rag/source_corpus/fullstack_hy2020
+RAG_WRITE_RETRIEVAL_LOGS=true
+CORS_ORIGINS=["https://your-frontend.onrender.com"]
+```
+
+Set `VITE_API_BASE_URL=https://your-api.onrender.com` on the frontend static
+site. It is a frontend build-time variable, not a backend variable.
+
+From a Render shell or trusted operator checkout using the same environment:
+
+```bash
+uv run alembic upgrade head
+uv run python -m backend.ingestion.fetch_corpus
+uv run python -m backend.ingestion.ingest_pgvector --preflight-only
+uv run python -m backend.ingestion.ingest_pgvector --fail-fast
+```
+
+The fetch command uses sparse checkout against pinned upstream commit
+`33aa47f115a666c8c18de7b89e7a4d5bc24034cf` and downloads only English course
+sources plus license files. It refuses to overwrite a non-empty unexpected
+target. Render filesystems are ephemeral, so repeat the fetch before any later
+manual re-ingestion; the PostgreSQL records remain in managed Postgres.
+
+Do not enable retrieval until the verification SQL below shows active
+`text-embedding-3-small` embeddings. OpenAI and MiniLM vectors are incompatible
+even though both contain 384 values.
 
 ## Phase 2 Deployment Order
 
@@ -55,11 +94,16 @@ Preview ingestion without loading the model or opening PostgreSQL:
 uv run python -m backend.ingestion.ingest_pgvector --dry-run --fail-fast
 ```
 
-Before a hosted/manual ingestion, confirm
-`backend/ingestion/data/raw/fullstack-hy2020.github.io/` exists and contains
-the expected course source. The current repository contains a corpus gitlink
-without a matching `.gitmodules` entry, so a clean hosted checkout must not
-assume the source corpus is available.
+Fetch and validate the configured corpus:
+
+```bash
+uv run python -m backend.ingestion.fetch_corpus
+uv run python -m backend.ingestion.ingest_pgvector --preflight-only
+```
+
+The preflight checks the corpus directory, supported non-empty English files,
+pgvector backend, embedding provider/model/dimensions, OpenAI key, and
+`DATABASE_URL`. It does not call OpenAI or connect to PostgreSQL.
 
 Run a fresh ingestion without stale-source reconciliation:
 
@@ -166,6 +210,14 @@ FROM rag_embeddings e
 JOIN rag_chunks c ON c.id = e.chunk_id
 JOIN rag_documents d ON d.id = c.document_id
 WHERE d.is_active IS TRUE;
+
+SELECT e.embedding_model, COUNT(*) AS active_embeddings
+FROM rag_embeddings e
+JOIN rag_chunks c ON c.id = e.chunk_id
+JOIN rag_documents d ON d.id = c.document_id
+WHERE d.is_active IS TRUE
+GROUP BY e.embedding_model
+ORDER BY e.embedding_model;
 ```
 
 ### Version and Contract Population
@@ -284,6 +336,7 @@ RAG_BACKEND=pgvector
 RAG_EMBEDDING_PROVIDER=openai
 RAG_MODEL_NAME=text-embedding-3-small
 RAG_EMBEDDING_DIMENSIONS=384
+RAG_CORPUS_SOURCE_PATH=backend/rag/source_corpus/fullstack_hy2020
 RAG_TOP_K=5
 RAG_WRITE_RETRIEVAL_LOGS=true
 # RAG_INDEX_VERSION=full-stack-open-2026-06
@@ -401,9 +454,8 @@ The first local model load may download files from Hugging Face. Use
 manual operation and must not run in FastAPI startup.
 
 Do not deploy retrieval until the hosted corpus has been fully re-ingested
-with OpenAI `text-embedding-3-small` embeddings. Hosted ingestion still
-requires resolving the corpus gitlink/source availability issue described in
-the deployment preflight.
+with OpenAI `text-embedding-3-small` embeddings. Acquire the source with the
+pinned fetch command and run `--preflight-only` before every manual ingestion.
 
 A future 1536-dimensional OpenAI contract requires a dedicated pgvector
 migration, vector-index rebuild, and full corpus re-ingestion.

@@ -108,6 +108,6 @@ def ingest_repo(repo_path: str, output_path: str = "data/processed/documents.jso
 
 if __name__ == "__main__":
     ingest_repo(
-        repo_path="data/raw/fullstack-hy2020.github.io",
+        repo_path="backend/rag/source_corpus/fullstack_hy2020",
         output_path="data/processed/documents.json",
     )

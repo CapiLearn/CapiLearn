@@ -18,7 +18,7 @@ This page documents external sources, datasets, course materials, models, librar
 | **Use in CapiLearn** | First course corpus used to test ingestion, chunking, vector storage, and retrieval during local RAG development |
 | **License** | Creative Commons BY-NC-SA 3.0, per the source repository README |
 
-The Full Stack Open material is used for development and evaluation purposes within the RAG pipeline. CapiLearn does not redistribute or republish this material.
+The Full Stack Open material is used for development and evaluation purposes within the RAG pipeline. CapiLearn does not redistribute or republish this material. Operators acquire the pinned upstream source directly with `python -m backend.ingestion.fetch_corpus`.
 
 ---
 

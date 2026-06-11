@@ -1,5 +1,6 @@
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,6 +34,7 @@ class RagSettings(BaseSettings):
     top_k: int = Field(default=DEFAULT_RAG_TOP_K, ge=1)
     write_retrieval_logs: bool = True
     index_version: str | None = None
+    corpus_source_path: Path = Path("backend/rag/source_corpus/fullstack_hy2020")
     openai_api_key: str | None = Field(
         default=None,
         validation_alias="OPENAI_API_KEY",

@@ -2,6 +2,7 @@ import importlib
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -14,6 +15,15 @@ def test_pgvector_is_the_only_supported_runtime_backend() -> None:
     settings = RagSettings(_env_file=None)
 
     assert settings.backend == RagBackend.PGVECTOR
+    assert settings.corpus_source_path == Path("backend/rag/source_corpus/fullstack_hy2020")
+
+
+def test_corpus_source_path_environment_is_respected(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("RAG_CORPUS_SOURCE_PATH", str(tmp_path))
+
+    settings = RagSettings(_env_file=None)
+
+    assert settings.corpus_source_path == tmp_path
 
 
 def test_chroma_runtime_backend_is_rejected() -> None:

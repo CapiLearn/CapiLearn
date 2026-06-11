@@ -46,9 +46,11 @@ and 4,274 embeddings. All active chunks use `markdown-structure-v3`.
 
 ## Source Loading and Ingestion
 
-`backend/ingestion/ingest_pgvector.py` reads supported files from the Full
-Stack Open repository using `find_course_files()` and `make_document()`.
-English source paths are selected using the existing `/en/` convention.
+`backend/ingestion/fetch_corpus.py` sparsely fetches English Full Stack Open
+sources from a pinned upstream commit into `RAG_CORPUS_SOURCE_PATH`.
+`backend/ingestion/ingest_pgvector.py` reads supported files from that path
+using `find_course_files()` and `make_document()`. English source paths are
+selected using the existing `/en/` convention.
 
 Each source document is identified by `(source_type, source_path)` and replaced
 atomically:
@@ -203,9 +205,10 @@ during configuration validation. Historical local scripts remain temporarily
 available behind `uv sync --extra legacy-chroma`, but they are not imported by
 FastAPI and must not be used as a deployment rollback.
 
-Production deployment remains blocked until the hosted corpus is fully
-re-ingested with OpenAI embeddings. The corpus gitlink/source availability
-issue must be resolved before that hosted ingestion can run reliably.
+Production retrieval remains blocked until the hosted database is fully
+re-ingested with OpenAI embeddings. A clean checkout can acquire the pinned
+corpus through `python -m backend.ingestion.fetch_corpus`; ingestion preflight
+then verifies source availability and the configured embedding contract.
 
 A future move from 384 to 1536 dimensions requires a dedicated schema
 migration, vector-index rebuild, and full re-ingestion.
