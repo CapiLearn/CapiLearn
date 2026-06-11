@@ -90,7 +90,9 @@ class IngestionSummary:
     documents_deactivated: int = 0
     database_failures: int = 0
     failed_paths: list[str] = field(default_factory=list)
-    seen_source_paths: set[str] = field(default_factory=set, repr=False)
+    discovered_source_paths: set[str] = field(default_factory=set, repr=False)
+    indexed_source_paths: set[str] = field(default_factory=set, repr=False)
+    unindexable_source_paths: set[str] = field(default_factory=set, repr=False)
 
 
 def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], IngestionSummary]:
@@ -114,16 +116,18 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
 
     for path in files:
         relative_path = path.relative_to(repo_root).as_posix()
+        summary.discovered_source_paths.add(relative_path)
         try:
             document = make_document(path, repo_root)
             document["id"] = relative_path
             document["metadata"]["source_path"] = relative_path
             if not is_english_source(document):
                 summary.skipped_non_english += 1
+                summary.unindexable_source_paths.add(relative_path)
                 continue
-            summary.seen_source_paths.add(relative_path)
             if not document["content"]:
                 summary.skipped_empty += 1
+                summary.unindexable_source_paths.add(relative_path)
                 continue
 
             chunks = prepare_chunks(
@@ -141,6 +145,7 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
             )
             if not chunks:
                 summary.skipped_empty += 1
+                summary.unindexable_source_paths.add(relative_path)
                 continue
 
             prepared.append(
@@ -184,33 +189,35 @@ async def ingest_corpus(
         )
         return summary
 
-    if not prepared:
-        logger.warning("No documents were prepared; nothing will be written.")
+    if not prepared and not summary.unindexable_source_paths:
+        logger.warning("No documents were prepared; nothing will be written or deactivated.")
         return summary
 
-    model = model_factory(config.model_name)
-    dimensions = model.get_sentence_embedding_dimension()
-    if dimensions != EMBEDDING_DIMENSIONS:
-        raise ValueError(
-            f"Embedding model must produce {EMBEDDING_DIMENSIONS} dimensions; "
-            f"{config.model_name} reports {dimensions}."
-        )
+    vectors: list[Any] = []
+    if prepared:
+        model = model_factory(config.model_name)
+        dimensions = model.get_sentence_embedding_dimension()
+        if dimensions != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Embedding model must produce {EMBEDDING_DIMENSIONS} dimensions; "
+                f"{config.model_name} reports {dimensions}."
+            )
 
-    all_chunks = [chunk for document in prepared for chunk in document.chunks]
-    logger.info(
-        "Generating embeddings: model=%s chunks=%d batch_size=%d",
-        config.model_name,
-        len(all_chunks),
-        config.embedding_batch_size,
-    )
-    encoded = model.encode(
-        [chunk.content for chunk in all_chunks],
-        batch_size=config.embedding_batch_size,
-        show_progress_bar=True,
-    )
-    vectors = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
-    if len(vectors) != len(all_chunks):
-        raise ValueError("Embedding model returned a different number of vectors than chunks.")
+        all_chunks = [chunk for document in prepared for chunk in document.chunks]
+        logger.info(
+            "Generating embeddings: model=%s chunks=%d batch_size=%d",
+            config.model_name,
+            len(all_chunks),
+            config.embedding_batch_size,
+        )
+        encoded = model.encode(
+            [chunk.content for chunk in all_chunks],
+            batch_size=config.embedding_batch_size,
+            show_progress_bar=True,
+        )
+        vectors = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
+        if len(vectors) != len(all_chunks):
+            raise ValueError("Embedding model returned a different number of vectors than chunks.")
 
     vector_offset = 0
     async with session_factory() as session:
@@ -256,6 +263,7 @@ async def ingest_corpus(
                 summary.documents_written += 1
                 summary.chunks_written += len(chunks)
                 summary.embeddings_written += len(embeddings)
+                summary.indexed_source_paths.add(document.source_path)
                 logger.info(
                     "Indexed document: source=%s chunks=%d embeddings=%d",
                     document.source_path,
@@ -269,12 +277,25 @@ async def ingest_corpus(
                 if config.fail_fast:
                     raise
 
-        if _can_reconcile(config, summary):
+        if summary.unindexable_source_paths:
             try:
-                summary.documents_deactivated = await service.reconcile_documents(
+                summary.documents_deactivated += await service.deactivate_documents_by_source_paths(
                     source_type=config.source_type,
                     course_name=config.course_name,
-                    seen_source_paths=sorted(summary.seen_source_paths),
+                    source_paths=sorted(summary.unindexable_source_paths),
+                )
+            except Exception:
+                summary.database_failures += 1
+                logger.exception("Failed to deactivate unindexable source documents.")
+                if config.fail_fast:
+                    raise
+
+        if _can_reconcile(config, summary):
+            try:
+                summary.documents_deactivated += await service.reconcile_documents(
+                    source_type=config.source_type,
+                    course_name=config.course_name,
+                    seen_source_paths=sorted(summary.discovered_source_paths),
                 )
             except Exception:
                 summary.database_failures += 1
@@ -289,7 +310,7 @@ async def ingest_corpus(
                 summary.prepared_documents,
                 summary.preprocessing_failures,
                 summary.database_failures,
-                len(summary.seen_source_paths),
+                len(summary.discovered_source_paths),
             )
 
     _log_write_summary(summary)
@@ -300,8 +321,7 @@ def _can_reconcile(config: IngestionConfig, summary: IngestionSummary) -> bool:
     return (
         config.reconcile_deletions
         and not config.dry_run
-        and summary.prepared_documents > 0
-        and bool(summary.seen_source_paths)
+        and bool(summary.discovered_source_paths)
         and summary.preprocessing_failures == 0
         and summary.database_failures == 0
     )

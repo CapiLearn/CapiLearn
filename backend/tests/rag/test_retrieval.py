@@ -12,6 +12,7 @@ from backend.rag.retrieval import (
     ChromaRagRetrievalProvider,
     PgvectorRagRetrievalProvider,
     build_rag_retrieval_provider,
+    candidate_pool_size,
 )
 from backend.rag.schemas import RetrievalProvider
 
@@ -118,6 +119,82 @@ def test_pgvector_settings_reject_unsupported_embedding_model() -> None:
             backend=RagBackend.PGVECTOR,
             model_name="custom-pgvector-model",
         )
+
+
+def test_rag_settings_reject_top_k_above_max_candidates() -> None:
+    with pytest.raises(ValueError, match="RAG_TOP_K"):
+        RagSettings(top_k=51, max_candidates=50)
+
+
+def test_rag_settings_reject_non_positive_candidate_multiplier() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        RagSettings(candidate_pool_multiplier=0)
+
+
+def test_rag_settings_reject_non_positive_max_candidates() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        RagSettings(max_candidates=0)
+
+
+def test_candidate_pool_is_capped_at_configured_maximum() -> None:
+    assert candidate_pool_size(20, 3, 50) == 50
+
+
+@pytest.mark.asyncio
+async def test_both_providers_use_configured_candidate_pool() -> None:
+    chroma_engine = FakeChromaRagQueryEngine()
+    chroma = ChromaRagRetrievalProvider(
+        engine=chroma_engine,
+        top_k=2,
+        candidate_pool_multiplier=4,
+        max_candidates=7,
+    )
+    pgvector_service = FakePgvectorService()
+    pgvector = PgvectorRagRetrievalProvider(
+        top_k=2,
+        candidate_pool_multiplier=4,
+        max_candidates=7,
+        session_factory=FakeSessionFactory,
+        service_factory=lambda *, session: pgvector_service,
+        embedding_provider=FakeEmbeddingProvider(),
+    )
+
+    await chroma.retrieve(
+        "Question",
+        user_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_id=uuid4(),
+    )
+    await pgvector.retrieve(
+        "Question",
+        user_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_id=uuid4(),
+    )
+
+    assert chroma_engine.calls == [("Question", 7)]
+    assert pgvector_service.calls[0]["top_k"] == 7
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "kwargs", "message"),
+    [
+        (ChromaRagRetrievalProvider, {"candidate_pool_multiplier": 0}, "multiplier"),
+        (PgvectorRagRetrievalProvider, {"max_candidates": 0}, "max_candidates"),
+        (
+            PgvectorRagRetrievalProvider,
+            {"top_k": 51, "max_candidates": 50},
+            "less than or equal",
+        ),
+    ],
+)
+def test_direct_provider_construction_rejects_invalid_candidate_settings(
+    provider_type,
+    kwargs,
+    message,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        provider_type(**kwargs)
 
 
 @pytest.mark.asyncio

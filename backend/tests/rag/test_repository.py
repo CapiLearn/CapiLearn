@@ -286,6 +286,38 @@ async def test_deactivate_missing_documents_rejects_empty_scan() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_deactivate_documents_by_source_paths_scopes_active_documents() -> None:
+    session = RowCountSession(rowcount=2)
+
+    count = await RagRepository().deactivate_documents_by_source_paths(
+        session,
+        source_type="course_repo",
+        course_name="Full Stack Open",
+        source_paths=["empty.md", "excluded.md"],
+    )
+
+    sql = _compiled_sql(session.statement)
+    assert count == 2
+    assert "UPDATE rag_documents" in sql
+    assert "rag_documents.source_type =" in sql
+    assert "rag_documents.course_name =" in sql
+    assert "rag_documents.is_active IS true" in sql
+    assert "rag_documents.source_path IN" in sql
+    assert "DELETE" not in sql
+
+
+@pytest.mark.asyncio
+async def test_deactivate_documents_by_source_paths_rejects_empty_paths() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        await RagRepository().deactivate_documents_by_source_paths(
+            RowCountSession(rowcount=0),
+            source_type="course_repo",
+            course_name="Full Stack Open",
+            source_paths=[],
+        )
+
+
 class CapturingSession:
     def __init__(self, *, rows: list[tuple]) -> None:
         self.statement = None

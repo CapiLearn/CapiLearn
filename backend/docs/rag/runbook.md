@@ -259,7 +259,7 @@ Reconciliation is opt-in. It runs only when:
 
 - `--reconcile-deletions` was provided
 - the run is not a dry run
-- at least one document and source path were discovered
+- at least one source path was discovered
 - preprocessing completed without failure
 - every database replacement completed without failure
 
@@ -267,6 +267,10 @@ It does not run after an empty, failed, partial, or dry-run ingestion. Its
 scope is the configured `source_type` and `course_name`. A source that
 reappears is reactivated automatically by the normal document upsert, which
 sets `is_active=true` and clears `deleted_at`.
+
+Separate from missing-source reconciliation, non-dry ingestion targets
+discovered sources that are empty, excluded, or produce no chunks for soft
+deactivation. Unexpected preprocessing failures are not targeted.
 
 ## Enable pgvector Retrieval
 
@@ -276,6 +280,8 @@ Set these values before application startup:
 RAG_BACKEND=pgvector
 RAG_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
 RAG_TOP_K=5
+RAG_CANDIDATE_POOL_MULTIPLIER=3
+RAG_MAX_CANDIDATES=50
 RAG_WRITE_RETRIEVAL_LOGS=true
 # RAG_INDEX_VERSION=full-stack-open-2026-06
 ```
