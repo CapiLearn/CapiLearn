@@ -19,11 +19,11 @@ from backend.llm.config import (
 from backend.rag.config import RagBackend, RagSettings, rag_settings
 from backend.rag.models import RagChunk, RagDocument, RagEmbedding, RagRetrievalLog
 
-MODEL_ACCESS_CACHE_TTL_SECONDS = 300
+PROVIDER_METADATA_CACHE_TTL_SECONDS = 300
 ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
 
 
-class ModelAccessProvider(Protocol):
+class ProviderMetadataProvider(Protocol):
     async def get_models(self, provider: str) -> list[str]: ...
 
 
@@ -57,11 +57,11 @@ class AdminHealthResponseCache:
         self._expires_at = 0.0
 
 
-class CachedLiteLLMModelAccessProvider:
+class CachedLiteLLMProviderMetadataProvider:
     def __init__(
         self,
         *,
-        ttl_seconds: int = MODEL_ACCESS_CACHE_TTL_SECONDS,
+        ttl_seconds: int = PROVIDER_METADATA_CACHE_TTL_SECONDS,
         model_loader: Callable[[str], list[str]] | None = None,
     ) -> None:
         self._ttl_seconds = ttl_seconds
@@ -101,7 +101,7 @@ def _load_valid_models(provider: str) -> list[str]:
     )
 
 
-model_access_provider = CachedLiteLLMModelAccessProvider()
+provider_metadata_provider = CachedLiteLLMProviderMetadataProvider()
 admin_health_response_cache = AdminHealthResponseCache()
 
 
@@ -110,14 +110,14 @@ class AdminHealthService:
         self,
         *,
         session: AsyncSession,
-        model_provider: ModelAccessProvider = model_access_provider,
+        provider_metadata_provider: ProviderMetadataProvider = provider_metadata_provider,
         response_cache: AdminHealthResponseCache = admin_health_response_cache,
         llm_config: LLMSettings = llm_settings,
         rag_config: RagSettings = rag_settings,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._session = session
-        self._model_provider = model_provider
+        self._provider_metadata_provider = provider_metadata_provider
         self._response_cache = response_cache
         self._llm_config = llm_config
         self._rag_config = rag_config
@@ -132,7 +132,7 @@ class AdminHealthService:
             self._check_backend(),
             await self._check_database(),
             await self._check_rag(),
-            await self._check_llm_model_access(),
+            await self._check_llm_provider_metadata(),
             await self._check_guardrails(),
         ]
         return AdminHealthResponse(
@@ -252,9 +252,9 @@ class AdminHealthService:
             },
         )
 
-    async def _check_llm_model_access(self) -> AdminHealthCheck:
-        return await self._build_provider_access_check(
-            name="llmModelAccess",
+    async def _check_llm_provider_metadata(self) -> AdminHealthCheck:
+        return await self._build_provider_metadata_check(
+            name="llmProviderMetadata",
             model=self._llm_config.model,
             ok_message="Configured LLM provider returned model metadata.",
             unresolved_message=(
@@ -278,7 +278,7 @@ class AdminHealthService:
             "outputMode": self._llm_config.output_guardrail_mode.value,
             "judgeEnabled": self._llm_config.guardrails_judge_enabled,
         }
-        if not self._guardrails_need_model_access():
+        if not self._guardrails_need_provider_metadata():
             return AdminHealthCheck(
                 name="guardrails",
                 status=HealthStatus.OK,
@@ -286,7 +286,7 @@ class AdminHealthService:
                 details=details,
             )
 
-        check = await self._build_provider_access_check(
+        check = await self._build_provider_metadata_check(
             name="guardrails",
             model=self._llm_config.guardrails_judge_model,
             ok_message="Guardrail judge provider returned model metadata.",
@@ -306,7 +306,7 @@ class AdminHealthService:
         check.details.update(details)
         return check
 
-    def _guardrails_need_model_access(self) -> bool:
+    def _guardrails_need_provider_metadata(self) -> bool:
         if not self._llm_config.guardrails_enabled:
             return False
         if not self._llm_config.guardrails_judge_enabled:
@@ -315,7 +315,7 @@ class AdminHealthService:
         output_needs_judge = self._llm_config.output_guardrail_mode == OutputGuardrailMode.POLICY
         return input_needs_judge or output_needs_judge
 
-    async def _build_provider_access_check(
+    async def _build_provider_metadata_check(
         self,
         *,
         name: str,
@@ -389,7 +389,9 @@ class AdminHealthService:
 
     async def _get_provider_models(self, provider: str) -> list[str]:
         if provider not in self._provider_models:
-            self._provider_models[provider] = await self._model_provider.get_models(provider)
+            self._provider_models[provider] = await self._provider_metadata_provider.get_models(
+                provider
+            )
         return list(self._provider_models[provider])
 
     async def _count(self, column) -> int:

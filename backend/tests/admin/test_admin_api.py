@@ -251,7 +251,7 @@ async def test_admin_health_returns_camel_case_response() -> None:
                 "details": {"backend": "postgres"},
             },
             {
-                "name": "llmModelAccess",
+                "name": "llmProviderMetadata",
                 "status": "degraded",
                 "latencyMs": None,
                 "message": "Provider metadata returned no available models.",
@@ -351,7 +351,7 @@ class FakeAdminHealthService:
                     details={"backend": "postgres"},
                 ),
                 AdminHealthCheck(
-                    name="llmModelAccess",
+                    name="llmProviderMetadata",
                     status=HealthStatus.DEGRADED,
                     message="Provider metadata returned no available models.",
                     details={"returnedModelCount": 0},

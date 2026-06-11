@@ -6,7 +6,7 @@ import pytest
 from backend.admin.health_service import (
     AdminHealthResponseCache,
     AdminHealthService,
-    CachedLiteLLMModelAccessProvider,
+    CachedLiteLLMProviderMetadataProvider,
     _aggregate_status,
     _provider_for_model,
     admin_health_response_cache,
@@ -27,7 +27,7 @@ def clear_shared_health_cache():
 async def test_admin_health_reports_database_success() -> None:
     service = AdminHealthService(
         session=ScalarSession([1]),
-        model_provider=StaticModelProvider(["gpt-4o-mini"]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
@@ -50,7 +50,7 @@ async def test_admin_health_response_is_cached_for_short_ttl() -> None:
     provider = StaticModelProvider(["gpt-4o-mini"])
     service = AdminHealthService(
         session=session,
-        model_provider=provider,
+        provider_metadata_provider=provider,
         response_cache=cache,
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
@@ -88,7 +88,7 @@ async def test_admin_health_response_cache_collapses_concurrent_loads() -> None:
 async def test_admin_health_reports_database_failure() -> None:
     service = AdminHealthService(
         session=FailingScalarSession(),
-        model_provider=StaticModelProvider(["gpt-4o-mini"]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
@@ -119,7 +119,7 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
     )
     service = AdminHealthService(
         session=session,
-        model_provider=StaticModelProvider(["gpt-4o-mini"]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
@@ -159,7 +159,7 @@ async def test_pgvector_rag_is_degraded_when_only_old_model_embeddings_exist() -
                 None,
             ]
         ),
-        model_provider=StaticModelProvider(["gpt-4o-mini"]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
@@ -195,7 +195,7 @@ async def test_pgvector_rag_is_ok_when_all_chunks_have_configured_model_embeddin
                 None,
             ]
         ),
-        model_provider=StaticModelProvider(["gpt-4o-mini"]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
@@ -214,11 +214,11 @@ async def test_pgvector_rag_is_ok_when_all_chunks_have_configured_model_embeddin
 
 
 @pytest.mark.asyncio
-async def test_guardrails_regex_or_off_is_ok_without_model_provider_call() -> None:
+async def test_guardrails_regex_or_off_is_ok_without_provider_metadata_call() -> None:
     provider = StaticModelProvider([])
     service = AdminHealthService(
         session=ScalarSession([]),
-        model_provider=provider,
+        provider_metadata_provider=provider,
         llm_config=LLMSettings(
             guardrails_enabled=True,
             input_guardrail_mode=InputGuardrailMode.REGEX,
@@ -239,7 +239,7 @@ async def test_guardrails_policy_uses_provider_metadata_without_completion_call(
     provider = StaticModelProvider(["gpt-4o-mini"])
     service = AdminHealthService(
         session=ScalarSession([]),
-        model_provider=provider,
+        provider_metadata_provider=provider,
         llm_config=LLMSettings(
             guardrails_enabled=True,
             input_guardrail_mode=InputGuardrailMode.POLICY,
@@ -261,15 +261,15 @@ async def test_guardrails_policy_uses_provider_metadata_without_completion_call(
 
 
 @pytest.mark.asyncio
-async def test_llm_model_access_empty_model_list_is_degraded() -> None:
+async def test_llm_provider_metadata_empty_model_list_is_degraded() -> None:
     service = AdminHealthService(
         session=ScalarSession([]),
-        model_provider=StaticModelProvider([]),
+        provider_metadata_provider=StaticModelProvider([]),
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
         rag_config=RagSettings(backend=RagBackend.CHROMA),
     )
 
-    check = await service._check_llm_model_access()
+    check = await service._check_llm_provider_metadata()
 
     assert check.status == HealthStatus.DEGRADED
     assert check.details["returnedModelCount"] == 0
@@ -277,16 +277,16 @@ async def test_llm_model_access_empty_model_list_is_degraded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_model_access_checks_provider_not_exact_model() -> None:
+async def test_llm_provider_metadata_does_not_require_exact_configured_model() -> None:
     provider = StaticModelProvider({"openai": ["gpt-4o"]})
     service = AdminHealthService(
         session=ScalarSession([]),
-        model_provider=provider,
+        provider_metadata_provider=provider,
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
         rag_config=RagSettings(backend=RagBackend.CHROMA),
     )
 
-    check = await service._check_llm_model_access()
+    check = await service._check_llm_provider_metadata()
 
     assert check.status == HealthStatus.OK
     assert check.details == {
@@ -299,15 +299,15 @@ async def test_llm_model_access_checks_provider_not_exact_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_model_access_provider_failure_is_degraded() -> None:
+async def test_llm_provider_metadata_failure_is_degraded() -> None:
     service = AdminHealthService(
         session=ScalarSession([]),
-        model_provider=FailingModelProvider(),
+        provider_metadata_provider=FailingModelProvider(),
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
         rag_config=RagSettings(backend=RagBackend.CHROMA),
     )
 
-    check = await service._check_llm_model_access()
+    check = await service._check_llm_provider_metadata()
 
     assert check.status == HealthStatus.DEGRADED
     assert check.message == (
@@ -322,11 +322,11 @@ async def test_llm_model_access_provider_failure_is_degraded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_access_result_is_cached_within_request_for_same_provider() -> None:
+async def test_provider_metadata_result_is_cached_within_request_for_same_provider() -> None:
     provider = StaticModelProvider({"openai": ["gpt-4o-mini"]})
     service = AdminHealthService(
         session=ScalarSession([1]),
-        model_provider=provider,
+        provider_metadata_provider=provider,
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=True,
@@ -340,13 +340,13 @@ async def test_model_access_result_is_cached_within_request_for_same_provider() 
 
     response = await service.get_health()
 
-    assert _check(response.checks, "llmModelAccess").status == HealthStatus.OK
+    assert _check(response.checks, "llmProviderMetadata").status == HealthStatus.OK
     assert _check(response.checks, "guardrails").status == HealthStatus.OK
     assert provider.requested_providers == ["openai"]
 
 
 @pytest.mark.asyncio
-async def test_model_access_checks_main_and_guardrail_judge_providers_separately() -> None:
+async def test_provider_metadata_checks_main_and_guardrail_judge_providers_separately() -> None:
     provider = StaticModelProvider(
         {
             "openai": ["gpt-4o-mini"],
@@ -355,7 +355,7 @@ async def test_model_access_checks_main_and_guardrail_judge_providers_separately
     )
     service = AdminHealthService(
         session=ScalarSession([1]),
-        model_provider=provider,
+        provider_metadata_provider=provider,
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=True,
@@ -369,15 +369,15 @@ async def test_model_access_checks_main_and_guardrail_judge_providers_separately
 
     response = await service.get_health()
 
-    assert _check(response.checks, "llmModelAccess").details["provider"] == "openai"
+    assert _check(response.checks, "llmProviderMetadata").details["provider"] == "openai"
     assert _check(response.checks, "guardrails").details["provider"] == "gemini"
     assert provider.requested_providers == ["openai", "gemini"]
 
 
 @pytest.mark.asyncio
-async def test_model_access_result_is_cached_per_provider() -> None:
+async def test_provider_metadata_result_is_cached_per_provider() -> None:
     loader = CountingModelLoader()
-    cached_provider = CachedLiteLLMModelAccessProvider(
+    cached_provider = CachedLiteLLMProviderMetadataProvider(
         ttl_seconds=300,
         model_loader=loader,
     )
