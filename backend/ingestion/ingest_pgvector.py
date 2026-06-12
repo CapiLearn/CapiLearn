@@ -58,7 +58,6 @@ class IngestionConfig:
     model_name: str = DEFAULT_MODEL_NAME
     embedding_dimensions: int = DEFAULT_RAG_EMBEDDING_DIMENSIONS
     openai_api_key: str | None = None
-    database_url: str | None = field(default=None, repr=False)
     chunk_size: int = DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
     min_chunk_chars: int = DEFAULT_MIN_CHUNK_CHARS
@@ -100,13 +99,11 @@ class IngestionPreflight:
     corpus_path: Path
     supported_files: int
     nonempty_english_files: int
+    prepared: list[PreparedDocument] = field(repr=False)
+    summary: IngestionSummary = field(repr=False)
 
 
-def run_ingestion_preflight(
-    config: IngestionConfig,
-    *,
-    require_database_url: bool,
-) -> IngestionPreflight:
+def run_ingestion_preflight(config: IngestionConfig) -> IngestionPreflight:
     if config.backend != RagBackend.PGVECTOR:
         raise ValueError("Ingestion requires RAG_BACKEND=pgvector.")
     validate_embedding_contract(
@@ -125,34 +122,23 @@ def run_ingestion_preflight(
     if not corpus_path.is_dir():
         raise ValueError(f"RAG corpus source path is not a directory: {corpus_path}")
 
-    supported_files = sorted(find_course_files(corpus_path))
-    if not supported_files:
+    prepared, summary = prepare_corpus(config)
+    if summary.discovered_files == 0:
         raise ValueError(
             f"RAG corpus source path contains no supported files: {corpus_path}. "
             "Expected .md, .txt, .py, or .ipynb course sources."
         )
-    nonempty_english_files = [
-        path
-        for path in supported_files
-        if is_english_source(
-            {"metadata": {"source_path": path.relative_to(corpus_path).as_posix()}}
-        )
-        and path.stat().st_size > 0
-    ]
-    if not nonempty_english_files:
+    if not prepared:
         raise ValueError(
-            f"RAG corpus source path contains no non-empty English course files: {corpus_path}. "
-            "Expected files under an `/en/` source directory."
-        )
-    if require_database_url and not (config.database_url or "").strip():
-        raise ValueError(
-            "DATABASE_URL is required for pgvector ingestion. Set it to the target Render "
-            "PostgreSQL URL before running ingestion."
+            f"RAG corpus source path contains no usable English course files: {corpus_path}. "
+            "Expected non-empty English sources that produce at least one chunk."
         )
     return IngestionPreflight(
         corpus_path=corpus_path,
-        supported_files=len(supported_files),
-        nonempty_english_files=len(nonempty_english_files),
+        supported_files=summary.discovered_files,
+        nonempty_english_files=summary.prepared_documents,
+        prepared=prepared,
+        summary=summary,
     )
 
 
@@ -228,15 +214,14 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
 async def ingest_corpus(
     config: IngestionConfig,
     *,
+    preflight: IngestionPreflight | None = None,
     embedding_provider: EmbeddingProvider | None = None,
     session_factory: SessionFactoryCallable = SessionFactory,
     service_factory: RagServiceFactory = RagService,
 ) -> IngestionSummary:
-    run_ingestion_preflight(
-        config,
-        require_database_url=not config.dry_run and config.database_url is not None,
-    )
-    prepared, summary = prepare_corpus(config)
+    preflight = preflight or run_ingestion_preflight(config)
+    prepared = preflight.prepared
+    summary = preflight.summary
     _log_preprocessing_summary(summary)
 
     if config.dry_run:
@@ -304,7 +289,9 @@ async def ingest_corpus(
                     EmbeddingRecord(
                         chunk_id=chunk.id,
                         embedding=vector,
+                        embedding_provider=config.embedding_provider.value,
                         embedding_model=config.model_name,
+                        embedding_dimensions=config.embedding_dimensions,
                     )
                     for chunk, vector in zip(chunks, document_vectors, strict=True)
                 ]
@@ -466,7 +453,12 @@ def main() -> None:
     settings = RagSettings()
     args = build_parser(settings).parse_args()
     config = build_ingestion_config(args, settings)
-    preflight = run_ingestion_preflight(config, require_database_url=not args.dry_run)
+    validate_cli_database_url(
+        app_settings.database_url,
+        dry_run=args.dry_run,
+        preflight_only=args.preflight_only,
+    )
+    preflight = run_ingestion_preflight(config)
     logger.info(
         "Ingestion preflight passed: corpus=%s supported_files=%d english_files=%d "
         "provider=%s model=%s dimensions=%d",
@@ -479,7 +471,20 @@ def main() -> None:
     )
     if args.preflight_only:
         return
-    asyncio.run(ingest_corpus(config))
+    asyncio.run(ingest_corpus(config, preflight=preflight))
+
+
+def validate_cli_database_url(
+    database_url: str,
+    *,
+    dry_run: bool,
+    preflight_only: bool = False,
+) -> None:
+    if (not dry_run or preflight_only) and not database_url.strip():
+        raise ValueError(
+            "DATABASE_URL is required for pgvector ingestion. Set it to the target Render "
+            "PostgreSQL URL before running ingestion."
+        )
 
 
 def build_ingestion_config(
@@ -503,7 +508,6 @@ def build_ingestion_config(
         model_name=embedding_settings.model_name,
         embedding_dimensions=embedding_settings.embedding_dimensions,
         openai_api_key=embedding_settings.openai_api_key,
-        database_url=app_settings.database_url,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
         min_chunk_chars=args.min_chunk_chars,

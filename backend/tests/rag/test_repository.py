@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from backend.rag.models import EMBEDDING_DIMENSIONS, RagChunk, RagDocument, RagEmbedding
-from backend.rag.repository import ChunkRecord, RagRepository, SimilarChunk
+from backend.rag.repository import ChunkRecord, EmbeddingRecord, RagRepository, SimilarChunk
 
 
 def test_rag_embedding_uses_384_dimension_vector_and_cosine_index() -> None:
@@ -31,7 +31,25 @@ def test_rag_chunk_and_embedding_identity_constraints_are_unique() -> None:
     embedding_constraints = {constraint.name for constraint in RagEmbedding.__table__.constraints}
 
     assert "rag_chunks_document_id_chunk_index_key" in chunk_constraints
-    assert "rag_embeddings_chunk_id_embedding_model_key" in embedding_constraints
+    assert "rag_embeddings_chunk_id_embedding_contract_key" in embedding_constraints
+
+
+@pytest.mark.asyncio
+async def test_insert_embeddings_maps_full_contract_to_model() -> None:
+    session = InsertSession()
+    record = EmbeddingRecord(
+        chunk_id=uuid4(),
+        embedding=[0.0] * EMBEDDING_DIMENSIONS,
+        embedding_provider="openai",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
+    )
+
+    rows = await RagRepository().insert_embeddings(session, embeddings=[record])
+
+    assert rows[0].embedding_provider == "openai"
+    assert rows[0].embedding_model == "text-embedding-3-small"
+    assert rows[0].embedding_dimensions == EMBEDDING_DIMENSIONS
 
 
 @pytest.mark.asyncio
@@ -214,20 +232,28 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
     results = await RagRepository().find_similar_chunks(
         session,
         query_embedding=[0.0] * EMBEDDING_DIMENSIONS,
+        embedding_provider="sentence_transformers",
         embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
         top_k=3,
     )
 
-    sql = str(
-        session.statement.compile(
-            dialect=postgresql.dialect(),
-            compile_kwargs={"literal_binds": False},
-        )
+    compiled = session.statement.compile(
+        dialect=postgresql.dialect(),
+        compile_kwargs={"literal_binds": False},
     )
+    sql = str(compiled)
+    parameter_values = list(compiled.params.values())
     assert "rag_embeddings.embedding <=>" in sql
+    assert "rag_embeddings.embedding_provider" in sql
     assert "rag_embeddings.embedding_model" in sql
+    assert "rag_embeddings.embedding_dimensions" in sql
     assert "rag_documents.is_active IS true" in sql
     assert "LIMIT" in sql
+    assert "sentence_transformers" in parameter_values
+    assert "sentence-transformers/all-MiniLM-L6-v2" in parameter_values
+    assert EMBEDDING_DIMENSIONS in parameter_values
+    assert "legacy_unknown" not in parameter_values
     assert results == [
         SimilarChunk(
             chunk_id=chunk_id,

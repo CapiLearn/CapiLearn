@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from backend.admin.health_service import (
     AdminHealthResponseCache,
@@ -220,6 +221,33 @@ async def test_pgvector_rag_is_ok_when_all_chunks_have_configured_model_embeddin
     assert rag_check.details["configuredModelEmbeddings"] == 5
     assert rag_check.details["configuredModelActiveDocuments"] == 2
     assert rag_check.details["chunksMissingConfiguredModelEmbeddings"] == 0
+
+
+@pytest.mark.asyncio
+async def test_rag_health_filters_the_full_embedding_contract() -> None:
+    session = ScalarSession([3])
+    service = AdminHealthService(
+        session=session,
+        provider_metadata_provider=StaticModelProvider([]),
+        llm_config=LLMSettings(guardrails_enabled=False),
+        rag_config=RagSettings(_env_file=None),
+    )
+
+    assert await service._count_configured_model_embeddings() == 3
+
+    compiled = session.scalar_statements[0].compile(
+        dialect=postgresql.dialect(),
+        compile_kwargs={"literal_binds": False},
+    )
+    sql = str(compiled)
+    parameter_values = set(compiled.params.values())
+    assert "rag_embeddings.embedding_provider" in sql
+    assert "rag_embeddings.embedding_model" in sql
+    assert "rag_embeddings.embedding_dimensions" in sql
+    assert "sentence_transformers" in parameter_values
+    assert "sentence-transformers/all-MiniLM-L6-v2" in parameter_values
+    assert 384 in parameter_values
+    assert "legacy_unknown" not in parameter_values
 
 
 @pytest.mark.asyncio

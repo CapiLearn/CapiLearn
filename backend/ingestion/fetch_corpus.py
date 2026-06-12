@@ -5,7 +5,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from backend.rag.config import RagSettings
+from backend.rag.config import CorpusSettings
 
 CORPUS_REPOSITORY_URL = "https://github.com/fullstack-hy2020/fullstack-hy2020.github.io.git"
 CORPUS_COMMIT = "33aa47f115a666c8c18de7b89e7a4d5bc24034cf"
@@ -82,8 +82,8 @@ def _is_expected_checkout(
     return completed.stdout.strip() == CORPUS_COMMIT
 
 
-def build_parser(settings: RagSettings | None = None) -> argparse.ArgumentParser:
-    settings = settings or RagSettings()
+def build_parser(settings: CorpusSettings | None = None) -> argparse.ArgumentParser:
+    settings = settings or CorpusSettings()
     parser = argparse.ArgumentParser(
         description="Fetch the pinned English Full Stack Open corpus for RAG ingestion."
     )
@@ -97,7 +97,7 @@ def build_parser(settings: RagSettings | None = None) -> argparse.ArgumentParser
 
 
 def main() -> None:
-    settings = RagSettings()
+    settings = CorpusSettings()
     args = build_parser(settings).parse_args()
     fetch_corpus(args.target_path)
 

@@ -38,6 +38,7 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
     def __init__(
         self,
         *,
+        embedding_provider_name: str | None = None,
         model_name: str = DEFAULT_RAG_MODEL_NAME,
         embedding_dimensions: int = DEFAULT_RAG_EMBEDDING_DIMENSIONS,
         top_k: int = DEFAULT_RAG_TOP_K,
@@ -53,6 +54,7 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
         if embedding_provider is None:
             raise ValueError("Pgvector retrieval requires a configured embedding provider.")
         self._embedding_provider = embedding_provider
+        self._embedding_provider_name = embedding_provider_name or embedding_provider.provider_name
 
     async def retrieve(
         self,
@@ -71,7 +73,9 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
             service = self._service_factory(session=session)
             rows = await service.retrieve(
                 query_embedding=query_embedding,
+                embedding_provider=self._embedding_provider_name,
                 embedding_model=self._model_name,
+                embedding_dimensions=self._embedding_dimensions,
                 top_k=min(self._top_k * 3, 50),
             )
         deduplicated = deduplicate_chunks(
@@ -87,7 +91,7 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             deduplication=deduplicated,
-            embedding_provider=self._embedding_provider.provider_name,
+            embedding_provider=self._embedding_provider_name,
             embedding_model=self._model_name,
             embedding_dimensions=self._embedding_dimensions,
         )
@@ -108,6 +112,7 @@ def build_rag_retrieval_provider(config: RagSettings) -> RetrievalProvider:
         raise ValueError(f"Unsupported runtime RAG backend: {config.backend!r}")
     embedding_provider = build_embedding_provider(config)
     return PgvectorRagRetrievalProvider(
+        embedding_provider_name=config.embedding_provider.value,
         model_name=config.model_name,
         embedding_dimensions=config.embedding_dimensions,
         top_k=config.top_k,

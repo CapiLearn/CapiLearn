@@ -24,6 +24,12 @@ class RagEmbeddingProvider(StrEnum):
     SENTENCE_TRANSFORMERS = "sentence_transformers"
 
 
+class CorpusSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="RAG_", extra="ignore")
+
+    corpus_source_path: Path = Path("backend/rag/source_corpus/fullstack_hy2020")
+
+
 class RagSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="RAG_", extra="ignore")
 

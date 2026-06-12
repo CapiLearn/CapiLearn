@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from backend.ingestion.fetch_corpus import CORPUS_COMMIT, build_parser, fetch_corpus
-from backend.rag.config import RagSettings
+from backend.rag.config import CorpusSettings
 
 
 def test_fetch_corpus_refuses_nonempty_unexpected_target(tmp_path: Path) -> None:
@@ -16,9 +16,29 @@ def test_fetch_corpus_refuses_nonempty_unexpected_target(tmp_path: Path) -> None
 
 
 def test_fetch_parser_uses_configured_corpus_path(tmp_path: Path) -> None:
-    settings = RagSettings(_env_file=None, corpus_source_path=tmp_path)
+    settings = CorpusSettings(_env_file=None, corpus_source_path=tmp_path)
 
     args = build_parser(settings).parse_args([])
+
+    assert args.target_path == tmp_path
+
+
+def test_fetch_help_does_not_validate_embedding_settings(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("RAG_MODEL_NAME", "text-embedding-3-small")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        build_parser(CorpusSettings(_env_file=None)).parse_args(["--help"])
+
+    assert exc_info.value.code == 0
+    assert "Fetch the pinned English Full Stack Open corpus" in capsys.readouterr().out
+
+
+def test_fetch_parser_respects_corpus_path_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("RAG_CORPUS_SOURCE_PATH", str(tmp_path))
+
+    args = build_parser(CorpusSettings(_env_file=None)).parse_args([])
 
     assert args.target_path == tmp_path
 

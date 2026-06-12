@@ -83,7 +83,9 @@ async def test_pgvector_provider_calls_rag_service_and_returns_compatible_chunks
     assert service.calls == [
         {
             "query_embedding": [0.0] * EMBEDDING_DIMENSIONS,
+            "embedding_provider": "fake",
             "embedding_model": DEFAULT_RAG_MODEL_NAME,
+            "embedding_dimensions": EMBEDDING_DIMENSIONS,
             "top_k": 9,
         }
     ]

@@ -17,7 +17,13 @@ from backend.llm.config import (
     llm_settings,
 )
 from backend.rag.config import RagSettings, rag_settings
-from backend.rag.models import RagChunk, RagDocument, RagEmbedding, RagRetrievalLog
+from backend.rag.models import (
+    RagChunk,
+    RagDocument,
+    RagEmbedding,
+    RagRetrievalLog,
+    embedding_contract_filter,
+)
 
 PROVIDER_METADATA_CACHE_TTL_SECONDS = 300
 ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
@@ -407,9 +413,7 @@ class AdminHealthService:
 
     async def _count_configured_model_embeddings(self) -> int:
         value = await self._session.scalar(
-            select(func.count(RagEmbedding.id)).where(
-                RagEmbedding.embedding_model == self._rag_config.model_name
-            )
+            select(func.count(RagEmbedding.id)).where(self._configured_embedding_contract_filter())
         )
         return int(value or 0)
 
@@ -420,7 +424,7 @@ class AdminHealthService:
             .join(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
             .where(
                 RagDocument.is_active.is_(True),
-                RagEmbedding.embedding_model == self._rag_config.model_name,
+                self._configured_embedding_contract_filter(),
             )
         )
         return int(value or 0)
@@ -432,12 +436,19 @@ class AdminHealthService:
                 RagEmbedding,
                 and_(
                     RagEmbedding.chunk_id == RagChunk.id,
-                    RagEmbedding.embedding_model == self._rag_config.model_name,
+                    self._configured_embedding_contract_filter(),
                 ),
             )
             .where(RagEmbedding.id.is_(None))
         )
         return int(value or 0)
+
+    def _configured_embedding_contract_filter(self):
+        return embedding_contract_filter(
+            provider=self._rag_config.embedding_provider.value,
+            model=self._rag_config.model_name,
+            dimensions=self._rag_config.embedding_dimensions,
+        )
 
 
 def _provider_for_model(model: str) -> str:

@@ -10,6 +10,7 @@ from backend.ingestion.ingest_pgvector import (
     ingest_corpus,
     prepare_corpus,
     run_ingestion_preflight,
+    validate_cli_database_url,
 )
 from backend.rag.config import RagBackend, RagEmbeddingProvider, RagSettings
 from backend.rag.models import EMBEDDING_DIMENSIONS
@@ -123,17 +124,15 @@ def test_preflight_rejects_missing_corpus_path(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="backend.ingestion.fetch_corpus"):
         run_ingestion_preflight(
             IngestionConfig(repo_path=missing_path),
-            require_database_url=False,
         )
 
 
 def test_preflight_rejects_corpus_without_english_sources(tmp_path: Path) -> None:
     _write(tmp_path / "src/content/1/es/part1.md", "# Estado")
 
-    with pytest.raises(ValueError, match="no non-empty English course files"):
+    with pytest.raises(ValueError, match="no usable English course files"):
         run_ingestion_preflight(
             IngestionConfig(repo_path=tmp_path),
-            require_database_url=False,
         )
 
 
@@ -142,24 +141,71 @@ def test_preflight_accepts_fixture_corpus_and_valid_contract(tmp_path: Path) -> 
     config = IngestionConfig(
         repo_path=tmp_path,
         backend=RagBackend.PGVECTOR,
-        database_url="postgresql+asyncpg://user:password@host/capilearn",
     )
 
-    result = run_ingestion_preflight(config, require_database_url=True)
+    result = run_ingestion_preflight(config)
 
     assert result.corpus_path == tmp_path.resolve()
     assert result.supported_files == 1
     assert result.nonempty_english_files == 1
 
 
-def test_preflight_requires_database_url_for_ingestion(tmp_path: Path) -> None:
-    _write(tmp_path / "src/content/1/en/part1.md", "# State")
-
+def test_cli_database_validation_requires_url_for_non_dry_run() -> None:
     with pytest.raises(ValueError, match="DATABASE_URL is required"):
-        run_ingestion_preflight(
-            IngestionConfig(repo_path=tmp_path, database_url=""),
-            require_database_url=True,
-        )
+        validate_cli_database_url("", dry_run=False)
+
+
+def test_cli_database_validation_allows_dry_run_without_url() -> None:
+    validate_cli_database_url("", dry_run=True)
+
+
+def test_cli_database_validation_requires_url_for_preflight_only() -> None:
+    with pytest.raises(ValueError, match="DATABASE_URL is required"):
+        validate_cli_database_url("", dry_run=True, preflight_only=True)
+
+
+def test_preflight_rejects_whitespace_only_english_source(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/en/part1.md", " \n\t ")
+
+    with pytest.raises(ValueError, match="no usable English course files"):
+        run_ingestion_preflight(IngestionConfig(repo_path=tmp_path))
+
+
+def test_preflight_rejects_english_source_that_produces_no_chunks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write(tmp_path / "src/content/1/en/part1.md", "Course content")
+    monkeypatch.setattr(
+        "backend.ingestion.ingest_pgvector.prepare_chunks",
+        lambda *args, **kwargs: [],
+    )
+
+    with pytest.raises(ValueError, match="no usable English course files"):
+        run_ingestion_preflight(IngestionConfig(repo_path=tmp_path))
+
+
+def test_preflight_rejects_malformed_notebook_as_unusable(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/en/broken.ipynb", "{not-json")
+
+    with pytest.raises(ValueError, match="no usable English course files"):
+        run_ingestion_preflight(IngestionConfig(repo_path=tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_ingestion_reuses_prepared_preflight_result(tmp_path: Path, monkeypatch) -> None:
+    _write(tmp_path / "src/content/1/en/part1.md", "# State\n\nCourse content")
+    config = IngestionConfig(repo_path=tmp_path, dry_run=True)
+    preflight = run_ingestion_preflight(config)
+
+    monkeypatch.setattr(
+        "backend.ingestion.ingest_pgvector.prepare_corpus",
+        lambda config: (_ for _ in ()).throw(AssertionError("corpus scanned twice")),
+    )
+
+    summary = await ingest_corpus(config, preflight=preflight)
+
+    assert summary.prepared_documents == 1
 
 
 def test_corpus_source_path_setting_is_used_by_parser(tmp_path: Path) -> None:
@@ -196,6 +242,9 @@ async def test_ingest_corpus_embeds_and_replaces_each_document(tmp_path: Path) -
     assert call["chunks"][0].char_start == 0
     assert call["chunks"][0].char_end == len("# State\n\nCourse content")
     assert len(call["embeddings"][0].embedding) == EMBEDDING_DIMENSIONS
+    assert call["embeddings"][0].embedding_provider == "sentence_transformers"
+    assert call["embeddings"][0].embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
+    assert call["embeddings"][0].embedding_dimensions == EMBEDDING_DIMENSIONS
 
 
 @pytest.mark.asyncio

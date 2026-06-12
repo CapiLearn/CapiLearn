@@ -156,7 +156,9 @@ class RagService:
         self,
         *,
         query_embedding: Sequence[float],
+        embedding_provider: str,
         embedding_model: str,
+        embedding_dimensions: int,
         top_k: int = 5,
     ) -> list[SimilarChunk]:
         _validate_embedding(query_embedding)
@@ -166,7 +168,9 @@ class RagService:
         results = await self._repository.find_similar_chunks(
             self._session,
             query_embedding=query_embedding,
+            embedding_provider=embedding_provider,
             embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
             top_k=top_k,
         )
         return results
