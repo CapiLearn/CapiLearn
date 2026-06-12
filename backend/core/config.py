@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     request_id_header: str = "X-Request-Id"
     observability_enabled: bool = True
     observability_capture_content: bool = False
+    beta_auth_enabled: bool = False
+    beta_auth_username: SecretStr | None = None
+    beta_auth_password: SecretStr | None = None
     database_url: str = Field(
         default="postgresql+asyncpg://capilearn:capilearn@localhost:5432/capilearn",
         validation_alias="DATABASE_URL",
@@ -30,6 +33,23 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return normalize_async_database_url(value)
         return value
+
+    @model_validator(mode="after")
+    def validate_beta_auth_credentials(self) -> "Settings":
+        if not self.beta_auth_enabled:
+            return self
+
+        missing = []
+        if not self.beta_auth_username or not self.beta_auth_username.get_secret_value().strip():
+            missing.append("BETA_AUTH_USERNAME")
+        if not self.beta_auth_password or not self.beta_auth_password.get_secret_value().strip():
+            missing.append("BETA_AUTH_PASSWORD")
+
+        if missing:
+            names = " and ".join(missing)
+            raise ValueError(f"{names} must be set when BETA_AUTH_ENABLED=true")
+
+        return self
 
 
 def normalize_async_database_url(database_url: str) -> str:
