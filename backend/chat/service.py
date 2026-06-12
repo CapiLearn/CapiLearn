@@ -7,13 +7,13 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.schemas import CurrentUser
 from backend.chat.models import Conversation, Message, utc_now
 from backend.chat.repository import ChatRepository
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
     ConversationStatus,
-    CurrentUser,
     MessageListResponse,
     MessageResponse,
     MessageRole,

@@ -5,10 +5,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from backend.auth.schemas import CurrentUser, UserRole
 from backend.chat.models import Conversation, Message
 from backend.chat.schemas import (
     ConversationStatus,
-    CurrentUser,
     MessageRole,
     MessageStatus,
 )
@@ -27,10 +27,18 @@ from backend.llm.service import LLMServiceError
 from backend.rag.schemas import RetrievalResult, RetrievedChunk
 
 
+def _current_user() -> CurrentUser:
+    return CurrentUser(
+        id=uuid4(),
+        clerk_id=f"user_{uuid4().hex}",
+        role=UserRole.STUDENT,
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_conversation_message_completes_assistant_message(caplog) -> None:
     caplog.set_level(logging.INFO, logger="backend.chat.service")
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FakeLLMService(
@@ -94,7 +102,7 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
 
 @pytest.mark.asyncio
 async def test_create_message_uses_completed_history() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     conversation = _conversation(user_id=user.id)
     repository = FakeChatRepository(
@@ -155,7 +163,7 @@ async def test_create_message_uses_completed_history() -> None:
 
 @pytest.mark.asyncio
 async def test_create_conversation_message_persists_llm_cost_components() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FakeLLMService(
@@ -194,7 +202,7 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
 
 @pytest.mark.asyncio
 async def test_create_message_adds_stored_context_to_recent_user_history() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     conversation = _conversation(user_id=user.id)
     messages = []
@@ -266,7 +274,7 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
 
 @pytest.mark.asyncio
 async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     conversation = _conversation(user_id=user.id)
     repository = FakeChatRepository(
@@ -313,7 +321,7 @@ async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
 @pytest.mark.asyncio
 async def test_blocked_input_returns_blocked_assistant_message(caplog) -> None:
     caplog.set_level(logging.INFO, logger="backend.chat.service")
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FakeLLMService(
@@ -346,7 +354,7 @@ async def test_blocked_input_returns_blocked_assistant_message(caplog) -> None:
 
 @pytest.mark.asyncio
 async def test_blocked_output_returns_blocked_assistant_message() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FakeLLMService(
@@ -381,7 +389,7 @@ async def test_blocked_output_returns_blocked_assistant_message() -> None:
 @pytest.mark.asyncio
 async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog) -> None:
     caplog.set_level(logging.INFO, logger="backend.chat.service")
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
@@ -406,7 +414,7 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog)
 
 @pytest.mark.asyncio
 async def test_llm_service_error_persists_failed_cost_components() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     llm_service = FailingCostedLLMService()
@@ -431,7 +439,7 @@ async def test_llm_service_error_persists_failed_cost_components() -> None:
 @pytest.mark.asyncio
 async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="backend.core.observability.tracing")
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
@@ -458,7 +466,7 @@ async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> No
 
 @pytest.mark.asyncio
 async def test_trace_sink_failure_does_not_block_blocked_message() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
@@ -488,7 +496,7 @@ async def test_trace_sink_failure_does_not_block_blocked_message() -> None:
 
 @pytest.mark.asyncio
 async def test_trace_sink_failure_preserves_llm_unavailable_error() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
@@ -510,7 +518,7 @@ async def test_trace_sink_failure_preserves_llm_unavailable_error() -> None:
 
 @pytest.mark.asyncio
 async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
-    user = CurrentUser(id=uuid4())
+    user = _current_user()
     session = FakeSession()
     llm_service = FakeLLMService(
         LLMResult(

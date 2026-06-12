@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, status
 
-from backend.chat.dependencies import ChatServiceDep, get_current_user
+from backend.chat.dependencies import ChatServiceDep
 from backend.chat.schemas import (
     ConversationListResponse,
     MessageListResponse,
@@ -13,7 +13,6 @@ from backend.chat.schemas import (
 router = APIRouter(
     prefix="/conversations",
     tags=["conversations"],
-    dependencies=[Depends(get_current_user)],
 )
 
 

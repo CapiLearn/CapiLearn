@@ -18,6 +18,16 @@ from backend.admin.schemas import (
     UsageRange,
 )
 from backend.admin.service import AdminUsageService
+from backend.auth.dependencies import (
+    get_auth_request_verifier,
+    get_current_principal,
+    get_user_repository,
+)
+from backend.auth.models import UserAccount
+from backend.auth.repository import UserAccountRepository
+from backend.auth.schemas import AuthPrincipal, ClerkAuthClaims, UserRole
+from backend.core.config import Settings, get_settings
+from backend.core.database import get_db
 from backend.main import app
 
 
@@ -43,8 +53,15 @@ def test_admin_openapi_exposes_usage_summary_route() -> None:
     )
 
 
+def _authorize(role: UserRole = UserRole.ADMIN) -> None:
+    app.dependency_overrides[get_current_principal] = lambda: AuthPrincipal(
+        clerk_id=f"user_{role.value}_{uuid4().hex}",
+        role=role,
+    )
+
+
 @pytest.mark.asyncio
-async def test_usage_summary_requires_admin_header() -> None:
+async def test_usage_summary_requires_bearer_auth() -> None:
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -58,8 +75,8 @@ async def test_usage_summary_requires_admin_header() -> None:
         )
 
     expected = {
-        "code": "admin_required",
-        "message": "Admin access is required.",
+        "code": "auth_required",
+        "message": "Authentication is required.",
         "details": None,
     }
     assert missing_response.status_code == 401
@@ -69,7 +86,7 @@ async def test_usage_summary_requires_admin_header() -> None:
 
 
 @pytest.mark.asyncio
-async def test_usage_summary_accepts_normalized_true_admin_header() -> None:
+async def test_usage_summary_ignores_old_admin_header() -> None:
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -80,6 +97,21 @@ async def test_usage_summary_accepts_normalized_true_admin_header() -> None:
             "/api/admin/usage/summary",
             headers={"X-Admin-User": " TRUE "},
         )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "auth_required"
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_accepts_admin_role() -> None:
+    _authorize(UserRole.ADMIN)
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/admin/usage/summary")
 
     assert response.status_code == 200
     payload = response.json()
@@ -93,6 +125,7 @@ async def test_usage_summary_accepts_normalized_true_admin_header() -> None:
 
 @pytest.mark.asyncio
 async def test_usage_summary_rejects_invalid_date_ranges() -> None:
+    _authorize(UserRole.ADMIN)
     app.dependency_overrides[get_admin_usage_service] = lambda: AdminUsageService(
         session=object(),
         repository=EmptyUsageRepository(),
@@ -105,7 +138,6 @@ async def test_usage_summary_rejects_invalid_date_ranges() -> None:
     ) as client:
         response = await client.get(
             "/api/admin/usage/summary?fromDate=2026-05-01&toDate=2026-05-01",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 400
@@ -121,6 +153,7 @@ async def test_usage_summary_rejects_invalid_date_ranges() -> None:
 
 @pytest.mark.asyncio
 async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
+    _authorize(UserRole.ADMIN)
     repository = EmptyUsageRepository()
     app.dependency_overrides[get_admin_usage_service] = lambda: AdminUsageService(
         session=object(),
@@ -134,7 +167,6 @@ async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
     ) as client:
         response = await client.get(
             "/api/admin/usage/summary",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 200
@@ -155,7 +187,7 @@ async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cost_components_endpoint_requires_admin_header() -> None:
+async def test_cost_components_endpoint_requires_auth() -> None:
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -165,11 +197,12 @@ async def test_cost_components_endpoint_requires_admin_header() -> None:
         response = await client.get("/api/admin/usage/cost-components")
 
     assert response.status_code == 401
-    assert response.json()["code"] == "admin_required"
+    assert response.json()["code"] == "auth_required"
 
 
 @pytest.mark.asyncio
 async def test_cost_components_endpoint_returns_granular_rows() -> None:
+    _authorize(UserRole.ADMIN)
     service = FakeAdminUsageService()
     app.dependency_overrides[get_admin_usage_service] = lambda: service
 
@@ -180,7 +213,6 @@ async def test_cost_components_endpoint_returns_granular_rows() -> None:
         response = await client.get(
             "/api/admin/usage/cost-components?fromDate=2026-05-01&toDate=2026-05-04"
             "&componentType=main_generation&limit=25&offset=50",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 200
@@ -197,6 +229,7 @@ async def test_cost_components_endpoint_returns_granular_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
+    _authorize(UserRole.ADMIN)
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
     async with AsyncClient(
@@ -205,14 +238,255 @@ async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
     ) as client:
         response = await client.get(
             "/api/admin/usage/cost-components?limit=501",
-            headers={"X-Admin-User": "true"},
         )
 
     assert response.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_admin_health_requires_admin_header() -> None:
+@pytest.mark.parametrize("role", [UserRole.STUDENT, UserRole.INSTRUCTOR])
+async def test_usage_summary_rejects_non_admin_roles(role: UserRole) -> None:
+    _authorize(role)
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/admin/usage/summary")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "admin_required",
+        "message": "Admin access is required.",
+        "details": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_rejects_missing_local_user_without_provisioning() -> None:
+    repository = FakeUserRepository()
+    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
+        ClerkAuthClaims(clerk_id="user_missing", claims={"sub": "user_missing"})
+    )
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer clerk"},
+        )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "admin_required",
+        "message": "Admin access is required.",
+        "details": None,
+    }
+    assert repository.calls == [("get_by_clerk_id", "user_missing")]
+    assert repository.user is None
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_rejects_existing_non_admin_local_user() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_student",
+        role=UserRole.STUDENT.value,
+    )
+    repository = FakeUserRepository(user=user)
+    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
+        ClerkAuthClaims(clerk_id="user_student", claims={"sub": "user_student"})
+    )
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer clerk"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "admin_required"
+    assert repository.calls == [("get_by_clerk_id", "user_student")]
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_rejects_existing_disabled_admin_local_user() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_disabled_admin",
+        role=UserRole.ADMIN.value,
+        deleted_at=datetime.now(UTC),
+    )
+    repository = FakeUserRepository(user=user)
+    session = FakeSession()
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
+        ClerkAuthClaims(
+            clerk_id="user_disabled_admin",
+            claims={"sub": "user_disabled_admin"},
+        )
+    )
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer clerk"},
+        )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "forbidden",
+        "message": "This user account is disabled.",
+        "details": None,
+    }
+    assert repository.calls == [("get_by_clerk_id", "user_disabled_admin")]
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_accepts_existing_admin_local_user() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_admin",
+        role=UserRole.ADMIN.value,
+    )
+    repository = FakeUserRepository(user=user)
+    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
+        ClerkAuthClaims(clerk_id="user_admin", claims={"sub": "user_admin"})
+    )
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer clerk"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["totalUsers"] == 18
+    assert repository.calls == [("get_by_clerk_id", "user_admin")]
+
+
+@pytest.mark.asyncio
+async def test_test_auth_mode_rejects_non_admin_role() -> None:
+    repository = FakeUserRepository()
+    session = FakeSession()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_mode="test",
+        test_auth_clerk_id="user_test_student",
+        test_auth_role="student",
+    )
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "admin_required"
+    assert repository.calls == [("get_by_clerk_id", "user_test_student")]
+    assert repository.user is None
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_test_auth_mode_accepts_admin_role() -> None:
+    repository = FakeUserRepository()
+    session = FakeSession()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_mode="test",
+        test_auth_clerk_id="user_test_admin",
+        test_auth_role="admin",
+    )
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["totalUsers"] == 18
+    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
+    assert repository.user is None
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_test_auth_mode_rejects_disabled_local_user_before_admin_role_gate() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_test_disabled",
+        role=UserRole.STUDENT.value,
+        deleted_at=datetime.now(UTC),
+    )
+    repository = FakeUserRepository(user=user)
+    session = FakeSession()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_mode="test",
+        test_auth_clerk_id="user_test_disabled",
+        test_auth_role="admin",
+    )
+    app.dependency_overrides[get_db] = _fake_db_override(session)
+    app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/admin/usage/summary",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "forbidden",
+        "message": "This user account is disabled.",
+        "details": None,
+    }
+    assert repository.calls == [("get_by_clerk_id", "user_test_disabled")]
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_health_requires_bearer_auth() -> None:
     app.dependency_overrides[get_admin_health_service] = lambda: FakeAdminHealthService()
 
     async with AsyncClient(
@@ -222,21 +496,19 @@ async def test_admin_health_requires_admin_header() -> None:
         response = await client.get("/api/admin/health")
 
     assert response.status_code == 401
-    assert response.json()["code"] == "admin_required"
+    assert response.json()["code"] == "auth_required"
 
 
 @pytest.mark.asyncio
 async def test_admin_health_returns_camel_case_response() -> None:
+    _authorize(UserRole.ADMIN)
     app.dependency_overrides[get_admin_health_service] = lambda: FakeAdminHealthService()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        response = await client.get(
-            "/api/admin/health",
-            headers={"X-Admin-User": "true"},
-        )
+        response = await client.get("/api/admin/health")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -377,5 +649,54 @@ class EmptyUsageRepository:
     async def list_daily_usage(self, session, *, range_start, range_end):
         return []
 
-    async def list_cost_components(self, session, **kwargs):
-        return []
+
+class FakeVerifier:
+    def __init__(self, claims: ClerkAuthClaims) -> None:
+        self._claims = claims
+
+    async def verify(self, bearer_token: str):
+        return self._claims
+
+
+def _fake_db_override(session):
+    async def override():
+        yield session
+
+    return override
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class FakeUserRepository(UserAccountRepository):
+    def __init__(self, user: UserAccount | None = None) -> None:
+        self.user = user
+        self.calls = []
+
+    async def get_by_clerk_id(self, session, *, clerk_id: str) -> UserAccount | None:
+        self.calls.append(("get_by_clerk_id", clerk_id))
+        return self.user
+
+    async def create(
+        self,
+        session,
+        *,
+        clerk_id: str,
+        role: UserRole = UserRole.STUDENT,
+    ) -> UserAccount:
+        self.calls.append(("create", clerk_id, role))
+        self.user = UserAccount(
+            id=uuid4(),
+            clerk_id=clerk_id,
+            role=role.value,
+        )
+        return self.user

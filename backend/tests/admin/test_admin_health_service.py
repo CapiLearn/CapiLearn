@@ -14,6 +14,7 @@ from backend.admin.health_service import (
 from backend.admin.schemas import AdminHealthCheck, AdminHealthResponse, HealthStatus
 from backend.llm.config import InputGuardrailMode, LLMSettings, OutputGuardrailMode
 from backend.rag.config import RagBackend, RagSettings
+from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
 
 
 @pytest.fixture(autouse=True)
@@ -166,7 +167,7 @@ async def test_pgvector_rag_is_degraded_when_only_old_model_embeddings_exist() -
         ),
         rag_config=RagSettings(
             backend=RagBackend.PGVECTOR,
-            model_name="sentence-transformers/current-model",
+            model_name=DEFAULT_RAG_MODEL_NAME,
         ),
     )
 
@@ -202,7 +203,7 @@ async def test_pgvector_rag_is_ok_when_all_chunks_have_configured_model_embeddin
         ),
         rag_config=RagSettings(
             backend=RagBackend.PGVECTOR,
-            model_name="sentence-transformers/current-model",
+            model_name=DEFAULT_RAG_MODEL_NAME,
         ),
     )
 
