@@ -1,4 +1,5 @@
-from backend.llm.schemas import ChatMessage, ChatRole, RetrievedChunk
+from backend.llm.schemas import ChatMessage, ChatRole
+from backend.rag.schemas import RetrievedChunk
 
 BASE_SYSTEM_PROMPT = """You are CapiLearn, a learning assistant for students.
 Use the provided course context when it is relevant.
@@ -35,6 +36,23 @@ def build_context_block(chunks: list[RetrievedChunk]) -> str:
 
 
 def _context_label(metadata: dict) -> str:
+    source_path = metadata.get("source_path") or metadata.get("sourcePath")
+    if source_path:
+        labels = [str(source_path)]
+        heading_path = metadata.get("heading_path") or metadata.get("headingPath") or []
+        if isinstance(heading_path, str):
+            heading = heading_path
+        else:
+            heading = " > ".join(str(part) for part in heading_path if part)
+        if not heading:
+            heading = str(metadata.get("section_heading") or metadata.get("sectionHeading") or "")
+        if heading:
+            labels.append(heading)
+        chunk_type = metadata.get("chunk_type") or metadata.get("chunkType")
+        if chunk_type and chunk_type not in {"prose", "unknown"}:
+            labels.append(str(chunk_type))
+        return " | ".join(labels)
+
     labels = [
         str(metadata[key])
         for key in ("title", "source_title", "source", "source_id", "section")

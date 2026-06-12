@@ -12,6 +12,7 @@ from backend.auth import models as auth_models  # noqa: F401
 from backend.chat import models as chat_models  # noqa: F401
 from backend.core.config import settings
 from backend.core.database import Base
+from backend.rag import models as rag_models  # noqa: F401
 
 config = context.config
 

@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.136.1",
     "httpx>=0.28.1",
     "litellm>=1.83.14,!=1.82.7,!=1.82.8",
+    "pgvector>=0.4.2",
     "pydantic>=2.12.5,<2.13",
     "pydantic-settings>=2.14.1",
     "sentence-transformers>=3.0.0",

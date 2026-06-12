@@ -35,6 +35,31 @@ const initialChatMessages = [
   },
 ];
 
+function HighlightedText({ text, searchTerm }) {
+  const normalizedSearchTerm = searchTerm.trim();
+
+  if (!normalizedSearchTerm) {
+    return text;
+  }
+
+  const escapedSearchTerm = normalizedSearchTerm.replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&"
+  );
+
+  const parts = text.split(new RegExp(`(${escapedSearchTerm})`, "gi"));
+
+  return parts.map((part, index) =>
+    part.toLowerCase() === normalizedSearchTerm.toLowerCase() ? (
+      <mark className="message-search-highlight" key={`${part}-${index}`}>
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
 
@@ -49,6 +74,8 @@ function LearningWorkspace() {
   const [conversations, setConversations] = useState([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [messageSearchTerm, setMessageSearchTerm] = useState("");
+  const [conversationSearchTerm, setConversationSearchTerm] = useState("");
 
   useEffect(() => {
     async function loadConversations() {
@@ -125,6 +152,8 @@ function LearningWorkspace() {
     setInputValue("");
     setErrorMessage("");
     setIsLoadingMessages(false);
+    setMessageSearchTerm("");
+    setConversationSearchTerm("");
   }
       
   async function handleSelectConversation(selectedConversationId) {
@@ -132,6 +161,7 @@ function LearningWorkspace() {
     setConversationId(selectedConversationId);
     setIsLoadingMessages(true);
     setErrorMessage("");
+    setMessageSearchTerm("");
 
     try {
       const data = await listMessages(selectedConversationId);
@@ -149,6 +179,41 @@ function LearningWorkspace() {
       setIsLoadingMessages(false);
     }
   }
+
+  const normalizedConversationSearchTerm = conversationSearchTerm
+    .trim()
+    .toLowerCase();
+
+  const filteredConversations = normalizedConversationSearchTerm
+    ? conversations.filter((conversation) =>
+        (conversation.title || "Untitled conversation")
+          .toLowerCase()
+          .includes(normalizedConversationSearchTerm)
+      )
+    : conversations;
+
+  const normalizedSearchTerm = messageSearchTerm.trim().toLowerCase();
+
+  const visibleChatMessages = normalizedSearchTerm
+    ? chatMessages.filter((message) =>
+        message.content.toLowerCase().includes(normalizedSearchTerm)
+      )
+    : chatMessages;
+
+  const searchMatchCount = normalizedSearchTerm
+  ? chatMessages.reduce((count, message) => {
+      const escapedSearchTerm = normalizedSearchTerm.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+      const matches = message.content.toLowerCase().match(
+        new RegExp(escapedSearchTerm, "g")
+      );
+
+      return count + (matches ? matches.length : 0);
+    }, 0)
+  : 0;
 
   return (
     <main className="workspace-page">
@@ -168,7 +233,12 @@ function LearningWorkspace() {
 
         <div className="search-box">
           <span>⌕</span>
-          <input type="text" placeholder="Search conversations" />
+          <input
+            type="text"
+            placeholder="Search conversations"
+            value={conversationSearchTerm}
+            onChange={(event) => setConversationSearchTerm(event.target.value)}
+          />
         </div>
 
         <div className="chat-history">
@@ -184,7 +254,13 @@ function LearningWorkspace() {
             )}
 
             {!isLoadingConversations &&
-              conversations.map((conversation) => (
+              conversations.length > 0 &&
+              filteredConversations.length === 0 && (
+              <p className="sidebar-helper-text">No conversations found.</p>
+            )}
+
+            {!isLoadingConversations &&
+              filteredConversations.map((conversation) => (
                 <button
                   className={`chat-history-item ${
                     conversation.id === conversationId ? "active-conversation" : ""
@@ -259,12 +335,43 @@ function LearningWorkspace() {
           </div>
         </section>
 
+        <section className="message-search-section">
+          <label htmlFor="message-search">Search current conversation</label>
+
+          <div className="message-search-control">
+            <input
+              id="message-search"
+              type="text"
+              placeholder="Search messages..."
+              value={messageSearchTerm}
+              onChange={(event) => setMessageSearchTerm(event.target.value)}
+            />
+
+            {messageSearchTerm && (
+              <button
+                className="message-search-clear"
+                type="button"
+                onClick={() => setMessageSearchTerm("")}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {normalizedSearchTerm && (
+            <span className="message-search-count">
+              {searchMatchCount} {searchMatchCount === 1 ? "match" : "matches"}
+            </span>
+          )}    
+
+        </section>
+
         <section className="chat-preview">
           {isLoadingMessages && (
             <p className="workspace-loading-message">Loading conversation...</p>
           )}
 
-          {chatMessages.map((message) => (
+          {visibleChatMessages.map((message) => (
             <div
               className={`message ${
                 message.role === "user" ? "student-message" : "tutor-message"
@@ -272,12 +379,28 @@ function LearningWorkspace() {
               key={message.id}
             >
               {message.role === "assistant" ? (
-                <MarkdownMessage content={message.content} />
+                <MarkdownMessage 
+                  content={message.content}
+                  searchTerm={messageSearchTerm}
+                />
               ) : (
-                <p>{message.content}</p>
+                <p>
+                  <HighlightedText
+                    text={message.content}
+                    searchTerm={messageSearchTerm}
+                  />
+                </p>
               )}
+              
             </div>
           ))}
+
+          {normalizedSearchTerm && visibleChatMessages.length === 0 && (
+            <p className="workspace-empty-search">
+              No messages found for “{messageSearchTerm}”.
+            </p>
+          )}
+
         </section>
 
         <form className="chat-input-bar" onSubmit={handleSendMessage}>

@@ -35,9 +35,9 @@ from backend.llm.schemas import (
     ChatRole,
     LLMRequest,
     LLMResult,
-    RetrievedChunk,
 )
 from backend.llm.service import LLMService, LLMServiceError
+from backend.rag.schemas import RetrievedChunk
 
 RECENT_RETRIEVED_CONTEXT_TURNS = 3
 logger = logging.getLogger(__name__)

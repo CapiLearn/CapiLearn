@@ -1,8 +1,10 @@
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -42,6 +44,27 @@ class AdminUsageSummaryResponse(AdminBaseModel):
     range: UsageRange
     metrics: UsageMetrics
     daily_usage: list[DailyUsagePoint]
+
+
+class HealthStatus(StrEnum):
+    OK = "ok"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+    NOT_CHECKED = "not_checked"
+
+
+class AdminHealthCheck(AdminBaseModel):
+    name: str
+    status: HealthStatus
+    latency_ms: int | None = None
+    message: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminHealthResponse(AdminBaseModel):
+    status: HealthStatus
+    checked_at: datetime
+    checks: list[AdminHealthCheck]
 
 
 class CostComponentResponse(AdminBaseModel):
