@@ -5,6 +5,7 @@
 * [ ] Evaluation tests pass on baseline prompt set
 * [ ] Latency on demo prompts within budget 
 * [ ] Env vars, secrets, model version, index version all pinned
+* [ ] Before deploying or restarting this branch on Render, run `alembic upgrade head` against the target Render database. Migration `20260612_0009` must be applied before app code that reads `embedding_provider` or `embedding_dimensions` is live.
 * [ ] Git tag exists for rollback target
 
 ### **During deployment:**
