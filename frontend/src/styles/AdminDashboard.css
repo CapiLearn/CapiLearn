@@ -360,6 +360,79 @@ body {
   font-size: 14px;
 }
 
+.admin-overall-status {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.admin-checked-at {
+  margin: -10px 0 18px;
+  color: #867a69;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.service-row {
+  align-items: flex-start;
+}
+
+.service-row-content {
+  width: 100%;
+}
+
+.service-row-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+
+.service-details-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0 0;
+}
+
+.service-detail-item {
+  background: #fbf8e8;
+  border: 1px solid #e0d8bd;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.service-detail-item dt {
+  margin: 0 0 4px;
+  color: #867a69;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.service-detail-item dd {
+  margin: 0;
+  color: #2b1d15;
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .service-row-heading {
+    flex-direction: column;
+  }
+
+  .service-details-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 .admin-status-pill {
   display: inline-flex;
   border-radius: 999px;

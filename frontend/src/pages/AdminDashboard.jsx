@@ -1,34 +1,17 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { getAdminUsageSummary } from "../services/adminService";
+import {
+  getAdminSystemHealth,
+  getAdminUsageSummary,
+} from "../services/adminService";
 import "../styles/AdminDashboard.css";
 
-const serviceChecks = [
-  {
-    service: "FastAPI Backend",
-    status: "Healthy",
-    detail: "Last checked 2 minutes ago",
-  },
-  {
-    service: "Postgres + pgvector",
-    status: "Healthy",
-    detail: "Database accepts connections",
-  },
-  {
-    service: "RAG Index",
-    status: "Warning",
-    detail: "6 documents failed processing",
-  },
-  {
-    service: "LLM Gateway",
-    status: "Healthy",
-    detail: "Provider response available",
-  },
-  {
-    service: "Guardrails",
-    status: "Healthy",
-    detail: "Prompt safety checks enabled",
-  },
+const adminNavItems = [
+  { id: "overview", label: "System Overview", status: "available" },
+  { id: "users", label: "Users", status: "coming-soon" },
+  { id: "ingestion", label: "Ingestion", status: "coming-soon" },
+  { id: "guardrails", label: "Guardrails", status: "coming-soon" },
+  { id: "logs", label: "Logs", status: "coming-soon" },
 ];
 
 const recentEvents = [
@@ -55,102 +38,165 @@ const recentEvents = [
 ];
 
 function getStatusClass(status) {
-  if (status === "Healthy") {
+  if (status === "healthy") {
     return "admin-status-good";
   }
 
-  if (status === "Warning") {
+  if (status === "warning" || status === "unknown") {
     return "admin-status-warning";
   }
 
   return "admin-status-danger";
 }
 
+function formatStatus(status) {
+  if (!status) {
+    return "Unknown";
+  }
+
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function formatCheckedAt(checkedAt) {
+  if (!checkedAt) {
+    return "Not checked yet";
+  }
+
+  return new Date(checkedAt).toLocaleString();
+}
+
+function formatDetailValue(value) {
+  if (value === null || value === undefined) {
+    return "Unavailable";
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function formatDetailLabel(label) {
+  return label
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
 function AdminDashboard() {
   const [usageSummary, setUsageSummary] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  
+  const [systemHealth, setSystemHealth] = useState(null);
+  const [isLoadingUsage, setIsLoadingUsage] = useState(false);
+  const [isLoadingSystemHealth, setIsLoadingSystemHealth] = useState(false);
+  const [usageErrorMessage, setUsageErrorMessage] = useState("");
+  const [systemHealthErrorMessage, setSystemHealthErrorMessage] = useState("");
+
   useEffect(() => {
     async function loadUsageSummary() {
       try {
-        setIsLoading(true);
-        setErrorMessage("");
+        setIsLoadingUsage(true);
+        setUsageErrorMessage("");
 
         const data = await getAdminUsageSummary();
 
         setUsageSummary(data);
       } catch (error) {
-        setErrorMessage(error.message || "Unable to load admin usage data.");
+        setUsageErrorMessage(
+          error.message || "Unable to load admin usage data."
+        );
       } finally {
-        setIsLoading(false);
+        setIsLoadingUsage(false);
+      }
+    }
+
+    async function loadSystemHealth() {
+      try {
+        setIsLoadingSystemHealth(true);
+        setSystemHealthErrorMessage("");
+
+        const data = await getAdminSystemHealth();
+
+        setSystemHealth(data);
+      } catch (error) {
+        setSystemHealthErrorMessage(
+          error.message || "Unable to load system health."
+        );
+      } finally {
+        setIsLoadingSystemHealth(false);
       }
     }
 
     loadUsageSummary();
+    loadSystemHealth();
   }, []);
 
   const metrics = usageSummary?.metrics;
+  const healthChecks = systemHealth?.checks || [];
 
   const usageStats = [
-  {
-    label: "Total users",
-    value: metrics?.totalUsers ?? "--",
-    helper: "Users active in selected range",
-    status: "healthy",
-  },
-  {
-    label: "Conversations",
-    value: metrics?.totalConversations ?? "--",
-    helper: "Conversation sessions created",
-    status: "healthy",
-  },
-  {
-    label: "User queries",
-    value: metrics?.userQueries ?? "--",
-    helper: "Student messages submitted",
-    status: "healthy",
-  },
-  {
-    label: "Assistant responses",
-    value: metrics?.assistantResponses ?? "--",
-    helper: "Responses returned by assistant",
-    status: "healthy",
-  },
-];
+    {
+      label: "Total users",
+      value: metrics?.totalUsers ?? "--",
+      helper: "Users active in selected range",
+      status: "healthy",
+    },
+    {
+      label: "Conversations",
+      value: metrics?.totalConversations ?? "--",
+      helper: "Conversation sessions created",
+      status: "healthy",
+    },
+    {
+      label: "User queries",
+      value: metrics?.userQueries ?? "--",
+      helper: "Student messages submitted",
+      status: "healthy",
+    },
+    {
+      label: "Assistant responses",
+      value: metrics?.assistantResponses ?? "--",
+      helper: "Responses returned by assistant",
+      status: "healthy",
+    },
+  ];
 
   const operationalStats = [
-  {
-    label: "Failed responses",
-    value: metrics?.failedResponses ?? "--",
-    helper: "Assistant responses marked as failed",
-  },
-  {
-    label: "Blocked responses",
-    value: metrics?.blockedResponses ?? "--",
-    helper: "Assistant responses blocked by safety rules",
-  },
-  {
-    label: "Total tokens",
-    value: metrics?.totalTokens?.toLocaleString() ?? "--",
-    helper: "Total token usage in selected range",
-  },
-  {
-    label: "Estimated cost",
-    value: metrics?.estimatedCostUsd
-      ? `$${Number(metrics.estimatedCostUsd).toFixed(4)}`
-      : "--",
-    helper: "Estimated provider cost",
-  },
-  {
-    label: "Average latency",
-    value:
-      metrics?.averageLatencyMs !== null && metrics?.averageLatencyMs !== undefined
-        ? `${metrics.averageLatencyMs} ms`
-        : "Unavailable",
-    helper: "Average response latency",
-  },
-];
+    {
+      label: "Failed responses",
+      value: metrics?.failedResponses ?? "--",
+      helper: "Assistant responses marked as failed",
+    },
+    {
+      label: "Blocked responses",
+      value: metrics?.blockedResponses ?? "--",
+      helper: "Assistant responses blocked by safety rules",
+    },
+    {
+      label: "Total tokens",
+      value: metrics?.totalTokens?.toLocaleString() ?? "--",
+      helper: "Total token usage in selected range",
+    },
+    {
+      label: "Estimated cost",
+      value: metrics?.estimatedCostUsd
+        ? `$${Number(metrics.estimatedCostUsd).toFixed(4)}`
+        : "--",
+      helper: "Estimated provider cost",
+    },
+    {
+      label: "Average latency",
+      value:
+        metrics?.averageLatencyMs !== null &&
+        metrics?.averageLatencyMs !== undefined
+          ? `${metrics.averageLatencyMs} ms`
+          : "Unavailable",
+      helper: "Average response latency",
+    },
+  ];
 
   return (
     <main className="admin-page">
@@ -161,11 +207,20 @@ function AdminDashboard() {
         </div>
 
         <nav className="admin-nav">
-          <button className="active">System Overview</button>
-          <button>Users</button>
-          <button>Ingestion</button>
-          <button>Guardrails</button>
-          <button>Logs</button>
+          {adminNavItems.map((item) => (
+            <button
+              className={item.id === "overview" ? "active" : ""}
+              disabled={item.status === "coming-soon"}
+              key={item.id}
+              type="button"
+            >
+              <span>{item.label}</span>
+
+              {item.status === "coming-soon" && (
+                <small> Coming soon</small>
+              )}
+            </button>
+          ))}
         </nav>
 
         <Link className="admin-logout-link" to="/">
@@ -197,12 +252,12 @@ function AdminDashboard() {
           </Link>
         </header>
 
-        {isLoading && (
+        {isLoadingUsage && (
           <p className="admin-helper-message">Loading admin usage data...</p>
         )}
 
-        {errorMessage && (
-          <p className="admin-error-message">{errorMessage}</p>
+        {usageErrorMessage && (
+          <p className="admin-error-message">{usageErrorMessage}</p>
         )}
 
         <section className="admin-stat-grid">
@@ -223,20 +278,66 @@ function AdminDashboard() {
                 <p className="admin-panel-label">Service Health</p>
                 <h2>Core system checks</h2>
               </div>
-              <span>Live status</span>
+
+              <span
+                className={`admin-overall-status ${getStatusClass(
+                  systemHealth?.overallStatus || "unknown"
+                )}`}
+              >
+                {formatStatus(systemHealth?.overallStatus || "unknown")}
+              </span>
             </div>
 
-            <div className="service-list">
-              {serviceChecks.map((check) => (
-                <div className="service-row" key={check.service}>
-                  <div>
-                    <h3>{check.service}</h3>
-                    <p>{check.detail}</p>
-                  </div>
+            <p className="admin-checked-at">
+              Last checked: {formatCheckedAt(systemHealth?.checkedAt)}
+            </p>
 
-                  <span className={`admin-status-pill ${getStatusClass(check.status)}`}>
-                    {check.status}
-                  </span>
+            {isLoadingSystemHealth && (
+              <p className="admin-helper-message">Loading system health...</p>
+            )}
+
+            {systemHealthErrorMessage && (
+              <p className="admin-error-message">{systemHealthErrorMessage}</p>
+            )}
+
+            {!isLoadingSystemHealth &&
+              !systemHealthErrorMessage &&
+              healthChecks.length === 0 && (
+                <p className="admin-helper-message">
+                  No system health checks available.
+                </p>
+              )}
+
+            <div className="service-list">
+              {healthChecks.map((check) => (
+                <div className="service-row" key={check.id}>
+                  <div className="service-row-content">
+                    <div className="service-row-heading">
+                      <h3>{check.name}</h3>
+
+                      <span
+                        className={`admin-status-pill ${getStatusClass(
+                          check.status
+                        )}`}
+                      >
+                        {formatStatus(check.status)}
+                      </span>
+                    </div>
+
+                    <p>{check.message}</p>
+
+                    {check.details &&
+                      Object.keys(check.details).length > 0 && (
+                        <dl className="service-details-list">
+                          {Object.entries(check.details).map(([key, value]) => (
+                            <div className="service-detail-item" key={key}>
+                              <dt>{formatDetailLabel(key)}</dt>
+                              <dd>{formatDetailValue(value)}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                  </div>
                 </div>
               ))}
             </div>

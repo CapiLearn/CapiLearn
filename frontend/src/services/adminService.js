@@ -40,6 +40,65 @@ const mockAdminUsageSummary = {
   ],
 };
 
+const mockAdminSystemHealth = {
+  overallStatus: "warning",
+  checkedAt: "2026-06-07T12:00:00Z",
+  checks: [
+    {
+      id: "backend",
+      name: "FastAPI Backend",
+      status: "healthy",
+      message: "API is running.",
+      details: {
+        service: "FastAPI",
+        endpoint: "/api/admin/system-health",
+      },
+    },
+    {
+      id: "database",
+      name: "Postgres + pgvector",
+      status: "healthy",
+      message: "Database accepts connections and pgvector is available.",
+      details: {
+        databaseConnected: true,
+        pgvectorAvailable: true,
+      },
+    },
+    {
+      id: "rag",
+      name: "RAG Index",
+      status: "warning",
+      message: "6 documents failed processing.",
+      details: {
+        indexReady: true,
+        documentsProcessed: 118,
+        documentsFailed: 6,
+        lastIngestionRun: "2026-06-07T11:30:00Z",
+      },
+    },
+    {
+      id: "llm",
+      name: "LLM Gateway",
+      status: "healthy",
+      message: "Provider configuration is available.",
+      details: {
+        providerConfigured: true,
+        provider: "openrouter",
+        modelConfigured: true,
+      },
+    },
+    {
+      id: "guardrails",
+      name: "Guardrails",
+      status: "healthy",
+      message: "Guardrails are enabled.",
+      details: {
+        enabled: true,
+      },
+    },
+  ],
+};
+
 export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminUsageSummary;
@@ -67,4 +126,17 @@ export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
   });
 
   return handleApiResponse(response, "Unable to load admin usage summary.");
+}
+
+export async function getAdminSystemHealth() {
+  if (USE_MOCK_ADMIN_API) {
+    return mockAdminSystemHealth;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/admin/system-health`, {
+    method: "GET",
+    headers: ADMIN_HEADERS,
+  });
+
+  return handleApiResponse(response, "Unable to load system health.");
 }
