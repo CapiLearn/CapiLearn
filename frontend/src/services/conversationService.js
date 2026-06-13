@@ -1,4 +1,4 @@
-import { API_BASE_URL, handleApiResponse } from "./apiClient";
+import { API_BASE_URL, apiFetch, handleApiResponse } from "./apiClient";
 
 // Set to true while backend branch is unavailable.
 // Change to false when backend is running locally.
@@ -124,7 +124,7 @@ export async function listConversations() {
     };
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+  const response = await apiFetch(`${API_BASE_URL}/api/conversations`, {
     method: "GET",
     headers: {
       ...DEV_USER_HEADERS,
@@ -138,7 +138,7 @@ export async function createConversation(content) {
     return mockCreateConversation(content);
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+  const response = await apiFetch(`${API_BASE_URL}/api/conversations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -157,7 +157,7 @@ export async function listMessages(conversationId) {
     return mockListMessages(conversationId);
   }
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/api/conversations/${conversationId}/messages`,
     {
       method: "GET",
@@ -175,7 +175,7 @@ export async function createMessage(conversationId, content) {
     return mockCreateMessage(conversationId, content);
   }
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/api/conversations/${conversationId}/messages`,
     {
       method: "POST",

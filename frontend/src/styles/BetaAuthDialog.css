@@ -1,0 +1,75 @@
+/* TEMP BETA AUTH SHIM: Remove when Clerk authentication is wired end-to-end. */
+.beta-auth-overlay {
+  align-items: center;
+  background: rgba(43, 29, 21, 0.58);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 1000;
+}
+
+.beta-auth-dialog {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(43, 29, 21, 0.24);
+  max-width: 420px;
+  padding: 28px;
+  width: 100%;
+}
+
+.beta-auth-dialog h2 {
+  margin: 0 0 8px;
+}
+
+.beta-auth-dialog p {
+  line-height: 1.5;
+  margin: 0 0 20px;
+}
+
+.beta-auth-dialog form {
+  display: grid;
+  gap: 10px;
+}
+
+.beta-auth-dialog label {
+  font-weight: 700;
+}
+
+.beta-auth-dialog input {
+  border: 1px solid #b9aea7;
+  border-radius: 8px;
+  font: inherit;
+  padding: 10px 12px;
+}
+
+.beta-auth-dialog input:focus {
+  border-color: #68462f;
+  outline: 2px solid rgba(104, 70, 47, 0.2);
+}
+
+.beta-auth-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.beta-auth-actions button {
+  border: 1px solid #68462f;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  padding: 9px 16px;
+}
+
+.beta-auth-actions button[type="button"] {
+  background: #ffffff;
+  color: #68462f;
+}
+
+.beta-auth-actions button[type="submit"] {
+  background: #68462f;
+  color: #ffffff;
+}

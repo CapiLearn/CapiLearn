@@ -1,4 +1,4 @@
-import { API_BASE_URL, handleApiResponse } from "./apiClient";
+import { API_BASE_URL, apiFetch, handleApiResponse } from "./apiClient";
 
 const USE_MOCK_ADMIN_API = false;
 
@@ -61,7 +61,7 @@ export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
     ? `${API_BASE_URL}/api/admin/usage/summary?${queryString}`
     : `${API_BASE_URL}/api/admin/usage/summary`;
 
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method: "GET",
     headers: ADMIN_HEADERS,
   });
