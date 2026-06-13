@@ -483,25 +483,19 @@ function LearningWorkspace() {
               }`}
               key={message.id}
             >
-              {message.role === "assistant" ? (
-                normalizedSearchTerm ? (
-                  <p>
-                    <HighlightedText
-                      text={getVisibleMessageText(message)}
-                      searchTerm={messageSearchTerm}
-                    />
-                  </p>
-                ) : (
-                  <MarkdownMessage content={message.content} />
-                )
-              ) : (
-                <p>
-                  <HighlightedText
-                    text={message.content}
-                    searchTerm={messageSearchTerm}
-                  />
-                </p>
-              )}
+            {message.role === "assistant" ? (
+              <MarkdownMessage
+                content={message.content}
+                searchTerm={messageSearchTerm}
+              />
+            ) : (
+              <p>
+                <HighlightedText
+                  text={message.content}
+                  searchTerm={messageSearchTerm}
+                />
+              </p>
+            )}
             </div>
           ))}
 
