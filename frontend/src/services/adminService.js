@@ -40,6 +40,65 @@ const mockAdminUsageSummary = {
   ],
 };
 
+const mockAdminSystemHealth = {
+  overallStatus: "warning",
+  checkedAt: "2026-06-07T12:00:00Z",
+  checks: [
+    {
+      id: "backend",
+      name: "FastAPI Backend",
+      status: "healthy",
+      message: "API is running.",
+      details: {
+        service: "FastAPI",
+        endpoint: "/api/admin/system-health",
+      },
+    },
+    {
+      id: "database",
+      name: "Postgres + pgvector",
+      status: "healthy",
+      message: "Database accepts connections and pgvector is available.",
+      details: {
+        databaseConnected: true,
+        pgvectorAvailable: true,
+      },
+    },
+    {
+      id: "rag",
+      name: "RAG Index",
+      status: "warning",
+      message: "6 documents failed processing.",
+      details: {
+        indexReady: true,
+        documentsProcessed: 118,
+        documentsFailed: 6,
+        lastIngestionRun: "2026-06-07T11:30:00Z",
+      },
+    },
+    {
+      id: "llm",
+      name: "LLM Gateway",
+      status: "healthy",
+      message: "Provider configuration is available.",
+      details: {
+        providerConfigured: true,
+        provider: "openrouter",
+        modelConfigured: true,
+      },
+    },
+    {
+      id: "guardrails",
+      name: "Guardrails",
+      status: "healthy",
+      message: "Guardrails are enabled.",
+      details: {
+        enabled: true,
+      },
+    },
+  ],
+};
+
 export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminUsageSummary;
@@ -67,4 +126,60 @@ export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
   });
 
   return handleApiResponse(response, "Unable to load admin usage summary.");
+}
+
+function mapHealthStatus(status) {
+  if (status === "ok" || status === "healthy") {
+    return "healthy";
+  }
+
+  if (status === "degraded" || status === "warning") {
+    return "warning";
+  }
+
+  if (status === "unhealthy") {
+    return "unhealthy";
+  }
+
+  return "unknown";
+}
+
+function createHealthCheckId(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function normalizeSystemHealthResponse(data) {
+  return {
+    overallStatus: mapHealthStatus(data.status),
+    checkedAt: data.checkedAt,
+    checks: (data.checks || []).map((check) => ({
+      id: createHealthCheckId(check.name),
+      name: check.name,
+      status: mapHealthStatus(check.status),
+      message: check.message,
+      latencyMs: check.latencyMs,
+      details: check.details || {},
+    })),
+  };
+}
+
+export async function getAdminSystemHealth() {
+  if (USE_MOCK_ADMIN_API) {
+    return mockAdminSystemHealth;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/admin/health`, {
+    method: "GET",
+    headers: ADMIN_HEADERS,
+  });
+
+  const data = await handleApiResponse(
+    response,
+    "Unable to load system health."
+  );
+
+  return normalizeSystemHealthResponse(data);
 }
