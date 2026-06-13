@@ -18,10 +18,10 @@ used.
 1. Confirm the release contains the complete Phase 2 implementation,
    migrations, tests, and documentation.
 2. Back up the target database when it contains data that cannot be recreated.
-3. Run the duplicate preflight SQL below before migration `20260610_0007`.
-4. Confirm one Alembic head, then upgrade to `20260610_0008`.
+3. Run the duplicate preflight SQL below before migration `20260610_0011`.
+4. Confirm one Alembic head, then upgrade to `20260613_0013`.
 5. Run a fresh pgvector ingestion. Re-ingestion is required because migration
-   `0007` deliberately adds nullable fields without backfilling chunk content.
+   `0011` deliberately adds nullable fields without backfilling chunk content.
 6. Run the post-ingestion SQL checks and confirm the expected active corpus.
 7. Enable `--reconcile-deletions` only for an intentional, complete source
    scan.
@@ -46,7 +46,7 @@ uv run alembic current
 uv run alembic check
 ```
 
-The single current head after upgrade must be `20260610_0008`.
+The single current head after upgrade must be `20260613_0013`.
 
 Preview ingestion without loading the model or opening PostgreSQL:
 
@@ -81,10 +81,10 @@ Useful ingestion options are listed by:
 uv run python -m backend.ingestion.ingest_pgvector --help
 ```
 
-## Duplicate Preflight Before Migration 0007
+## Duplicate Preflight Before Migration 0011
 
-Migration `20260610_0007` adds unique constraints for chunk order and embedding
-model identity. Migration `20260609_0006` establishes document source
+Migration `20260610_0011` adds unique constraints for chunk order and embedding
+model identity. Migration `20260609_0010` establishes document source
 identity. Run all three checks before upgrading a populated database. Each
 query must return zero rows.
 
@@ -109,7 +109,7 @@ GROUP BY chunk_id, embedding_model
 HAVING COUNT(*) > 1;
 ```
 
-Do not apply `0007` until duplicates are understood and resolved through an
+Do not apply `0011` until duplicates are understood and resolved through an
 environment-specific data repair or fresh ingestion plan.
 
 ## Ingestion Contract

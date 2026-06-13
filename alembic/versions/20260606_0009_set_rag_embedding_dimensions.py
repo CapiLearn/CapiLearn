@@ -1,7 +1,7 @@
 """Set RAG embedding dimensions and add cosine index.
 
-Revision ID: 20260606_0005
-Revises: 20260606_0004
+Revision ID: 20260606_0009
+Revises: 20260606_0008
 Create Date: 2026-06-06
 
 """
@@ -10,8 +10,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "20260606_0005"
-down_revision: str | None = "20260606_0004"
+revision: str = "20260606_0009"
+down_revision: str | None = "20260606_0008"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

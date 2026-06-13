@@ -1,7 +1,7 @@
 """Enforce LLM cost component user integrity.
 
-Revision ID: 20260606_0007
-Revises: 20260606_0006
+Revision ID: 20260606_0008
+Revises: 20260606_0007
 Create Date: 2026-06-06
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20260606_0007"
-down_revision: str | None = "20260606_0006"
+revision: str = "20260606_0008"
+down_revision: str | None = "20260606_0007"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

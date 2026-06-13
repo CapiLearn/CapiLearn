@@ -1,7 +1,7 @@
 """Add deterministic RAG chunk contract fields.
 
-Revision ID: 20260610_0007
-Revises: 20260609_0006
+Revision ID: 20260610_0011
+Revises: 20260609_0010
 Create Date: 2026-06-10
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20260610_0007"
-down_revision: str | None = "20260609_0006"
+revision: str = "20260610_0011"
+down_revision: str | None = "20260609_0010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
