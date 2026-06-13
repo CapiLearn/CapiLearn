@@ -128,15 +128,58 @@ export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
   return handleApiResponse(response, "Unable to load admin usage summary.");
 }
 
+function mapHealthStatus(status) {
+  if (status === "ok" || status === "healthy") {
+    return "healthy";
+  }
+
+  if (status === "degraded" || status === "warning") {
+    return "warning";
+  }
+
+  if (status === "unhealthy") {
+    return "unhealthy";
+  }
+
+  return "unknown";
+}
+
+function createHealthCheckId(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function normalizeSystemHealthResponse(data) {
+  return {
+    overallStatus: mapHealthStatus(data.status),
+    checkedAt: data.checkedAt,
+    checks: (data.checks || []).map((check) => ({
+      id: createHealthCheckId(check.name),
+      name: check.name,
+      status: mapHealthStatus(check.status),
+      message: check.message,
+      latencyMs: check.latencyMs,
+      details: check.details || {},
+    })),
+  };
+}
+
 export async function getAdminSystemHealth() {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminSystemHealth;
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/admin/system-health`, {
+  const response = await fetch(`${API_BASE_URL}/api/admin/health`, {
     method: "GET",
     headers: ADMIN_HEADERS,
   });
 
-  return handleApiResponse(response, "Unable to load system health.");
+  const data = await handleApiResponse(
+    response,
+    "Unable to load system health."
+  );
+
+  return normalizeSystemHealthResponse(data);
 }

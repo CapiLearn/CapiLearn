@@ -360,6 +360,13 @@ body {
   font-size: 14px;
 }
 
+.service-latency {
+  margin-top: 6px;
+  color: #867a69;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .admin-overall-status {
   display: inline-flex;
   border-radius: 999px;

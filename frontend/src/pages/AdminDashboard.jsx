@@ -326,6 +326,10 @@ function AdminDashboard() {
 
                     <p>{check.message}</p>
 
+                    {check.latencyMs !== null && check.latencyMs !== undefined && (
+                      <p className="service-latency">Latency: {check.latencyMs} ms</p>
+                    )}
+
                     {check.details &&
                       Object.keys(check.details).length > 0 && (
                         <dl className="service-details-list">
