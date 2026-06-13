@@ -39,6 +39,113 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeVisibleText(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function createTextProtector() {
+  const protectedTexts = [];
+
+  function protect(value) {
+    const placeholder = `\uE000${protectedTexts.length}\uE001`;
+    protectedTexts.push(value);
+
+    return placeholder;
+  }
+
+  function restore(value) {
+    return value.replace(/\uE000(\d+)\uE001/g, (_, index) =>
+      protectedTexts[Number(index)] || ""
+    );
+  }
+
+  return {
+    protect,
+    restore,
+  };
+}
+
+function isMarkdownTableDivider(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function isMarkdownTableRow(line) {
+  const trimmedLine = line.trim();
+
+  return (
+    trimmedLine.startsWith("|") &&
+    trimmedLine.endsWith("|") &&
+    trimmedLine.slice(1, -1).includes("|")
+  );
+}
+
+function getVisibleMarkdownText(content) {
+  const protector = createTextProtector();
+
+  const protectedContent = content
+    .replace(/```[\s\S]*?```/g, (match) => {
+      const codeBlockText = match
+        .replace(/^```[^\n]*\n?/, "")
+        .replace(/\n?```$/, "");
+
+      return protector.protect(codeBlockText);
+    })
+    .replace(/`([^`]+)`/g, (_, inlineCodeText) =>
+      protector.protect(inlineCodeText)
+    );
+
+  const visibleLines = protectedContent
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .split(/\n+/)
+    .flatMap((line) => {
+      const cleanedLine = line
+        .replace(/^#{1,6}\s+/g, "")
+        .replace(/^>\s?/g, "")
+        .replace(/^\s*[-*+]\s+/g, "")
+        .replace(/^\s*\d+\.\s+/g, "");
+
+      if (isMarkdownTableDivider(cleanedLine)) {
+        return [];
+      }
+
+      if (isMarkdownTableRow(cleanedLine)) {
+        return cleanedLine
+          .slice(1, -1)
+          .split("|")
+          .map((cell) => cell.trim())
+          .filter(Boolean);
+      }
+
+      return [cleanedLine];
+    })
+    .join(" ");
+
+  return normalizeVisibleText(protector.restore(visibleLines));
+}
+
+function getVisibleMessageText(message) {
+  return message.role === "assistant"
+    ? getVisibleMarkdownText(message.content)
+    : message.content;
+}
+
+function countSearchMatchesInText(text, searchTerm) {
+  if (!searchTerm) {
+    return 0;
+  }
+
+  const escapedSearchTerm = escapeRegExp(searchTerm);
+  const matches = text.match(new RegExp(escapedSearchTerm, "gi"));
+
+  return matches ? matches.length : 0;
+}
+
 function HighlightedText({ text, searchTerm }) {
   const normalizedSearchTerm = searchTerm.trim();
 
@@ -58,70 +165,6 @@ function HighlightedText({ text, searchTerm }) {
       part
     )
   );
-}
-
-function getSearchableMarkdownChunks(content) {
-  return content
-    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
-    .replace(/```[\s\S]*?```/g, (match) =>
-      match.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "")
-    )
-    .split(/\n+/)
-    .flatMap((line) => {
-      const cleanedLine = line
-        .replace(/^#{1,6}\s+/g, "")
-        .replace(/^>\s?/g, "")
-        .replace(/^\s*[-*+]\s+/g, "")
-        .replace(/^\s*\d+\.\s+/g, "");
-
-      if (
-        /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(cleanedLine)
-      ) {
-        return [];
-      }
-
-      return cleanedLine
-        .split("|")
-        .map((chunk) =>
-          chunk
-            .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
-            .replace(/`([^`]+)`/g, "$1")
-            .replace(/\*\*([^*]+)\*\*/g, "$1")
-            .replace(/\*([^*]+)\*/g, "$1")
-            .replace(/__([^_]+)__/g, "$1")
-            .replace(/_([^_]+)_/g, "$1")
-            .replace(/~~([^~]+)~~/g, "$1")
-            .trim()
-        )
-        .filter(Boolean);
-    });
-}
-
-function getSearchableChunksForMessage(message) {
-  return message.role === "assistant"
-    ? getSearchableMarkdownChunks(message.content)
-    : [message.content];
-}
-
-function messageHasSearchMatch(message, searchTerm) {
-  return getSearchableChunksForMessage(message).some((chunk) =>
-    chunk.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-}
-
-function countSearchMatchesInMessage(message, searchTerm) {
-  if (!searchTerm) {
-    return 0;
-  }
-
-  const escapedSearchTerm = escapeRegExp(searchTerm);
-  const searchRegex = new RegExp(escapedSearchTerm, "gi");
-
-  return getSearchableChunksForMessage(message).reduce((count, chunk) => {
-    const matches = chunk.match(searchRegex);
-
-    return count + (matches ? matches.length : 0);
-  }, 0);
 }
 
 function LearningWorkspace() {
@@ -259,14 +302,20 @@ function LearningWorkspace() {
 
   const visibleChatMessages = normalizedSearchTerm
     ? chatMessages.filter((message) =>
-        messageHasSearchMatch(message, normalizedSearchTerm)
+        getVisibleMessageText(message)
+          .toLowerCase()
+          .includes(normalizedSearchTerm.toLowerCase())
       )
     : chatMessages;
 
   const searchMatchCount = normalizedSearchTerm
     ? visibleChatMessages.reduce(
         (count, message) =>
-          count + countSearchMatchesInMessage(message, normalizedSearchTerm),
+          count +
+          countSearchMatchesInText(
+            getVisibleMessageText(message),
+            normalizedSearchTerm
+          ),
         0
       )
     : 0;
@@ -312,8 +361,8 @@ function LearningWorkspace() {
             {!isLoadingConversations &&
               conversations.length > 0 &&
               filteredConversations.length === 0 && (
-              <p className="sidebar-helper-text">No conversations found.</p>
-            )}
+                <p className="sidebar-helper-text">No conversations found.</p>
+              )}
 
             {!isLoadingConversations &&
               filteredConversations.map((conversation) => (
@@ -435,10 +484,16 @@ function LearningWorkspace() {
               key={message.id}
             >
               {message.role === "assistant" ? (
-                <MarkdownMessage
-                  content={message.content}
-                  searchTerm={messageSearchTerm}
-                />
+                normalizedSearchTerm ? (
+                  <p>
+                    <HighlightedText
+                      text={getVisibleMessageText(message)}
+                      searchTerm={messageSearchTerm}
+                    />
+                  </p>
+                ) : (
+                  <MarkdownMessage content={message.content} />
+                )
               ) : (
                 <p>
                   <HighlightedText
