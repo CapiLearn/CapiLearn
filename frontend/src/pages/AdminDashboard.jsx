@@ -16,8 +16,7 @@ const adminUsers = [
     id: "user-1",
     username: "Student Demo",
     accessLevel: "Student",
-    totalTokensProcessed: 12840,
-    tokensBlocked: 520,
+    totalMessagesSent: 42,
     blockedRequests: 4,
     lastActivity: "2026-06-08T15:22:00Z",
   },
@@ -25,8 +24,7 @@ const adminUsers = [
     id: "user-2",
     username: "Instructor Demo",
     accessLevel: "Instructor",
-    totalTokensProcessed: 22100,
-    tokensBlocked: 0,
+    totalMessagesSent: 87,
     blockedRequests: 0,
     lastActivity: "2026-06-08T14:10:00Z",
   },
@@ -34,8 +32,7 @@ const adminUsers = [
     id: "user-3",
     username: "Admin Demo",
     accessLevel: "Admin",
-    totalTokensProcessed: 18450,
-    tokensBlocked: 180,
+    totalMessagesSent: 31,
     blockedRequests: 2,
     lastActivity: "2026-06-08T12:45:00Z",
   },
@@ -476,8 +473,7 @@ function AdminDashboard() {
                   <tr>
                     <th>Username</th>
                     <th>Access level</th>
-                    <th>Tokens processed</th>
-                    <th>Tokens blocked</th>
+                    <th>Total messages sent</th>                   
                     <th>Blocked requests</th>
                     <th>Last activity</th>
                   </tr>
@@ -488,13 +484,10 @@ function AdminDashboard() {
                     <tr key={user.id}>
                       <td>{user.username}</td>
                       <td>
-                        <span className="access-level-pill">
-                          {user.accessLevel}
-                        </span>
+                        <span className="access-level-pill">{user.accessLevel}</span>
                       </td>
-                      <td>{user.totalTokensProcessed.toLocaleString()}</td>
-                      <td>{user.tokensBlocked.toLocaleString()}</td>
-                      <td>{user.blockedRequests}</td>
+                      <td>{user.totalMessagesSent.toLocaleString()}</td>
+                      <td>{user.blockedRequests.toLocaleString()}</td>
                       <td>{formatDateTime(user.lastActivity)}</td>
                     </tr>
                   ))}

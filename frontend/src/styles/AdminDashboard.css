@@ -441,17 +441,20 @@ body {
 }
 
 .users-panel {
+  max-height: 70vh;
   margin-bottom: 20px;
+  overflow: hidden;
 }
 
 .users-table-wrapper {
-  overflow-x: auto;
+  max-height: 520px;
+  overflow: auto;
 }
 
 .users-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 860px;
+  min-width: 760px;
 }
 
 .users-table th,
@@ -463,6 +466,10 @@ body {
 }
 
 .users-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fbf8e8;
   color: #867a69;
   font-size: 12px;
   font-weight: 900;
