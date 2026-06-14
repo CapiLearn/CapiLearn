@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
+import capiFavicon from "../assets/capilearn-favicon.svg";
 
 import {
   createConversation,
@@ -324,7 +325,7 @@ function LearningWorkspace() {
     <main className="workspace-page">
       <aside className="workspace-sidebar">
         <div className="workspace-brand">
-          <div className="workspace-brand-icon">♧</div>
+          <div className="workspace-brand-icon">🌿</div>
           <span>CapiLearn</span>
         </div>
 
@@ -412,7 +413,9 @@ function LearningWorkspace() {
         </header>
 
         <section className="welcome-card">
-          <div className="capi-avatar">🌿</div>
+          <div className="capi-avatar">
+            <img src={capiFavicon} alt="Capi reading a book" />
+          </div>
 
           <div>
             <h2>Hi, I’m Capi.</h2>
