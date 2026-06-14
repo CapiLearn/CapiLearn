@@ -7,11 +7,38 @@ import {
 import "../styles/AdminDashboard.css";
 
 const adminNavItems = [
-  { id: "overview", label: "System Overview", status: "available" },
-  { id: "users", label: "Users", status: "coming-soon" },
-  { id: "ingestion", label: "Ingestion", status: "coming-soon" },
-  { id: "guardrails", label: "Guardrails", status: "coming-soon" },
-  { id: "logs", label: "Logs", status: "coming-soon" },
+  { id: "overview", label: "System Overview" },
+  { id: "users", label: "Users" },
+];
+
+const adminUsers = [
+  {
+    id: "user-1",
+    username: "Student Demo",
+    accessLevel: "Student",
+    totalTokensProcessed: 12840,
+    tokensBlocked: 520,
+    blockedRequests: 4,
+    lastActivity: "2026-06-08T15:22:00Z",
+  },
+  {
+    id: "user-2",
+    username: "Instructor Demo",
+    accessLevel: "Instructor",
+    totalTokensProcessed: 22100,
+    tokensBlocked: 0,
+    blockedRequests: 0,
+    lastActivity: "2026-06-08T14:10:00Z",
+  },
+  {
+    id: "user-3",
+    username: "Admin Demo",
+    accessLevel: "Admin",
+    totalTokensProcessed: 18450,
+    tokensBlocked: 180,
+    blockedRequests: 2,
+    lastActivity: "2026-06-08T12:45:00Z",
+  },
 ];
 
 const recentEvents = [
@@ -65,6 +92,14 @@ function formatCheckedAt(checkedAt) {
   return new Date(checkedAt).toLocaleString();
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return "Unavailable";
+  }
+
+  return new Date(value).toLocaleString();
+}
+
 function formatDetailValue(value) {
   if (value === null || value === undefined) {
     return "Unavailable";
@@ -94,6 +129,7 @@ function AdminDashboard() {
   const [isLoadingSystemHealth, setIsLoadingSystemHealth] = useState(false);
   const [usageErrorMessage, setUsageErrorMessage] = useState("");
   const [systemHealthErrorMessage, setSystemHealthErrorMessage] = useState("");
+  const [activeAdminSection, setActiveAdminSection] = useState("overview");
 
   useEffect(() => {
     async function loadUsageSummary() {
@@ -209,16 +245,12 @@ function AdminDashboard() {
         <nav className="admin-nav">
           {adminNavItems.map((item) => (
             <button
-              className={item.id === "overview" ? "active" : ""}
-              disabled={item.status === "coming-soon"}
+              className={activeAdminSection === item.id ? "active" : ""}
               key={item.id}
               type="button"
+              onClick={() => setActiveAdminSection(item.id)}
             >
-              <span>{item.label}</span>
-
-              {item.status === "coming-soon" && (
-                <small> Coming soon</small>
-              )}
+              {item.label}
             </button>
           ))}
         </nav>
@@ -240,10 +272,13 @@ function AdminDashboard() {
         <header className="admin-header">
           <div>
             <p className="admin-kicker">Administrator Dashboard</p>
-            <h1>System operations</h1>
+            <h1>
+              {activeAdminSection === "users" ? "Users" : "System operations"}
+            </h1>
             <p>
-              Monitor service health, ingestion status, safety checks, and
-              platform readiness.
+              {activeAdminSection === "users"
+                ? "Review user access levels and individual guardrail usage."
+                : "Monitor service health, ingestion status, safety checks, and platform readiness."}
             </p>
           </div>
 
@@ -252,161 +287,222 @@ function AdminDashboard() {
           </Link>
         </header>
 
-        {isLoadingUsage && (
-          <p className="admin-helper-message">Loading admin usage data...</p>
+        {activeAdminSection === "overview" && (
+          <>
+            {isLoadingUsage && (
+              <p className="admin-helper-message">
+                Loading admin usage data...
+              </p>
+            )}
+
+            {usageErrorMessage && (
+              <p className="admin-error-message">{usageErrorMessage}</p>
+            )}
+
+            <section className="admin-stat-grid">
+              {usageStats.map((stat) => (
+                <article className="admin-stat-card" key={stat.label}>
+                  <div className={`admin-status-dot ${stat.status}`}></div>
+                  <p>{stat.label}</p>
+                  <h2>{stat.value}</h2>
+                  <span>{stat.helper}</span>
+                </article>
+              ))}
+            </section>
+
+            <section className="admin-content-grid">
+              <article className="admin-panel">
+                <div className="admin-panel-header">
+                  <div>
+                    <p className="admin-panel-label">Service Health</p>
+                    <h2>Core system checks</h2>
+                  </div>
+
+                  <span
+                    className={`admin-overall-status ${getStatusClass(
+                      systemHealth?.overallStatus || "unknown"
+                    )}`}
+                  >
+                    {formatStatus(systemHealth?.overallStatus || "unknown")}
+                  </span>
+                </div>
+
+                <p className="admin-checked-at">
+                  Last checked: {formatCheckedAt(systemHealth?.checkedAt)}
+                </p>
+
+                {isLoadingSystemHealth && (
+                  <p className="admin-helper-message">
+                    Loading system health...
+                  </p>
+                )}
+
+                {systemHealthErrorMessage && (
+                  <p className="admin-error-message">
+                    {systemHealthErrorMessage}
+                  </p>
+                )}
+
+                {!isLoadingSystemHealth &&
+                  !systemHealthErrorMessage &&
+                  healthChecks.length === 0 && (
+                    <p className="admin-helper-message">
+                      No system health checks available.
+                    </p>
+                  )}
+
+                <div className="service-list">
+                  {healthChecks.map((check) => (
+                    <div className="service-row" key={check.id}>
+                      <div className="service-row-content">
+                        <div className="service-row-heading">
+                          <h3>{check.name}</h3>
+
+                          <span
+                            className={`admin-status-pill ${getStatusClass(
+                              check.status
+                            )}`}
+                          >
+                            {formatStatus(check.status)}
+                          </span>
+                        </div>
+
+                        <p>{check.message}</p>
+
+                        {check.latencyMs !== null &&
+                          check.latencyMs !== undefined && (
+                            <p className="service-latency">
+                              Latency: {check.latencyMs} ms
+                            </p>
+                          )}
+
+                        {check.details &&
+                          Object.keys(check.details).length > 0 && (
+                            <dl className="service-details-list">
+                              {Object.entries(check.details).map(
+                                ([key, value]) => (
+                                  <div
+                                    className="service-detail-item"
+                                    key={key}
+                                  >
+                                    <dt>{formatDetailLabel(key)}</dt>
+                                    <dd>{formatDetailValue(value)}</dd>
+                                  </div>
+                                )
+                              )}
+                            </dl>
+                          )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <aside className="admin-side-stack">
+                <article className="admin-panel">
+                  <p className="admin-panel-label">Usage Details</p>
+                  <h2>Response and cost metrics</h2>
+
+                  <div className="usage-detail-list">
+                    {operationalStats.map((item) => (
+                      <div className="usage-detail-item" key={item.label}>
+                        <p>{item.label}</p>
+                        <h3>{item.value}</h3>
+                        <span>{item.helper}</span>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="admin-panel admin-safety-card">
+                  <p className="admin-panel-label">Safety</p>
+                  <h2>Guided learning mode active</h2>
+                  <p>
+                    The assistant is configured to guide students with hints and
+                    questions instead of giving direct answers.
+                  </p>
+                </article>
+              </aside>
+            </section>
+
+            <section className="admin-panel events-panel">
+              <div className="admin-panel-header">
+                <div>
+                  <p className="admin-panel-label">Recent Events</p>
+                  <h2>Operational activity</h2>
+                </div>
+              </div>
+
+              <div className="events-table-wrapper">
+                <table className="events-table">
+                  <thead>
+                    <tr>
+                      <th>Event</th>
+                      <th>Type</th>
+                      <th>Time</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {recentEvents.map((event) => (
+                      <tr key={`${event.event}-${event.time}`}>
+                        <td>{event.event}</td>
+                        <td>
+                          <span className="event-type-pill">{event.type}</span>
+                        </td>
+                        <td>{event.time}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
         )}
 
-        {usageErrorMessage && (
-          <p className="admin-error-message">{usageErrorMessage}</p>
-        )}
-
-        <section className="admin-stat-grid">
-          {usageStats.map((stat) => (
-            <article className="admin-stat-card" key={stat.label}>
-              <div className={`admin-status-dot ${stat.status}`}></div>
-              <p>{stat.label}</p>
-              <h2>{stat.value}</h2>
-              <span>{stat.helper}</span>
-            </article>
-          ))}
-        </section>
-
-        <section className="admin-content-grid">
-          <article className="admin-panel">
+        {activeAdminSection === "users" && (
+          <section className="admin-panel users-panel">
             <div className="admin-panel-header">
               <div>
-                <p className="admin-panel-label">Service Health</p>
-                <h2>Core system checks</h2>
+                <p className="admin-panel-label">Users</p>
+                <h2>User access and guardrail usage</h2>
               </div>
-
-              <span
-                className={`admin-overall-status ${getStatusClass(
-                  systemHealth?.overallStatus || "unknown"
-                )}`}
-              >
-                {formatStatus(systemHealth?.overallStatus || "unknown")}
-              </span>
+              <span>Local preview</span>
             </div>
 
-            <p className="admin-checked-at">
-              Last checked: {formatCheckedAt(systemHealth?.checkedAt)}
-            </p>
-
-            {isLoadingSystemHealth && (
-              <p className="admin-helper-message">Loading system health...</p>
-            )}
-
-            {systemHealthErrorMessage && (
-              <p className="admin-error-message">{systemHealthErrorMessage}</p>
-            )}
-
-            {!isLoadingSystemHealth &&
-              !systemHealthErrorMessage &&
-              healthChecks.length === 0 && (
-                <p className="admin-helper-message">
-                  No system health checks available.
-                </p>
-              )}
-
-            <div className="service-list">
-              {healthChecks.map((check) => (
-                <div className="service-row" key={check.id}>
-                  <div className="service-row-content">
-                    <div className="service-row-heading">
-                      <h3>{check.name}</h3>
-
-                      <span
-                        className={`admin-status-pill ${getStatusClass(
-                          check.status
-                        )}`}
-                      >
-                        {formatStatus(check.status)}
-                      </span>
-                    </div>
-
-                    <p>{check.message}</p>
-
-                    {check.latencyMs !== null && check.latencyMs !== undefined && (
-                      <p className="service-latency">Latency: {check.latencyMs} ms</p>
-                    )}
-
-                    {check.details &&
-                      Object.keys(check.details).length > 0 && (
-                        <dl className="service-details-list">
-                          {Object.entries(check.details).map(([key, value]) => (
-                            <div className="service-detail-item" key={key}>
-                              <dt>{formatDetailLabel(key)}</dt>
-                              <dd>{formatDetailValue(value)}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <aside className="admin-side-stack">
-            <article className="admin-panel">
-              <p className="admin-panel-label">Usage Details</p>
-              <h2>Response and cost metrics</h2>
-
-              <div className="usage-detail-list">
-                {operationalStats.map((item) => (
-                  <div className="usage-detail-item" key={item.label}>
-                    <p>{item.label}</p>
-                    <h3>{item.value}</h3>
-                    <span>{item.helper}</span>
-                  </div>
-                ))}
-              </div>
-            </article>
-
-            <article className="admin-panel admin-safety-card">
-              <p className="admin-panel-label">Safety</p>
-              <h2>Guided learning mode active</h2>
-              <p>
-                The assistant is configured to guide students with hints and
-                questions instead of giving direct answers.
-              </p>
-            </article>
-          </aside>
-        </section>
-
-        <section className="admin-panel events-panel">
-          <div className="admin-panel-header">
-            <div>
-              <p className="admin-panel-label">Recent Events</p>
-              <h2>Operational activity</h2>
-            </div>
-            <button className="admin-outline-button">View all logs</button>
-          </div>
-
-          <div className="events-table-wrapper">
-            <table className="events-table">
-              <thead>
-                <tr>
-                  <th>Event</th>
-                  <th>Type</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {recentEvents.map((event) => (
-                  <tr key={`${event.event}-${event.time}`}>
-                    <td>{event.event}</td>
-                    <td>
-                      <span className="event-type-pill">{event.type}</span>
-                    </td>
-                    <td>{event.time}</td>
+            <div className="users-table-wrapper">
+              <table className="users-table">
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>Access level</th>
+                    <th>Tokens processed</th>
+                    <th>Tokens blocked</th>
+                    <th>Blocked requests</th>
+                    <th>Last activity</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                </thead>
+
+                <tbody>
+                  {adminUsers.map((user) => (
+                    <tr key={user.id}>
+                      <td>{user.username}</td>
+                      <td>
+                        <span className="access-level-pill">
+                          {user.accessLevel}
+                        </span>
+                      </td>
+                      <td>{user.totalTokensProcessed.toLocaleString()}</td>
+                      <td>{user.tokensBlocked.toLocaleString()}</td>
+                      <td>{user.blockedRequests}</td>
+                      <td>{formatDateTime(user.lastActivity)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </section>
     </main>
   );
