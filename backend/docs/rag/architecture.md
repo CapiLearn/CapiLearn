@@ -104,12 +104,12 @@ into the original source.
 
 ## Persistence and Migrations
 
-Migration `20260610_0007` adds nullable chunk-contract columns and unique
+Migration `20260610_0011` adds nullable chunk-contract columns and unique
 constraints on `(document_id, chunk_index)` and
 `(chunk_id, embedding_model)`. The columns are nullable so existing rows remain
 readable during rollout; fresh re-ingestion is required to populate them.
 
-Migration `20260610_0008` adds:
+Migration `20260610_0012` adds:
 
 - non-null `rag_documents.is_active`, defaulting to `true`
 - nullable `rag_documents.deleted_at`
@@ -117,7 +117,7 @@ Migration `20260610_0008` adds:
 
 Fresh ingestion after migration establishes the Phase 2 active corpus and
 populates `markdown-structure-v3` metadata. Deployment preflight must check for
-duplicates before applying `0007`; see `runbook.md`.
+duplicates before applying `0011`; see `runbook.md`.
 
 `rag_embeddings.embedding` remains `vector(384)` with an HNSW cosine index.
 Chroma metadata is flattened to scalar values so the retained Chroma builder

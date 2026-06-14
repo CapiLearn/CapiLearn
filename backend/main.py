@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.activity.router import router as activity_router
 from backend.admin.router import router as admin_router
 from backend.auth.router import router as auth_router
 from backend.chat.router import router as chat_router
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
+    app.include_router(activity_router, prefix=settings.api_prefix)
     app.include_router(chat_router, prefix=settings.api_prefix)
     app.include_router(auth_router, prefix=settings.api_prefix)
     app.include_router(admin_router, prefix=settings.api_prefix)

@@ -368,6 +368,7 @@ async def test_usage_summary_accepts_existing_admin_local_user() -> None:
         role=UserRole.ADMIN.value,
     )
     repository = FakeUserRepository(user=user)
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_mode="clerk")
     app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
     app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(

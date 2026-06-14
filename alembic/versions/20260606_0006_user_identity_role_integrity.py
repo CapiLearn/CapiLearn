@@ -1,7 +1,7 @@
 """Enforce user identity and role integrity.
 
-Revision ID: 20260606_0005
-Revises: 20260606_0004
+Revision ID: 20260606_0006
+Revises: 20260606_0005
 Create Date: 2026-06-06
 
 """
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20260606_0005"
-down_revision: str | None = "20260606_0004"
+revision: str = "20260606_0006"
+down_revision: str | None = "20260606_0005"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

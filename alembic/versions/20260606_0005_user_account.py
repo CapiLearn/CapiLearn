@@ -1,7 +1,7 @@
 """Add local user accounts.
 
-Revision ID: 20260606_0004
-Revises: 20260523_0003
+Revision ID: 20260606_0005
+Revises: 20260523_0004
 Create Date: 2026-06-06
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20260606_0004"
-down_revision: str | None = "20260523_0003"
+revision: str = "20260606_0005"
+down_revision: str | None = "20260523_0004"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

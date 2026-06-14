@@ -1,7 +1,7 @@
 """Enforce RAG document source identity.
 
-Revision ID: 20260609_0006
-Revises: 20260606_0005
+Revision ID: 20260609_0010
+Revises: 20260606_0009
 Create Date: 2026-06-09
 
 """
@@ -10,8 +10,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "20260609_0006"
-down_revision: str | None = "20260606_0005"
+revision: str = "20260609_0010"
+down_revision: str | None = "20260606_0009"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
