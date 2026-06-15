@@ -7,6 +7,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from backend.auth.schemas import UserRole
+
 
 class AdminBaseModel(BaseModel):
     model_config = ConfigDict(
@@ -44,6 +46,22 @@ class AdminUsageSummaryResponse(AdminBaseModel):
     range: UsageRange
     metrics: UsageMetrics
     daily_usage: list[DailyUsagePoint]
+
+
+class AdminUserOverview(AdminBaseModel):
+    id: UUID
+    clerk_id: str
+    display_name: str
+    email: str | None
+    access_level: UserRole
+    total_messages: int
+    blocked_requests: int
+    last_activity: datetime | None
+
+
+class AdminUserOverviewResponse(AdminBaseModel):
+    range: UsageRange
+    users: list[AdminUserOverview]
 
 
 class HealthStatus(StrEnum):

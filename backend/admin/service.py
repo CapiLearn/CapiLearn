@@ -1,5 +1,6 @@
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.admin.repository import AdminUsageRepository, DailyUsageAggregate
 from backend.admin.schemas import (
     AdminUsageSummaryResponse,
+    AdminUserOverview,
+    AdminUserOverviewResponse,
     CostComponentResponse,
     CostComponentsResponse,
     DailyUsagePoint,
@@ -22,6 +25,13 @@ from backend.core.exceptions import ApiError
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATE_RANGE_ERROR = "Usage summary ranges must use UTC calendar dates and span at least one day."
 MAX_USAGE_RANGE_DAYS = 366
+
+
+@dataclass(frozen=True)
+class ResolvedUsageWindow:
+    usage_range: UsageRange
+    range_start: datetime
+    range_end: datetime
 
 
 class AdminUsageService:
@@ -42,25 +52,23 @@ class AdminUsageService:
         from_date: str | None,
         to_date: str | None,
     ) -> AdminUsageSummaryResponse:
-        usage_range = self._resolve_range(from_date=from_date, to_date=to_date)
-        range_start = datetime.combine(usage_range.from_date, time.min, tzinfo=UTC)
-        range_end = datetime.combine(usage_range.to_date, time.min, tzinfo=UTC)
+        usage_window = self._resolve_window(from_date=from_date, to_date=to_date)
 
         metrics = await self._repository.get_usage_metrics(
             self._session,
-            range_start=range_start,
-            range_end=range_end,
+            range_start=usage_window.range_start,
+            range_end=usage_window.range_end,
         )
         daily_usage = await self._repository.list_daily_usage(
             self._session,
-            range_start=range_start,
-            range_end=range_end,
+            range_start=usage_window.range_start,
+            range_end=usage_window.range_end,
         )
 
         return AdminUsageSummaryResponse(
             range=UsageRange(
-                from_date=usage_range.from_date,
-                to_date=usage_range.to_date,
+                from_date=usage_window.usage_range.from_date,
+                to_date=usage_window.usage_range.to_date,
             ),
             metrics=UsageMetrics(
                 total_users=metrics.total_users,
@@ -74,8 +82,8 @@ class AdminUsageService:
                 average_latency_ms=_rounded_latency(metrics.average_latency_ms),
             ),
             daily_usage=_fill_daily_usage(
-                from_date=usage_range.from_date,
-                to_date=usage_range.to_date,
+                from_date=usage_window.usage_range.from_date,
+                to_date=usage_window.usage_range.to_date,
                 aggregates=daily_usage,
             ),
         )
@@ -91,13 +99,11 @@ class AdminUsageService:
         limit: int = 100,
         offset: int = 0,
     ) -> CostComponentsResponse:
-        usage_range = self._resolve_range(from_date=from_date, to_date=to_date)
-        range_start = datetime.combine(usage_range.from_date, time.min, tzinfo=UTC)
-        range_end = datetime.combine(usage_range.to_date, time.min, tzinfo=UTC)
+        usage_window = self._resolve_window(from_date=from_date, to_date=to_date)
         components = await self._repository.list_cost_components(
             self._session,
-            range_start=range_start,
-            range_end=range_end,
+            range_start=usage_window.range_start,
+            range_end=usage_window.range_end,
             conversation_id=conversation_id,
             assistant_message_id=assistant_message_id,
             component_type=component_type,
@@ -106,8 +112,8 @@ class AdminUsageService:
         )
         return CostComponentsResponse(
             range=UsageRange(
-                from_date=usage_range.from_date,
-                to_date=usage_range.to_date,
+                from_date=usage_window.usage_range.from_date,
+                to_date=usage_window.usage_range.to_date,
             ),
             cost_components=[
                 CostComponentResponse(
@@ -135,6 +141,50 @@ class AdminUsageService:
                 )
                 for component in components
             ],
+        )
+
+    async def list_user_overviews(
+        self,
+        *,
+        from_date: str | None,
+        to_date: str | None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> AdminUserOverviewResponse:
+        usage_window = self._resolve_window(from_date=from_date, to_date=to_date)
+        users = await self._repository.list_user_overviews(
+            self._session,
+            range_start=usage_window.range_start,
+            range_end=usage_window.range_end,
+            limit=limit,
+            offset=offset,
+        )
+        return AdminUserOverviewResponse(
+            range=UsageRange(
+                from_date=usage_window.usage_range.from_date,
+                to_date=usage_window.usage_range.to_date,
+            ),
+            users=[
+                AdminUserOverview(
+                    id=user.id,
+                    clerk_id=user.clerk_id,
+                    display_name=user.display_name,
+                    email=user.email,
+                    access_level=user.access_level,
+                    total_messages=user.total_messages,
+                    blocked_requests=user.blocked_requests,
+                    last_activity=user.last_activity,
+                )
+                for user in users
+            ],
+        )
+
+    def _resolve_window(self, *, from_date: str | None, to_date: str | None) -> ResolvedUsageWindow:
+        usage_range = self._resolve_range(from_date=from_date, to_date=to_date)
+        return ResolvedUsageWindow(
+            usage_range=usage_range,
+            range_start=datetime.combine(usage_range.from_date, time.min, tzinfo=UTC),
+            range_end=datetime.combine(usage_range.to_date, time.min, tzinfo=UTC),
         )
 
     def _resolve_range(self, *, from_date: str | None, to_date: str | None) -> UsageRange:

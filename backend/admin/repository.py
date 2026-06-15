@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.models import UserAccount
 from backend.chat.models import Conversation, LLMCostComponent, Message
 from backend.chat.schemas import MessageRole, MessageStatus
 
@@ -54,6 +55,18 @@ class CostComponentAggregate:
     error_type: str | None
     metadata: dict
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class UserOverviewAggregate:
+    id: UUID
+    clerk_id: str
+    display_name: str
+    email: str | None
+    access_level: str
+    total_messages: int
+    blocked_requests: int
+    last_activity: datetime | None
 
 
 class AdminUsageRepository:
@@ -250,6 +263,86 @@ class AdminUsageRepository:
                 error_type=row.error_type,
                 metadata=row.extra_metadata or {},
                 created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+    async def list_user_overviews(
+        self,
+        session: AsyncSession,
+        *,
+        range_start: datetime,
+        range_end: datetime,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[UserOverviewAggregate]:
+        last_activity = func.max(Message.created_at).label("last_activity")
+        total_messages = func.count(Message.id).label("total_messages")
+        blocked_requests = func.coalesce(
+            func.sum(
+                case(
+                    (
+                        (Message.role == MessageRole.ASSISTANT.value)
+                        & (Message.status == MessageStatus.BLOCKED.value),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("blocked_requests")
+
+        activity = (
+            select(
+                Message.user_id.label("user_id"),
+                total_messages,
+                blocked_requests,
+                last_activity,
+            )
+            .where(
+                Message.created_at >= range_start,
+                Message.created_at < range_end,
+            )
+            .group_by(Message.user_id)
+            .subquery()
+        )
+
+        statement = (
+            select(
+                UserAccount.id,
+                UserAccount.clerk_id,
+                UserAccount.display_name,
+                UserAccount.email,
+                UserAccount.role.label("access_level"),
+                activity.c.total_messages,
+                activity.c.blocked_requests,
+                activity.c.last_activity,
+            )
+            .select_from(UserAccount)
+            .outerjoin(activity, activity.c.user_id == UserAccount.id)
+            .where(UserAccount.deleted_at.is_(None))
+            .order_by(
+                activity.c.last_activity.desc().nulls_last(),
+                UserAccount.display_name.asc(),
+                UserAccount.email.asc().nulls_last(),
+                UserAccount.clerk_id.asc(),
+                UserAccount.id.asc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+
+        rows = (await session.execute(statement)).all()
+        return [
+            UserOverviewAggregate(
+                id=row.id,
+                clerk_id=row.clerk_id,
+                display_name=row.display_name,
+                email=row.email,
+                access_level=row.access_level,
+                total_messages=int(row.total_messages or 0),
+                blocked_requests=int(row.blocked_requests or 0),
+                last_activity=row.last_activity,
             )
             for row in rows
         ]
