@@ -110,6 +110,26 @@ class RagService:
             await self._session.rollback()
             raise
 
+    async def deactivate_documents_by_source_paths(
+        self,
+        *,
+        source_type: str,
+        source_paths: Sequence[str],
+    ) -> int:
+        if not source_paths:
+            raise ValueError("source_paths must not be empty")
+        try:
+            count = await self._repository.deactivate_documents_by_source_paths(
+                self._session,
+                source_type=source_type,
+                source_paths=source_paths,
+            )
+            await self._session.commit()
+            return count
+        except Exception:
+            await self._session.rollback()
+            raise
+
     async def replace_document_index(
         self,
         *,

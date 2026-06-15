@@ -121,6 +121,27 @@ class RagRepository:
         result = await session.execute(statement)
         return result.rowcount or 0
 
+    async def deactivate_documents_by_source_paths(
+        self,
+        session: AsyncSession,
+        *,
+        source_type: str,
+        source_paths: Sequence[str],
+    ) -> int:
+        if not source_paths:
+            raise ValueError("source_paths must not be empty")
+        statement = (
+            update(RagDocument)
+            .where(
+                RagDocument.source_type == source_type,
+                RagDocument.is_active.is_(True),
+                RagDocument.source_path.in_(list(source_paths)),
+            )
+            .values(is_active=False, deleted_at=utc_now(), updated_at=utc_now())
+        )
+        result = await session.execute(statement)
+        return result.rowcount or 0
+
     async def insert_chunks(
         self,
         session: AsyncSession,

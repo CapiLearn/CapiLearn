@@ -3,6 +3,7 @@ from uuid import UUID
 
 import pytest
 
+import backend.ingestion.ingest_pgvector as ingestion_module
 from backend.ingestion.ingest_pgvector import IngestionConfig, ingest_corpus, prepare_corpus
 from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS
@@ -126,6 +127,16 @@ async def test_reconciliation_is_opt_in_and_uses_seen_english_paths(tmp_path: Pa
             "seen_source_paths": [
                 "src/content/1/en/empty.md",
                 "src/content/1/en/part1.md",
+                "src/content/1/es/part1.md",
+            ],
+        }
+    ]
+    assert service.targeted_deactivation_calls == [
+        {
+            "source_type": "course_repo",
+            "source_paths": [
+                "src/content/1/en/empty.md",
+                "src/content/1/es/part1.md",
             ],
         }
     ]
@@ -179,6 +190,96 @@ async def test_preprocessing_failure_skips_reconciliation(tmp_path: Path) -> Non
 
     assert summary.preprocessing_failures == 1
     assert service.reconciliation_calls == []
+    assert service.targeted_deactivation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_empty_existing_source_is_targeted_for_deactivation(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/en/empty.md", "   \n")
+    service = CapturingService(targeted_deactivated=1)
+
+    summary = await ingest_corpus(
+        IngestionConfig(repo_path=tmp_path),
+        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        session_factory=FakeSessionFactory,
+        service_factory=lambda *, session: service,
+    )
+
+    assert service.targeted_deactivation_calls[0]["source_paths"] == ["src/content/1/en/empty.md"]
+    assert summary.documents_deactivated == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_chunk_source_is_targeted_for_deactivation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = "src/content/1/en/part1.md"
+    _write(tmp_path / source_path, "# State\n\nCourse content")
+    monkeypatch.setattr(ingestion_module, "prepare_chunks", lambda *args, **kwargs: [])
+    service = CapturingService(targeted_deactivated=1)
+
+    summary = await ingest_corpus(
+        IngestionConfig(repo_path=tmp_path),
+        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        session_factory=FakeSessionFactory,
+        service_factory=lambda *, session: service,
+    )
+
+    assert service.targeted_deactivation_calls[0]["source_paths"] == [source_path]
+    assert summary.documents_deactivated == 1
+
+
+@pytest.mark.asyncio
+async def test_excluded_existing_source_is_targeted_for_deactivation(tmp_path: Path) -> None:
+    source_path = "src/content/1/es/part1.md"
+    _write(tmp_path / source_path, "# Estado\n\nContenido")
+    service = CapturingService(targeted_deactivated=1)
+
+    summary = await ingest_corpus(
+        IngestionConfig(repo_path=tmp_path),
+        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        session_factory=FakeSessionFactory,
+        service_factory=lambda *, session: service,
+    )
+
+    assert service.targeted_deactivation_calls[0]["source_paths"] == [source_path]
+    assert summary.documents_deactivated == 1
+
+
+@pytest.mark.asyncio
+async def test_preprocessing_failure_is_not_targeted_for_deactivation(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/en/broken.ipynb", "{not-json")
+    service = CapturingService()
+
+    summary = await ingest_corpus(
+        IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
+        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
+        service_factory=lambda *, session: service,
+    )
+
+    assert summary.preprocessing_failures == 1
+    assert service.targeted_deactivation_calls == []
+    assert service.reconciliation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_ingestion_deactivates_unindexable_sources_without_loading_embedding_model(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "src/content/1/en/empty.md", "")
+    service = CapturingService(targeted_deactivated=1)
+
+    summary = await ingest_corpus(
+        IngestionConfig(repo_path=tmp_path),
+        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        session_factory=FakeSessionFactory,
+        service_factory=lambda *, session: service,
+    )
+
+    assert summary.documents_deactivated == 1
+    assert service.targeted_deactivation_calls
 
 
 def _write(path: Path, content: str) -> None:
@@ -210,11 +311,14 @@ class CapturingService:
         self,
         *,
         deactivated: int = 0,
+        targeted_deactivated: int = 0,
         fail_path: str | None = None,
     ) -> None:
         self.calls = []
         self.reconciliation_calls = []
+        self.targeted_deactivation_calls = []
         self.deactivated = deactivated
+        self.targeted_deactivated = targeted_deactivated
         self.fail_path = fail_path
 
     async def replace_document_index(self, **kwargs):
@@ -226,3 +330,7 @@ class CapturingService:
     async def reconcile_documents(self, **kwargs):
         self.reconciliation_calls.append(kwargs)
         return self.deactivated
+
+    async def deactivate_documents_by_source_paths(self, **kwargs):
+        self.targeted_deactivation_calls.append(kwargs)
+        return self.targeted_deactivated
