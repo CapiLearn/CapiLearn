@@ -28,7 +28,11 @@ class RagSettings(BaseSettings):
         default=DEFAULT_RAG_CANDIDATE_POOL_MULTIPLIER,
         ge=1,
     )
-    max_candidates: int = Field(default=DEFAULT_RAG_MAX_CANDIDATES, ge=1)
+    max_candidates: int = Field(
+        default=DEFAULT_RAG_MAX_CANDIDATES,
+        ge=1,
+        le=500,
+    )
     write_retrieval_logs: bool = True
     index_version: str | None = None
 
