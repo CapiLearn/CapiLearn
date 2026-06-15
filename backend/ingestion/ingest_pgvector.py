@@ -281,7 +281,6 @@ async def ingest_corpus(
             try:
                 summary.documents_deactivated += await service.deactivate_documents_by_source_paths(
                     source_type=config.source_type,
-                    course_name=config.course_name,
                     source_paths=sorted(summary.unindexable_source_paths),
                 )
             except Exception:

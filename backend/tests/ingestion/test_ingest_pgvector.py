@@ -134,7 +134,6 @@ async def test_reconciliation_is_opt_in_and_uses_seen_english_paths(tmp_path: Pa
     assert service.targeted_deactivation_calls == [
         {
             "source_type": "course_repo",
-            "course_name": "Full Stack Open",
             "source_paths": [
                 "src/content/1/en/empty.md",
                 "src/content/1/es/part1.md",

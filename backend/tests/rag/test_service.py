@@ -217,14 +217,12 @@ async def test_deactivate_documents_by_source_paths_commits_soft_deactivation() 
 
     count = await service.deactivate_documents_by_source_paths(
         source_type="course_repo",
-        course_name="Full Stack Open",
         source_paths=["empty.md", "excluded.md"],
     )
 
     assert count == 2
     assert repository.targeted_deactivation == {
         "source_type": "course_repo",
-        "course_name": "Full Stack Open",
         "source_paths": ["empty.md", "excluded.md"],
     }
     assert session.commit_count == 1
@@ -240,7 +238,6 @@ async def test_deactivate_documents_by_source_paths_rolls_back_on_failure() -> N
     with pytest.raises(RuntimeError, match="update failed"):
         await service.deactivate_documents_by_source_paths(
             source_type="course_repo",
-            course_name="Full Stack Open",
             source_paths=["empty.md"],
         )
 
@@ -324,14 +321,12 @@ class CapturingRepository:
         session,
         *,
         source_type,
-        course_name,
         source_paths,
     ):
         if self.error is not None:
             raise self.error
         self.targeted_deactivation = {
             "source_type": source_type,
-            "course_name": course_name,
             "source_paths": source_paths,
         }
         return self.deactivated_count

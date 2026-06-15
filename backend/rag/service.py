@@ -114,7 +114,6 @@ class RagService:
         self,
         *,
         source_type: str,
-        course_name: str,
         source_paths: Sequence[str],
     ) -> int:
         if not source_paths:
@@ -123,7 +122,6 @@ class RagService:
             count = await self._repository.deactivate_documents_by_source_paths(
                 self._session,
                 source_type=source_type,
-                course_name=course_name,
                 source_paths=source_paths,
             )
             await self._session.commit()
