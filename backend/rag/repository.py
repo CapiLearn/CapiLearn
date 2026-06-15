@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,7 +135,10 @@ class RagRepository:
             update(RagDocument)
             .where(
                 RagDocument.source_type == source_type,
-                RagDocument.course_name == course_name,
+                or_(
+                    RagDocument.course_name == course_name,
+                    RagDocument.course_name.is_(None),
+                ),
                 RagDocument.is_active.is_(True),
                 RagDocument.source_path.in_(list(source_paths)),
             )

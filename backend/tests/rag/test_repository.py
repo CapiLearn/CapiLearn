@@ -287,7 +287,7 @@ async def test_deactivate_missing_documents_rejects_empty_scan() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deactivate_documents_by_source_paths_scopes_active_documents() -> None:
+async def test_deactivate_documents_by_source_paths_includes_matching_course() -> None:
     session = RowCountSession(rowcount=2)
 
     count = await RagRepository().deactivate_documents_by_source_paths(
@@ -302,9 +302,42 @@ async def test_deactivate_documents_by_source_paths_scopes_active_documents() ->
     assert "UPDATE rag_documents" in sql
     assert "rag_documents.source_type =" in sql
     assert "rag_documents.course_name =" in sql
+    assert " OR " in sql
+    assert "rag_documents.course_name IS NULL" in sql
     assert "rag_documents.is_active IS true" in sql
     assert "rag_documents.source_path IN" in sql
     assert "DELETE" not in sql
+
+
+@pytest.mark.asyncio
+async def test_deactivate_documents_by_source_paths_includes_null_course() -> None:
+    session = RowCountSession(rowcount=1)
+
+    await RagRepository().deactivate_documents_by_source_paths(
+        session,
+        source_type="course_repo",
+        course_name="Full Stack Open",
+        source_paths=["legacy.md"],
+    )
+
+    sql = _compiled_sql(session.statement)
+    assert "rag_documents.course_name IS NULL" in sql
+
+
+@pytest.mark.asyncio
+async def test_deactivate_documents_by_source_paths_excludes_different_non_null_course() -> None:
+    session = RowCountSession(rowcount=0)
+
+    await RagRepository().deactivate_documents_by_source_paths(
+        session,
+        source_type="course_repo",
+        course_name="Full Stack Open",
+        source_paths=["shared-path.md"],
+    )
+
+    sql = _compiled_sql(session.statement)
+    assert "(rag_documents.course_name = " in sql
+    assert " OR rag_documents.course_name IS NULL)" in sql
 
 
 @pytest.mark.asyncio
