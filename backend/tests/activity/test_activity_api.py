@@ -98,6 +98,7 @@ def _current_user(role: UserRole = UserRole.STUDENT) -> CurrentUser:
     return CurrentUser(
         id=uuid4(),
         clerk_id=f"user_{role.value}_{uuid4().hex}",
+        display_name="Test User",
         role=role,
     )
 

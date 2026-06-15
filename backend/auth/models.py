@@ -24,6 +24,10 @@ class UserAccount(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     clerk_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320))
+    profile_synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    clerk_profile_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     role: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

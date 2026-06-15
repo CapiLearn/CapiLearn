@@ -23,14 +23,12 @@ class CurrentUser(AuthBaseModel):
     id: UUID
     clerk_id: str
     email: str | None = None
-    display_name: str | None = None
+    display_name: str
     role: UserRole
 
 
 class AuthPrincipal(AuthBaseModel):
     clerk_id: str
-    email: str | None = None
-    display_name: str | None = None
     role: UserRole
 
 
@@ -38,7 +36,7 @@ class CurrentUserResponse(AuthBaseModel):
     id: UUID
     clerk_id: str
     email: str | None = None
-    display_name: str | None = None
+    display_name: str
     role: UserRole
 
 
@@ -56,7 +54,5 @@ def current_user_to_principal(
 ) -> AuthPrincipal:
     return AuthPrincipal(
         clerk_id=current_user.clerk_id,
-        email=current_user.email,
-        display_name=current_user.display_name,
         role=role or current_user.role,
     )
