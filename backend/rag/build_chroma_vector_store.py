@@ -121,8 +121,9 @@ def build_chroma_vector_store(
         print(f"Warning: skipped {skipped} chunk(s) with empty content.")
 
     if not valid_chunks:
-        print("No valid chunks to embed. Exiting.")
-        return
+        raise ValueError(
+            "No valid chunks to embed; refusing to leave an existing Chroma collection unchanged."
+        )
 
     # 3. Initialise the local embedding model
     print(f"Loading embedding model '{model_name}' …")

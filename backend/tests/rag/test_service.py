@@ -208,6 +208,43 @@ async def test_reconcile_documents_rejects_empty_scan_without_writing() -> None:
     assert session.commit_count == 0
 
 
+@pytest.mark.asyncio
+async def test_deactivate_documents_by_source_paths_commits_soft_deactivation() -> None:
+    session = FakeSession()
+    repository = CapturingRepository()
+    repository.deactivated_count = 2
+    service = RagService(session=session, repository=repository)
+
+    count = await service.deactivate_documents_by_source_paths(
+        source_type="course_repo",
+        source_paths=["empty.md", "excluded.md"],
+    )
+
+    assert count == 2
+    assert repository.targeted_deactivation == {
+        "source_type": "course_repo",
+        "source_paths": ["empty.md", "excluded.md"],
+    }
+    assert session.commit_count == 1
+    assert session.rollback_count == 0
+
+
+@pytest.mark.asyncio
+async def test_deactivate_documents_by_source_paths_rolls_back_on_failure() -> None:
+    session = FakeSession()
+    repository = CapturingRepository(error=RuntimeError("update failed"))
+    service = RagService(session=session, repository=repository)
+
+    with pytest.raises(RuntimeError, match="update failed"):
+        await service.deactivate_documents_by_source_paths(
+            source_type="course_repo",
+            source_paths=["empty.md"],
+        )
+
+    assert session.commit_count == 0
+    assert session.rollback_count == 1
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.commit_count = 0
@@ -233,6 +270,7 @@ class CapturingRepository:
         self.search_top_k = None
         self.deactivated_count = 0
         self.reconciliation = None
+        self.targeted_deactivation = None
 
     async def insert_embeddings(self, session, *, embeddings):
         if self.error is not None:
@@ -275,6 +313,21 @@ class CapturingRepository:
             "source_type": source_type,
             "course_name": course_name,
             "seen_source_paths": seen_source_paths,
+        }
+        return self.deactivated_count
+
+    async def deactivate_documents_by_source_paths(
+        self,
+        session,
+        *,
+        source_type,
+        source_paths,
+    ):
+        if self.error is not None:
+            raise self.error
+        self.targeted_deactivation = {
+            "source_type": source_type,
+            "source_paths": source_paths,
         }
         return self.deactivated_count
 

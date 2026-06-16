@@ -12,6 +12,8 @@ from backend.core.observability import elapsed_ms, log_event, timer_start
 from backend.rag.config import RagBackend, RagSettings
 from backend.rag.deduplication import DeduplicationResult, deduplicate_chunks
 from backend.rag.defaults import (
+    DEFAULT_RAG_CANDIDATE_POOL_MULTIPLIER,
+    DEFAULT_RAG_MAX_CANDIDATES,
     DEFAULT_RAG_MODEL_NAME,
     DEFAULT_RAG_TOP_K,
     validate_pgvector_model_name,
@@ -33,6 +35,22 @@ SessionFactoryCallable = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 RagServiceFactory = Callable[..., RagService]
 
 
+def candidate_pool_size(
+    top_k: int,
+    candidate_pool_multiplier: int,
+    max_candidates: int,
+) -> int:
+    if top_k < 1:
+        raise ValueError("top_k must be at least 1")
+    if candidate_pool_multiplier < 1:
+        raise ValueError("candidate_pool_multiplier must be at least 1")
+    if max_candidates < 1:
+        raise ValueError("max_candidates must be at least 1")
+    if top_k > max_candidates:
+        raise ValueError("top_k must be less than or equal to max_candidates")
+    return min(top_k * candidate_pool_multiplier, max_candidates)
+
+
 class ChromaRagRetrievalProvider(RetrievalProvider):
     """Adapt the sync Chroma query engine to the async retrieval protocol."""
 
@@ -42,6 +60,8 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
         engine: ChromaRagQueryEngine | None = None,
         model_name: str = DEFAULT_RAG_MODEL_NAME,
         top_k: int | None = None,
+        candidate_pool_multiplier: int = DEFAULT_RAG_CANDIDATE_POOL_MULTIPLIER,
+        max_candidates: int = DEFAULT_RAG_MAX_CANDIDATES,
         embedding_provider: QueryEmbeddingProvider | None = None,
     ) -> None:
         if engine is not None and embedding_provider is not None:
@@ -53,6 +73,13 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
         )
         self._model_name = self._engine.config.model_name
         self._top_k = top_k
+        candidate_pool_size(
+            self._effective_top_k,
+            candidate_pool_multiplier,
+            max_candidates,
+        )
+        self._candidate_pool_multiplier = candidate_pool_multiplier
+        self._max_candidates = max_candidates
 
     async def retrieve(
         self,
@@ -95,7 +122,11 @@ class ChromaRagRetrievalProvider(RetrievalProvider):
 
     @property
     def _candidate_top_k(self) -> int:
-        return min(self._effective_top_k * 3, 50)
+        return candidate_pool_size(
+            self._effective_top_k,
+            self._candidate_pool_multiplier,
+            self._max_candidates,
+        )
 
 
 class PgvectorRagRetrievalProvider(RetrievalProvider):
@@ -104,12 +135,17 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
         *,
         model_name: str = DEFAULT_RAG_MODEL_NAME,
         top_k: int = DEFAULT_RAG_TOP_K,
+        candidate_pool_multiplier: int = DEFAULT_RAG_CANDIDATE_POOL_MULTIPLIER,
+        max_candidates: int = DEFAULT_RAG_MAX_CANDIDATES,
         session_factory: SessionFactoryCallable = SessionFactory,
         service_factory: RagServiceFactory = RagService,
         embedding_provider: QueryEmbeddingProvider | None = None,
     ) -> None:
         self._model_name = validate_pgvector_model_name(model_name)
+        candidate_pool_size(top_k, candidate_pool_multiplier, max_candidates)
         self._top_k = top_k
+        self._candidate_pool_multiplier = candidate_pool_multiplier
+        self._max_candidates = max_candidates
         self._session_factory = session_factory
         self._service_factory = service_factory
         self._embedding_provider = embedding_provider or get_embedding_provider()
@@ -132,7 +168,11 @@ class PgvectorRagRetrievalProvider(RetrievalProvider):
             rows = await service.retrieve(
                 query_embedding=query_embedding,
                 embedding_model=self._model_name,
-                top_k=min(self._top_k * 3, 50),
+                top_k=candidate_pool_size(
+                    self._top_k,
+                    self._candidate_pool_multiplier,
+                    self._max_candidates,
+                ),
             )
         deduplicated = deduplicate_chunks(
             [_retrieved_chunk_from_similar_chunk(row) for row in rows],
@@ -162,8 +202,15 @@ def build_rag_retrieval_provider(config: RagSettings) -> RetrievalProvider:
         return PgvectorRagRetrievalProvider(
             model_name=config.model_name,
             top_k=config.top_k,
+            candidate_pool_multiplier=config.candidate_pool_multiplier,
+            max_candidates=config.max_candidates,
         )
-    return ChromaRagRetrievalProvider(model_name=config.model_name, top_k=config.top_k)
+    return ChromaRagRetrievalProvider(
+        model_name=config.model_name,
+        top_k=config.top_k,
+        candidate_pool_multiplier=config.candidate_pool_multiplier,
+        max_candidates=config.max_candidates,
+    )
 
 
 def _retrieved_chunk_from_raw(item: dict[str, Any]) -> RetrievedChunk:

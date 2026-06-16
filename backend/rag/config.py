@@ -5,6 +5,8 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.rag.defaults import (
+    DEFAULT_RAG_CANDIDATE_POOL_MULTIPLIER,
+    DEFAULT_RAG_MAX_CANDIDATES,
     DEFAULT_RAG_MODEL_NAME,
     DEFAULT_RAG_TOP_K,
     validate_pgvector_model_name,
@@ -22,11 +24,22 @@ class RagSettings(BaseSettings):
     backend: RagBackend = RagBackend.CHROMA
     model_name: str = DEFAULT_RAG_MODEL_NAME
     top_k: int = Field(default=DEFAULT_RAG_TOP_K, ge=1)
+    candidate_pool_multiplier: int = Field(
+        default=DEFAULT_RAG_CANDIDATE_POOL_MULTIPLIER,
+        ge=1,
+    )
+    max_candidates: int = Field(
+        default=DEFAULT_RAG_MAX_CANDIDATES,
+        ge=1,
+        le=500,
+    )
     write_retrieval_logs: bool = True
     index_version: str | None = None
 
     @model_validator(mode="after")
-    def validate_pgvector_model_contract(self) -> "RagSettings":
+    def validate_rag_contract(self) -> "RagSettings":
+        if self.top_k > self.max_candidates:
+            raise ValueError("RAG_TOP_K must be less than or equal to RAG_MAX_CANDIDATES")
         if self.backend == RagBackend.PGVECTOR:
             validate_pgvector_model_name(self.model_name)
         return self

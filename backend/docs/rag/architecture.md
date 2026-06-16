@@ -130,7 +130,9 @@ Stale-source reconciliation is explicitly enabled with
 runs only after a non-empty, complete ingestion without preprocessing or
 database failures.
 
-Missing sources are soft-deactivated:
+Missing sources are soft-deactivated by reconciliation. During normal non-dry
+ingestion, discovered sources that are empty, excluded, or produce no chunks
+are targeted for the same soft deactivation:
 
 - `is_active` becomes `false`
 - `deleted_at` records the reconciliation time
@@ -150,7 +152,7 @@ so inactive sources never enter the pgvector candidate set.
 Both pgvector and Chroma retrieve up to:
 
 ```text
-min(RAG_TOP_K * 3, 50)
+min(RAG_TOP_K * RAG_CANDIDATE_POOL_MULTIPLIER, RAG_MAX_CANDIDATES)
 ```
 
 Candidates are conservatively deduplicated in rank order by:
@@ -162,6 +164,8 @@ Candidates are conservatively deduplicated in rank order by:
 
 Adjacent chunks remain eligible. The retained list is truncated to
 `RAG_TOP_K`.
+Settings validation requires all three values to be positive and
+`RAG_TOP_K <= RAG_MAX_CANDIDATES`.
 
 Provider events report candidate count, retained count, and suppression
 reasons. Logged chunk metadata describes retained chunks and excludes chunk

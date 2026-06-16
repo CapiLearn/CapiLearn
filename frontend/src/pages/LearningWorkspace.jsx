@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
 import capiFavicon from "../assets/capilearn-favicon.svg";
@@ -17,14 +17,6 @@ const suggestedPrompts = [
   "Ask me a guiding question",
   "Point me to the right course material",
   "Help me think through this bug",
-];
-
-const calendarDays = [
-  "", "1", "2", "3", "4", "5", "6",
-  "7", "8", "9", "10", "11", "12", "13",
-  "14", "15", "16", "17", "18", "19", "20",
-  "21", "22", "23", "24", "25", "26", "27",
-  "28", "29", "30", "", "", "", "",
 ];
 
 const initialChatMessages = [
@@ -168,6 +160,32 @@ function HighlightedText({ text, searchTerm }) {
   );
 }
 
+function getCalendarDays(date) {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const leadingBlankDays = Array.from({ length: firstDayOfMonth }, () => "");
+  const monthDays = Array.from({ length: daysInMonth }, (_, index) =>
+    String(index + 1)
+  );
+
+  const totalCalendarCells = leadingBlankDays.length + monthDays.length;
+  const trailingBlankCount = (7 - (totalCalendarCells % 7)) % 7;
+  const trailingBlankDays = Array.from({ length: trailingBlankCount }, () => "");
+
+  return [...leadingBlankDays, ...monthDays, ...trailingBlankDays];
+}
+
+function formatCalendarTitle(date) {
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
   const [chatMessages, setChatMessages] = useState(initialChatMessages);
@@ -181,6 +199,7 @@ function LearningWorkspace() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [messageSearchTerm, setMessageSearchTerm] = useState("");
   const [conversationSearchTerm, setConversationSearchTerm] = useState("");
+  const [currentDate, setCurrentDate] = useState(() => new Date());
 
   useEffect(() => {
     async function loadConversations() {
@@ -198,6 +217,14 @@ function LearningWorkspace() {
     }
 
     loadConversations();
+  }, []);
+
+  useEffect(() => {
+    const timerId = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 60 * 1000);
+
+    return () => clearInterval(timerId);
   }, []);
 
   async function handleSendMessage(event) {
@@ -320,6 +347,14 @@ function LearningWorkspace() {
         0
       )
     : 0;
+
+  const calendarDays = useMemo(
+    () => getCalendarDays(currentDate),
+    [currentDate]
+  );
+
+  const calendarTitle = formatCalendarTitle(currentDate);
+  const currentDay = String(currentDate.getDate());  
 
   return (
     <main className="workspace-page">
@@ -486,6 +521,7 @@ function LearningWorkspace() {
               }`}
               key={message.id}
             >
+          
             {message.role === "assistant" ? (
               <MarkdownMessage
                 content={message.content}
@@ -498,7 +534,7 @@ function LearningWorkspace() {
                   searchTerm={messageSearchTerm}
                 />
               </p>
-            )}
+            )}  
             </div>
           ))}
 
@@ -536,7 +572,7 @@ function LearningWorkspace() {
 
         <section className="tracker-card">
           <div className="calendar-header">
-            <h2>June 2026</h2>
+            <h2>{calendarTitle}</h2>
             <span>Learning calendar</span>
           </div>
 
@@ -553,17 +589,14 @@ function LearningWorkspace() {
           <div className="calendar-grid">
             {calendarDays.map((day, index) => (
               <div
-                className={`calendar-day ${
-                  ["6", "7", "9", "13", "14", "16", "20"].includes(day)
-                    ? "active-day"
-                    : ""
-                }`}
+                className={`calendar-day ${day === currentDay ? "active-day" : ""}`}
                 key={`${day}-${index}`}
               >
                 {day}
               </div>
             ))}
-          </div>
+          </div>    
+
         </section>
 
         <section className="tracker-card progress-card">
