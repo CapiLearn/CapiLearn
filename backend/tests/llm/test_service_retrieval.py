@@ -128,7 +128,7 @@ async def test_llm_service_omits_retrieved_context_block_without_chunks(caplog) 
     )
     retrieval_events = _events(caplog.records, "rag.retrieve.completed")
     assert retrieval_events[-1].chunk_count == 0
-    assert _events(caplog.records, "rag.retrieve.degraded") == []
+    assert _events(caplog.records, "rag.retrieve.failed") == []
 
 
 @pytest.mark.asyncio
@@ -233,23 +233,23 @@ async def test_llm_service_degrades_allowed_retrieval_failure_to_empty_context(
     assert result.retrieved_context == []
     assert provider.complete_called
     assert "<retrieved_context>" not in provider.messages[-1].content
-    degraded_events = _events(caplog.records, "rag.retrieve.degraded")
-    assert degraded_events
-    degraded_event = degraded_events[-1]
-    assert degraded_event.levelno == logging.WARNING
-    assert degraded_event.event == "rag.retrieve.degraded"
-    assert degraded_event.user_id == str(request.user_id)
-    assert degraded_event.conversation_id == str(request.conversation_id)
-    assert degraded_event.user_message_id == str(request.user_message_id)
-    assert degraded_event.assistant_message_id == str(request.assistant_message_id)
-    assert degraded_event.latency_ms >= 0
-    assert degraded_event.retriever_class == "FailingRetriever"
-    assert degraded_event.error_type == "RuntimeError"
-    assert degraded_event.exc_info is None
+    failed_events = _events(caplog.records, "rag.retrieve.failed")
+    assert failed_events
+    failed_event = failed_events[-1]
+    assert failed_event.levelno == logging.WARNING
+    assert failed_event.event == "rag.retrieve.failed"
+    assert failed_event.user_id == str(request.user_id)
+    assert failed_event.conversation_id == str(request.conversation_id)
+    assert failed_event.user_message_id == str(request.user_message_id)
+    assert failed_event.assistant_message_id == str(request.assistant_message_id)
+    assert failed_event.latency_ms >= 0
+    assert failed_event.retriever_class == "FailingRetriever"
+    assert failed_event.error_type == "RuntimeError"
+    assert failed_event.exc_info is None
     assert "What private prompt should not leak?" not in caplog.text
     assert "retrieval failed while processing" not in caplog.text
-    assert "What private prompt should not leak?" not in str(degraded_event.__dict__)
-    assert "retrieval failed while processing" not in str(degraded_event.__dict__)
+    assert "What private prompt should not leak?" not in str(failed_event.__dict__)
+    assert "retrieval failed while processing" not in str(failed_event.__dict__)
     assert _events(caplog.records, "rag.retrieve.completed") == []
     assert trace_sink.errors[-1]["error_type"] == "RuntimeError"
     assert trace_sink.errors[-1]["retriever_class"] == "FailingRetriever"
