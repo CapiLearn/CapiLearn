@@ -1,11 +1,14 @@
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.dependencies import (
+    CurrentUserDep,
     get_auth_request_verifier,
     get_current_user,
     get_user_repository,
@@ -24,13 +27,20 @@ from backend.chat.schemas import (
     SendMessageResponse,
 )
 from backend.core.database import get_db
+from backend.core.rate_limiting import (
+    CHAT_MESSAGE_RATE_LIMIT,
+    RATE_LIMITED_MESSAGE,
+    limiter,
+)
 from backend.main import app
 
 
 @pytest.fixture(autouse=True)
 def clear_overrides():
+    limiter.reset()
     yield
     app.dependency_overrides.clear()
+    limiter.reset()
 
 
 def test_chat_openapi_uses_json_send_routes_without_streams_or_citations() -> None:
@@ -68,18 +78,40 @@ def test_chat_routes_have_stable_operation_ids() -> None:
     )
 
 
-def _authorize(role: UserRole = UserRole.STUDENT) -> None:
-    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+def _authorize(
+    role: UserRole = UserRole.STUDENT,
+    *,
+    current_user_factory: Callable[[], CurrentUser] | None = None,
+) -> None:
+    async def override(request: Request) -> CurrentUser:
+        current_user = (
+            current_user_factory() if current_user_factory is not None else _current_user(role)
+        )
+        request.state.current_user = current_user
+        return current_user
+
+    app.dependency_overrides[get_current_user] = override
+
+
+def _current_user(role: UserRole = UserRole.STUDENT) -> CurrentUser:
+    return CurrentUser(
         id=uuid4(),
         clerk_id=f"user_{role.value}_{uuid4().hex}",
         role=role,
     )
 
 
+def _override_chat_service(service: "FakeChatService") -> None:
+    async def override(_: CurrentUserDep) -> FakeChatService:
+        return service
+
+    app.dependency_overrides[get_chat_service] = override
+
+
 @pytest.mark.asyncio
 async def test_create_conversation_returns_complete_message_response() -> None:
     _authorize()
-    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
+    _override_chat_service(FakeChatService())
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -181,7 +213,7 @@ async def test_chat_routes_provision_missing_local_user(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_followup_message_surfaces_ownership_failure() -> None:
     _authorize()
-    app.dependency_overrides[get_chat_service] = lambda: MissingConversationService()
+    _override_chat_service(MissingConversationService())
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -199,7 +231,7 @@ async def test_followup_message_surfaces_ownership_failure() -> None:
 @pytest.mark.asyncio
 async def test_blocked_input_returns_blocked_assistant_message() -> None:
     _authorize()
-    app.dependency_overrides[get_chat_service] = lambda: BlockedChatService()
+    _override_chat_service(BlockedChatService())
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -215,6 +247,159 @@ async def test_blocked_input_returns_blocked_assistant_message() -> None:
     assert payload["assistantMessage"]["status"] == MessageStatus.BLOCKED.value
     assert payload["assistantMessage"]["content"] == "Blocked."
     assert payload["blockedReason"] == "Blocked."
+
+
+@pytest.mark.asyncio
+async def test_user_can_send_ten_chat_messages_per_minute() -> None:
+    user = _current_user()
+    service = CountingChatService()
+    _authorize(current_user_factory=lambda: user)
+    _override_chat_service(service)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        responses = [
+            await client.post(
+                "/api/conversations",
+                json={"content": f"Message {index}"},
+            )
+            for index in range(10)
+        ]
+
+    assert [response.status_code for response in responses] == [200] * 10
+    assert service.create_conversation_calls == 10
+    assert service.create_message_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_eleventh_chat_message_returns_429_without_calling_service() -> None:
+    user = _current_user()
+    service = CountingChatService()
+    _authorize(current_user_factory=lambda: user)
+    _override_chat_service(service)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        for index in range(10):
+            response = await client.post(
+                "/api/conversations",
+                json={"content": f"Message {index}"},
+            )
+            assert response.status_code == 200
+
+        blocked_response = await client.post(
+            "/api/conversations",
+            json={"content": "Blocked message"},
+        )
+
+    assert blocked_response.status_code == 429
+    assert blocked_response.json() == {
+        "code": "rate_limited",
+        "message": RATE_LIMITED_MESSAGE,
+        "details": {"limit": CHAT_MESSAGE_RATE_LIMIT},
+    }
+    assert service.create_conversation_calls == 10
+    assert service.create_message_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_send_routes_share_user_rate_limit_bucket() -> None:
+    user = _current_user()
+    service = CountingChatService()
+    _authorize(current_user_factory=lambda: user)
+    _override_chat_service(service)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        for index in range(5):
+            response = await client.post(
+                "/api/conversations",
+                json={"content": f"New conversation {index}"},
+            )
+            assert response.status_code == 200
+
+        for index in range(5):
+            response = await client.post(
+                f"/api/conversations/{FakeChatService.conversation_id}/messages",
+                json={"content": f"Follow up {index}"},
+            )
+            assert response.status_code == 200
+
+        blocked_response = await client.post(
+            f"/api/conversations/{FakeChatService.conversation_id}/messages",
+            json={"content": "One too many"},
+        )
+
+    assert blocked_response.status_code == 429
+    assert service.create_conversation_calls == 5
+    assert service.create_message_calls == 5
+
+
+@pytest.mark.asyncio
+async def test_different_users_have_separate_chat_rate_limit_buckets() -> None:
+    current_user = {"user": _current_user()}
+    second_user = _current_user()
+    service = CountingChatService()
+    _authorize(current_user_factory=lambda: current_user["user"])
+    _override_chat_service(service)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        for index in range(10):
+            response = await client.post(
+                "/api/conversations",
+                json={"content": f"First user message {index}"},
+            )
+            assert response.status_code == 200
+
+        current_user["user"] = second_user
+        response = await client.post(
+            "/api/conversations",
+            json={"content": "Second user message"},
+        )
+
+    assert response.status_code == 200
+    assert service.create_conversation_calls == 11
+    assert service.create_message_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_non_send_chat_endpoints_are_not_limited_by_message_limiter() -> None:
+    user = _current_user()
+    service = CountingChatService()
+    _authorize(current_user_factory=lambda: user)
+    _override_chat_service(service)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        for index in range(10):
+            response = await client.post(
+                "/api/conversations",
+                json={"content": f"Message {index}"},
+            )
+            assert response.status_code == 200
+
+        conversations = await client.get("/api/conversations")
+        messages = await client.get(
+            f"/api/conversations/{FakeChatService.conversation_id}/messages"
+        )
+        delete_response = await client.delete(
+            f"/api/conversations/{FakeChatService.conversation_id}"
+        )
+
+    assert conversations.status_code == 200
+    assert messages.status_code == 200
+    assert delete_response.status_code == 204
 
 
 @pytest.mark.asyncio
@@ -372,6 +557,25 @@ class FakeChatService:
             finish_reason=finish_reason,
             blocked_reason=blocked_reason,
         )
+
+
+class CountingChatService(FakeChatService):
+    def __init__(self, *, title: str | None = "Explain cells.") -> None:
+        super().__init__(title=title)
+        self.create_conversation_calls = 0
+        self.create_message_calls = 0
+
+    async def create_conversation_message(self, content: str) -> SendMessageResponse:
+        self.create_conversation_calls += 1
+        return await super().create_conversation_message(content)
+
+    async def create_message(
+        self,
+        conversation_id: UUID,
+        content: str,
+    ) -> SendMessageResponse:
+        self.create_message_calls += 1
+        return await super().create_message(conversation_id, content)
 
 
 class MissingConversationService(FakeChatService):
