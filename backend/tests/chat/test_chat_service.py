@@ -397,52 +397,6 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
 
 
 @pytest.mark.asyncio
-async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
-    user = _current_user()
-    session = FakeSession()
-    conversation = _conversation(user_id=user.id)
-    repository = FakeChatRepository(
-        user_id=user.id,
-        conversations=[conversation],
-        messages=[
-            _message(
-                conversation=conversation,
-                user_id=user.id,
-                sequence=1,
-                role=MessageRole.USER,
-                status=MessageStatus.COMPLETED,
-                content="What is a cell?",
-                retrieved_context=[
-                    {
-                        "chunkId": "legacy_chunk",
-                        "sourceId": "doc_1",
-                        "sourceTitle": "Biology Notes",
-                    }
-                ],
-            ),
-        ],
-    )
-    llm_service = FakeLLMService(
-        LLMResult(
-            content="A cell is a basic unit of life.",
-            provider_response=ProviderResponse(content="A cell is a basic unit of life."),
-        )
-    )
-    service = ChatService(
-        session=session,
-        current_user=user,
-        llm_service=llm_service,
-        repository=repository,
-    )
-
-    await service.create_message(conversation.id, "Tell me more.")
-
-    assert llm_service.requests[0].history == [
-        ChatMessage(role=ChatRole.USER, content="What is a cell?"),
-    ]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "retrieved_context",
     [
@@ -451,8 +405,8 @@ async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
             id="current-metadata-not-mapping",
         ),
         pytest.param(
-            [{"chunkId": "legacy_chunk", "sourceId": "doc_1"}],
-            id="partial-legacy-contentless-ref",
+            [{"metadata": {"source": "Biology Notes"}}],
+            id="missing-content",
         ),
         pytest.param([42], id="scalar-item"),
     ],

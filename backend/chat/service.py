@@ -512,15 +512,8 @@ def _chunks_from_stored_refs(chunk_refs: list[dict]) -> list[RetrievedChunk]:
         try:
             chunks.append(RetrievedChunk.model_validate(chunk_ref))
         except (TypeError, ValidationError) as exc:
-            if _is_legacy_contentless_context_ref(chunk_ref):
-                continue
             raise ValueError("Stored retrieved context is malformed") from exc
     return chunks
-
-
-def _is_legacy_contentless_context_ref(chunk_ref: dict) -> bool:
-    legacy_keys = {"chunkId", "sourceId", "sourceTitle"}
-    return isinstance(chunk_ref, dict) and set(chunk_ref) == legacy_keys
 
 
 def _title_from_content(content: str) -> str:
