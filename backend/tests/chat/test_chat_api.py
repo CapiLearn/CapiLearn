@@ -15,7 +15,7 @@ from backend.auth.dependencies import (
 from backend.auth.models import UserAccount
 from backend.auth.repository import UserAccountRepository
 from backend.auth.schemas import ClerkAuthClaims, CurrentUser, UserRole
-from backend.chat.dependencies import get_chat_service
+from backend.chat.dependencies import get_chat_service, get_rag_retrieval_provider
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
@@ -32,6 +32,7 @@ from backend.core.rate_limiting import (
     limiter,
 )
 from backend.main import app
+from backend.rag.schemas import RetrievalResult
 
 
 @pytest.fixture(autouse=True)
@@ -163,6 +164,7 @@ async def test_chat_routes_provision_missing_local_user(monkeypatch) -> None:
     captured = {}
     app.dependency_overrides[get_db] = _fake_db_override(session)
     app.dependency_overrides[get_user_repository] = lambda: repository
+    app.dependency_overrides[get_rag_retrieval_provider] = lambda: FakeRetrievalProvider()
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
         ClerkAuthClaims(
             clerk_id="user_chat_new",
@@ -573,6 +575,11 @@ class CountingChatService(FakeChatService):
     ) -> SendMessageResponse:
         self.create_message_calls += 1
         return await super().create_message(conversation_id, content)
+
+
+class FakeRetrievalProvider:
+    async def retrieve(self, query, *, user_id, conversation_id, user_message_id):
+        return RetrievalResult(chunks=[])
 
 
 class MissingConversationService(FakeChatService):
