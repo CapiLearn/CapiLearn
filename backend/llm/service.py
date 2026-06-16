@@ -3,6 +3,7 @@ import logging
 
 from backend.core.observability import (
     LLMTraceSink,
+    NoopLLMTraceSink,
     elapsed_ms,
     timer_start,
 )
@@ -32,6 +33,7 @@ from backend.rag.schemas import (
     RetrievalResult,
     RetrievedChunk,
 )
+from backend.rag.trace_contracts import NoopRetrievalTraceSink, RetrievalTraceSink
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +72,14 @@ class LLMService:
         output_guardrails: GuardrailsProvider | None = None,
         retriever: RetrievalProvider | None = None,
         trace_sink: LLMTraceSink | None = None,
+        retrieval_trace_sink: RetrievalTraceSink | None = None,
     ) -> None:
         self._provider = provider or LiteLLMProvider()
         self._input_guardrails = guardrails or input_guardrails or build_input_guardrails()
         self._output_guardrails = guardrails or output_guardrails or build_output_guardrails()
         self._retriever = retriever or EmptyRetrievalProvider()
-        self._trace_sink = trace_sink or LLMTraceSink()
+        self._trace_sink = trace_sink or NoopLLMTraceSink()
+        self._retrieval_trace_sink = retrieval_trace_sink or NoopRetrievalTraceSink()
 
     async def complete(self, request: LLMRequest) -> LLMResult:
         recorder = LLMCostRecorder(
@@ -99,6 +103,7 @@ class LLMService:
     async def _complete(self, request: LLMRequest) -> LLMResult:
         events = LLMEventRecorder(
             trace_sink=self._trace_sink,
+            retrieval_trace_sink=self._retrieval_trace_sink,
             logger=logger,
             request=request,
         )
