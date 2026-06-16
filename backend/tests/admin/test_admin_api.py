@@ -414,9 +414,13 @@ async def test_test_auth_mode_rejects_non_admin_role() -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "admin_required"
-    assert repository.calls == [("get_by_clerk_id", "user_test_student")]
-    assert repository.user is None
-    assert session.commits == 0
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_test_student"),
+        ("create", "user_test_student", UserRole.STUDENT),
+    ]
+    assert repository.user is not None
+    assert repository.user.role == UserRole.STUDENT.value
+    assert session.commits == 1
 
 
 @pytest.mark.asyncio
@@ -443,9 +447,13 @@ async def test_test_auth_mode_accepts_admin_role() -> None:
 
     assert response.status_code == 200
     assert response.json()["metrics"]["totalUsers"] == 18
-    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
-    assert repository.user is None
-    assert session.commits == 0
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_test_admin"),
+        ("create", "user_test_admin", UserRole.STUDENT),
+    ]
+    assert repository.user is not None
+    assert repository.user.role == UserRole.STUDENT.value
+    assert session.commits == 1
 
 
 @pytest.mark.asyncio

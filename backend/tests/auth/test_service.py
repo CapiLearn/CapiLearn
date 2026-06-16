@@ -208,6 +208,29 @@ async def test_existing_current_user_loads_without_profile_mutation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_existing_current_user_fails_fast_for_invalid_persisted_role() -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_invalid_role",
+        role="owner",
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+
+    with pytest.raises(ValueError, match="Invalid persisted user role: 'owner'"):
+        await AuthUserService(repository).get_existing_current_user(
+            session,
+            ClerkAuthClaims(
+                clerk_id="user_invalid_role",
+                claims={"sub": "user_invalid_role"},
+            ),
+        )
+
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_invalid_role")]
+
+
+@pytest.mark.asyncio
 async def test_soft_deleted_user_is_rejected() -> None:
     user = UserAccount(
         id=uuid4(),
@@ -375,7 +398,7 @@ async def test_test_auth_current_user_overrides_role_without_mutating_existing_u
 
 
 @pytest.mark.asyncio
-async def test_test_auth_principal_for_missing_user_is_not_db_backed_current_user() -> None:
+async def test_test_auth_principal_for_missing_user_creates_local_user() -> None:
     session = FakeSession()
     repository = FakeUserRepository()
 
@@ -398,9 +421,13 @@ async def test_test_auth_principal_for_missing_user_is_not_db_backed_current_use
     assert principal.email == "admin@example.com"
     assert principal.display_name == "Test Admin"
     assert principal.role == UserRole.ADMIN
-    assert repository.user is None
-    assert session.commits == 0
-    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
+    assert repository.user is not None
+    assert repository.user.role == UserRole.STUDENT.value
+    assert session.commits == 1
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_test_admin"),
+        ("create", "user_test_admin", UserRole.STUDENT),
+    ]
 
 
 @pytest.mark.asyncio
