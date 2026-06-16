@@ -180,42 +180,30 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
 
     assert rows == [
         UserOverviewAggregate(
-            id=admin_user.id,
-            clerk_id="user_admin",
             display_name="Admin User",
-            email="admin@example.com",
             access_level="admin",
-            total_messages=2,
+            total_messages_sent=1,
             blocked_requests=1,
             last_activity=datetime(2026, 5, 1, 13),
         ),
         UserOverviewAggregate(
-            id=student_user.id,
-            clerk_id="user_student",
             display_name="Student User",
-            email="student@example.com",
             access_level="student",
-            total_messages=3,
+            total_messages_sent=2,
             blocked_requests=1,
             last_activity=datetime(2026, 5, 1, 11),
         ),
         UserOverviewAggregate(
-            id=inactive_alpha.id,
-            clerk_id="user_alpha",
             display_name="Alpha User",
-            email="alpha@example.com",
             access_level="instructor",
-            total_messages=0,
+            total_messages_sent=0,
             blocked_requests=0,
             last_activity=None,
         ),
         UserOverviewAggregate(
-            id=inactive_zeta.id,
-            clerk_id="user_zeta",
             display_name="Zeta User",
-            email="zeta@example.com",
             access_level="student",
-            total_messages=0,
+            total_messages_sent=0,
             blocked_requests=0,
             last_activity=None,
         ),
@@ -224,7 +212,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_user_overview_repository_sorts_by_display_name_then_email_then_clerk_id() -> None:
+async def test_user_overview_repository_sorts_by_display_name() -> None:
     engine = create_engine("sqlite:///:memory:")
     UserAccount.__table__.create(engine)
     Conversation.__table__.create(engine)
@@ -232,15 +220,15 @@ async def test_user_overview_repository_sorts_by_display_name_then_email_then_cl
     repository = AdminUsageRepository()
 
     with Session(engine, expire_on_commit=False) as sync_session:
-        alpha_late_email_user = UserAccount(
+        gamma_user = UserAccount(
             id=uuid4(),
             clerk_id="user_4",
-            display_name="Alpha",
+            display_name="Gamma",
             email="late@example.com",
             profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
             role="student",
         )
-        alpha_early_email_user = UserAccount(
+        alpha_user = UserAccount(
             id=uuid4(),
             clerk_id="user_2",
             display_name="Alpha",
@@ -248,10 +236,10 @@ async def test_user_overview_repository_sorts_by_display_name_then_email_then_cl
             profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
             role="student",
         )
-        alpha_clerk_user = UserAccount(
+        delta_user = UserAccount(
             id=uuid4(),
             clerk_id="user_3",
-            display_name="Alpha",
+            display_name="Delta",
             email="late@example.com",
             profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
             role="student",
@@ -263,9 +251,7 @@ async def test_user_overview_repository_sorts_by_display_name_then_email_then_cl
             profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
             role="student",
         )
-        sync_session.add_all(
-            [beta_user, alpha_late_email_user, alpha_clerk_user, alpha_early_email_user]
-        )
+        sync_session.add_all([beta_user, gamma_user, delta_user, alpha_user])
         sync_session.commit()
 
         rows = await repository.list_user_overviews(
@@ -274,8 +260,7 @@ async def test_user_overview_repository_sorts_by_display_name_then_email_then_cl
             range_end=datetime(2026, 5, 2, tzinfo=UTC),
         )
 
-    assert [row.clerk_id for row in rows] == ["user_2", "user_3", "user_4", "user_1"]
-    assert [row.display_name for row in rows] == ["Alpha", "Alpha", "Alpha", "Beta"]
+    assert [row.display_name for row in rows] == ["Alpha", "Beta", "Delta", "Gamma"]
 
 
 @pytest.mark.asyncio

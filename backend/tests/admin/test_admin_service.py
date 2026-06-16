@@ -178,15 +178,11 @@ async def test_list_cost_components_maps_granular_cost_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_list_user_overviews_maps_rows_and_forwards_range_limit_offset() -> None:
-    user_id = uuid4()
     last_activity = datetime(2026, 5, 2, 16, 30, tzinfo=UTC)
     aggregate = UserOverviewAggregate(
-        id=user_id,
-        clerk_id="user_clerk_123",
         display_name="Student Demo",
-        email="student@example.com",
         access_level="student",
-        total_messages=3,
+        total_messages_sent=3,
         blocked_requests=1,
         last_activity=last_activity,
     )
@@ -208,9 +204,8 @@ async def test_list_user_overviews_maps_rows_and_forwards_range_limit_offset() -
     assert repository.range_end == datetime(2026, 5, 3, tzinfo=UTC)
     assert repository.limit == 25
     assert repository.offset == 50
-    assert response.range.from_date == date(2026, 5, 1)
-    assert response.range.to_date == date(2026, 5, 3)
-    assert response.users[0].id == user_id
+    assert response.users[0].display_name == "Student Demo"
+    assert response.users[0].total_messages_sent == 3
     assert response.users[0].blocked_requests == 1
     assert response.users[0].last_activity == last_activity
 

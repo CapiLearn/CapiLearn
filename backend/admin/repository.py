@@ -59,12 +59,9 @@ class CostComponentAggregate:
 
 @dataclass(frozen=True)
 class UserOverviewAggregate:
-    id: UUID
-    clerk_id: str
     display_name: str
-    email: str | None
     access_level: str
-    total_messages: int
+    total_messages_sent: int
     blocked_requests: int
     last_activity: datetime | None
 
@@ -277,7 +274,10 @@ class AdminUsageRepository:
         offset: int = 0,
     ) -> list[UserOverviewAggregate]:
         last_activity = func.max(Message.created_at).label("last_activity")
-        total_messages = func.count(Message.id).label("total_messages")
+        total_messages_sent = func.coalesce(
+            func.sum(case((Message.role == MessageRole.USER.value, 1), else_=0)),
+            0,
+        ).label("total_messages_sent")
         blocked_requests = func.coalesce(
             func.sum(
                 case(
@@ -295,7 +295,7 @@ class AdminUsageRepository:
         activity = (
             select(
                 Message.user_id.label("user_id"),
-                total_messages,
+                total_messages_sent,
                 blocked_requests,
                 last_activity,
             )
@@ -309,12 +309,9 @@ class AdminUsageRepository:
 
         statement = (
             select(
-                UserAccount.id,
-                UserAccount.clerk_id,
                 UserAccount.display_name,
-                UserAccount.email,
                 UserAccount.role.label("access_level"),
-                activity.c.total_messages,
+                activity.c.total_messages_sent,
                 activity.c.blocked_requests,
                 activity.c.last_activity,
             )
@@ -335,12 +332,9 @@ class AdminUsageRepository:
         rows = (await session.execute(statement)).all()
         return [
             UserOverviewAggregate(
-                id=row.id,
-                clerk_id=row.clerk_id,
                 display_name=row.display_name,
-                email=row.email,
                 access_level=row.access_level,
-                total_messages=int(row.total_messages or 0),
+                total_messages_sent=int(row.total_messages_sent or 0),
                 blocked_requests=int(row.blocked_requests or 0),
                 last_activity=row.last_activity,
             )

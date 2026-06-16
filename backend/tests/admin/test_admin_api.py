@@ -255,7 +255,13 @@ async def test_user_overviews_endpoint_returns_camel_case_rows_and_forwards_para
         )
 
     assert response.status_code == 200
-    assert response.json()["users"][0]["displayName"] == "Student Demo"
+    assert response.json()["users"][0] == {
+        "displayName": "Student Demo",
+        "accessLevel": "student",
+        "totalMessagesSent": 4,
+        "blockedRequests": 1,
+        "lastActivity": "2026-05-02T16:30:00Z",
+    }
     assert service.from_date == "2026-05-01"
     assert service.to_date == "2026-05-04"
     assert service.limit == 25
@@ -710,15 +716,11 @@ class FakeAdminUsageService:
         self.limit = limit
         self.offset = offset
         return AdminUserOverviewResponse(
-            range=UsageRange(from_date="2026-05-01", to_date="2026-05-04"),
             users=[
                 AdminUserOverview(
-                    id="00000000-0000-0000-0000-000000000123",
-                    clerk_id="user_clerk_123",
                     display_name="Student Demo",
-                    email="student@example.com",
                     access_level=UserRole.STUDENT,
-                    total_messages=4,
+                    total_messages_sent=4,
                     blocked_requests=1,
                     last_activity=datetime(2026, 5, 2, 16, 30, tzinfo=UTC),
                 )

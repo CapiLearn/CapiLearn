@@ -582,11 +582,6 @@ class MissingConversationService(FakeChatService):
         )
 
 
-class FakeRetrievalProvider:
-    async def retrieve(self, query, *, user_id, conversation_id, user_message_id):
-        return RetrievalResult(chunks=[])
-
-
 def _fake_db_override(session):
     async def override():
         yield session

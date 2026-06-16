@@ -49,18 +49,14 @@ class AdminUsageSummaryResponse(AdminBaseModel):
 
 
 class AdminUserOverview(AdminBaseModel):
-    id: UUID
-    clerk_id: str
     display_name: str
-    email: str | None
     access_level: UserRole
-    total_messages: int
+    total_messages_sent: int
     blocked_requests: int
     last_activity: datetime | None
 
 
 class AdminUserOverviewResponse(AdminBaseModel):
-    range: UsageRange
     users: list[AdminUserOverview]
 
 

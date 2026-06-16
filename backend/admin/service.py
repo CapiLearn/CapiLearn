@@ -160,18 +160,11 @@ class AdminUsageService:
             offset=offset,
         )
         return AdminUserOverviewResponse(
-            range=UsageRange(
-                from_date=usage_window.usage_range.from_date,
-                to_date=usage_window.usage_range.to_date,
-            ),
             users=[
                 AdminUserOverview(
-                    id=user.id,
-                    clerk_id=user.clerk_id,
                     display_name=user.display_name,
-                    email=user.email,
                     access_level=user.access_level,
-                    total_messages=user.total_messages,
+                    total_messages_sent=user.total_messages_sent,
                     blocked_requests=user.blocked_requests,
                     last_activity=user.last_activity,
                 )
