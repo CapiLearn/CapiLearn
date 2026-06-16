@@ -1,9 +1,10 @@
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
 from backend.auth.dependencies import CurrentUserDep
+from backend.auth.schemas import CurrentUser
 from backend.chat.service import ChatService
 from backend.core.database import DbSession
 from backend.llm.service import LLMService
@@ -32,6 +33,17 @@ def get_llm_service(retriever: RetrievalProviderDep) -> LLMService:
 
 
 LLMServiceDep = Annotated[LLMService, Depends(get_llm_service)]
+
+
+async def bind_chat_rate_limit_user(
+    request: Request,
+    current_user: CurrentUserDep,
+) -> CurrentUser:
+    request.state.current_user = current_user
+    return current_user
+
+
+ChatRateLimitUserDep = Annotated[CurrentUser, Depends(bind_chat_rate_limit_user)]
 
 
 def get_chat_service(

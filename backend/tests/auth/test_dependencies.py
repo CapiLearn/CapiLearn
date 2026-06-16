@@ -1,5 +1,6 @@
 from inspect import signature
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from fastapi import status
@@ -12,7 +13,7 @@ from backend.auth.dependencies import (
     get_current_user,
 )
 from backend.auth.repository import UserAccountRepository
-from backend.auth.schemas import ClerkAuthClaims
+from backend.auth.schemas import ClerkAuthClaims, CurrentUser, UserRole
 from backend.auth.service import AuthTestModeService, AuthUserService
 from backend.core.config import Settings
 from backend.core.exceptions import ApiError
@@ -152,7 +153,38 @@ def test_auth_user_service_dependency_selects_test_mode_service() -> None:
     assert isinstance(service, AuthTestModeService)
 
 
+@pytest.mark.asyncio
+async def test_current_user_dependency_resolves_user() -> None:
+    user = CurrentUser(
+        id=uuid4(),
+        clerk_id="user_state",
+        role=UserRole.STUDENT,
+    )
+    claims = ClerkAuthClaims(clerk_id="user_state", claims={"sub": "user_state"})
+    service = FakeCurrentUserResolver(user)
+    session = object()
+
+    resolved_user = await get_current_user(session, claims, service)
+
+    assert resolved_user == user
+    assert service.calls == [(session, claims)]
+
+
 def _claims_from_verifier_payload(payload: dict) -> ClerkAuthClaims:
     from backend.auth.dependencies import _claims_from_payload
 
     return _claims_from_payload(payload)
+
+
+class FakeCurrentUserResolver:
+    def __init__(self, user: CurrentUser) -> None:
+        self._user = user
+        self.calls = []
+
+    async def get_or_create_current_user(
+        self,
+        session,
+        claims: ClerkAuthClaims,
+    ) -> CurrentUser:
+        self.calls.append((session, claims))
+        return self._user
