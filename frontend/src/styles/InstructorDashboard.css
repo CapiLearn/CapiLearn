@@ -329,18 +329,6 @@ body {
   margin-bottom: 20px;
 }
 
-.small-outline-button {
-  border: 1px solid #d8cfb1;
-  border-radius: 999px;
-  background: #fffdf0;
-  color: #557c38;
-
-  padding: 10px 14px;
-  font-weight: 800;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
 .roster-table-wrapper {
   overflow-x: auto;
 }

@@ -151,8 +151,7 @@ function InstructorDashboard() {
             <div>
               <p className="panel-label">Student Roster</p>
               <h2>Student activity overview</h2>
-            </div>
-            <button className="small-outline-button">View all students</button>
+            </div>            
           </div>
 
           <div className="roster-table-wrapper">
