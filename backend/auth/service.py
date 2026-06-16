@@ -119,11 +119,11 @@ class AuthTestModeService:
         session: AsyncSession,
         claims: ClerkAuthClaims,
     ) -> AuthPrincipal:
-        current_user = await self._auth_service.get_or_create_current_user(
+        current_user = await self.get_or_create_current_user(
             session,
             claims,
         )
-        return current_user_to_principal(current_user, role=self._role)
+        return current_user_to_principal(current_user)
 
 
 def _reject_disabled_user(user: UserAccount) -> None:
