@@ -266,7 +266,9 @@ async def test_usage_summary_rejects_non_admin_roles(role: UserRole) -> None:
 @pytest.mark.asyncio
 async def test_usage_summary_rejects_missing_local_user_without_provisioning() -> None:
     repository = FakeUserRepository()
-    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    session = FakeSession()
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_mode="clerk")
+    app.dependency_overrides[get_db] = _fake_db_override(session)
     app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
         ClerkAuthClaims(clerk_id="user_missing", claims={"sub": "user_missing"})
@@ -290,6 +292,7 @@ async def test_usage_summary_rejects_missing_local_user_without_provisioning() -
     }
     assert repository.calls == [("get_by_clerk_id", "user_missing")]
     assert repository.user is None
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio

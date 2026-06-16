@@ -48,7 +48,7 @@ async def test_admin_health_reports_database_success() -> None:
 @pytest.mark.asyncio
 async def test_admin_health_response_is_cached_for_short_ttl() -> None:
     cache = AdminHealthResponseCache(ttl_seconds=30)
-    session = ScalarSession([1])
+    session = ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None])
     provider = StaticModelProvider(["gpt-4o-mini"])
     service = AdminHealthService(
         session=session,
