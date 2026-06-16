@@ -11,21 +11,7 @@ import {
 
 import "../styles/LearningWorkspace.css";
 
-const suggestedPrompts = [
-  "Help me understand this lesson",
-  "Ask me a guiding question",
-  "Point me to the right course material",
-  "Help me think through this bug",
-];
-
-const initialChatMessages = [
-  {
-    id: "mock-assistant-welcome",
-    role: "assistant",
-    content:
-      "Hi, I’m Capi. What lesson, assignment, or concept would you like help thinking through?",
-  },
-];
+const initialChatMessages = [];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -353,7 +339,7 @@ function LearningWorkspace() {
   );
 
   const calendarTitle = formatCalendarTitle(currentDate);
-  const currentDay = String(currentDate.getDate());  
+  const currentDay = String(currentDate.getDate());
 
   return (
     <main className="workspace-page">
@@ -438,8 +424,6 @@ function LearningWorkspace() {
           </div>
 
           <div className="workspace-header-actions">
-            <button className="workspace-help-button">Guided mode</button>
-
             <Link className="workspace-dashboard-link" to="/student-dashboard">
               Dashboard
             </Link>
@@ -456,23 +440,6 @@ function LearningWorkspace() {
               the right course material. I won’t give direct answers, but I’ll
               help you think through the next step.
             </p>
-          </div>
-        </section>
-
-        <section className="suggested-section">
-          <h2>Try asking</h2>
-
-          <div className="prompt-grid">
-            {suggestedPrompts.map((prompt) => (
-              <button
-                className="prompt-card"
-                key={prompt}
-                type="button"
-                onClick={() => setInputValue(prompt)}
-              >
-                {prompt}
-              </button>
-            ))}
           </div>
         </section>
 
@@ -518,20 +485,19 @@ function LearningWorkspace() {
               }`}
               key={message.id}
             >
-          
-            {message.role === "assistant" ? (
-              <MarkdownMessage
-                content={message.content}
-                searchTerm={messageSearchTerm}
-              />
-            ) : (
-              <p>
-                <HighlightedText
-                  text={message.content}
+              {message.role === "assistant" ? (
+                <MarkdownMessage
+                  content={message.content}
                   searchTerm={messageSearchTerm}
                 />
-              </p>
-            )}  
+              ) : (
+                <p>
+                  <HighlightedText
+                    text={message.content}
+                    searchTerm={messageSearchTerm}
+                  />
+                </p>
+              )}
             </div>
           ))}
 
@@ -586,37 +552,15 @@ function LearningWorkspace() {
           <div className="calendar-grid">
             {calendarDays.map((day, index) => (
               <div
-                className={`calendar-day ${day === currentDay ? "active-day" : ""}`}
+                className={`calendar-day ${
+                  day === currentDay ? "active-day" : ""
+                }`}
                 key={`${day}-${index}`}
               >
                 {day}
               </div>
             ))}
-          </div>    
-
-        </section>
-
-        <section className="tracker-card progress-card">
-          <div className="progress-heading">
-            <p className="card-label">Weekly goal</p>
-            <strong>70%</strong>
           </div>
-
-          <div className="progress-bar">
-            <div className="progress-fill"></div>
-          </div>
-
-          <p className="progress-note">
-            You completed 7 of 10 planned study sessions.
-          </p>
-        </section>
-
-        <section className="tracker-card encouragement-card">
-          <h2>One step at a time</h2>
-          <p>
-            When you feel stuck, ask for a hint, not the answer. That is how the
-            learning sticks.
-          </p>
         </section>
       </aside>
     </main>
