@@ -205,6 +205,11 @@ class ChatService:
         if result.input_guardrail_result.blocked or result.output_guardrail_result.blocked:
             await self._save_user_retrieval(user_message, result)
             await self._mark_blocked(assistant_message, result, latency_ms=latency_ms)
+            _warn_missing_provider_response(
+                result,
+                event_fields=event_fields,
+                status=MessageStatus.BLOCKED,
+            )
             blocked_fields = {
                 **event_fields,
                 **_provider_event_fields(result),
@@ -219,6 +224,11 @@ class ChatService:
         else:
             await self._save_user_retrieval(user_message, result)
             await self._mark_completed(assistant_message, result, latency_ms=latency_ms)
+            _warn_missing_provider_response(
+                result,
+                event_fields=event_fields,
+                status=MessageStatus.COMPLETED,
+            )
             completed_fields = {
                 **event_fields,
                 **_provider_event_fields(result),
@@ -347,7 +357,7 @@ class ChatService:
             id=message.id,
             conversation_id=message.conversation_id,
             role=MessageRole(message.role),
-            content=message.content or "",
+            content=_message_content_for_response(message),
             status=MessageStatus(message.status),
             created_at=message.created_at,
         )
@@ -361,12 +371,37 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
             continue
         if message.role not in {MessageRole.USER.value, MessageRole.ASSISTANT.value}:
             continue
-        content = message.content or ""
+        content = _required_message_content(message)
         if message.role == MessageRole.USER.value and message.id in recent_user_message_ids:
             chunks = _chunks_from_stored_refs(message.retrieved_context or [])
             content = _history_user_content(content, chunks)
         history.append(ChatMessage(role=ChatRole(message.role), content=content))
     return history
+
+
+def _message_content_for_response(message: Message) -> str:
+    if message.content is not None:
+        return message.content
+
+    role = MessageRole(message.role)
+    status = MessageStatus(message.status)
+    if role == MessageRole.ASSISTANT and status in {
+        MessageStatus.PENDING,
+        MessageStatus.FAILED,
+    }:
+        return ""
+
+    return _required_message_content(message)
+
+
+def _required_message_content(message: Message) -> str:
+    if message.content is not None:
+        return message.content
+
+    raise ValueError(
+        "Persisted chat message is missing required content "
+        f"(message_id={message.id}, role={message.role}, status={message.status})"
+    )
 
 
 def _set_correlation_metadata(message: Message, *, request_id: str) -> None:
@@ -394,6 +429,24 @@ def _apply_legacy_estimated_cost(message: Message, result: LLMResult) -> None:
     ]
     if component_costs:
         message.estimated_cost_usd = sum(component_costs, Decimal("0"))
+
+
+def _warn_missing_provider_response(
+    result: LLMResult,
+    *,
+    event_fields: dict,
+    status: MessageStatus,
+) -> None:
+    if result.provider_response is not None:
+        return
+
+    log_event(
+        logger,
+        "chat.turn.provider_response_missing",
+        level=logging.WARNING,
+        **event_fields,
+        status=status.value,
+    )
 
 
 def _original_llm_exception(exc: Exception) -> Exception:
@@ -458,9 +511,16 @@ def _chunks_from_stored_refs(chunk_refs: list[dict]) -> list[RetrievedChunk]:
     for chunk_ref in chunk_refs:
         try:
             chunks.append(RetrievedChunk.model_validate(chunk_ref))
-        except ValidationError:
-            continue
+        except (TypeError, ValidationError) as exc:
+            if _is_legacy_contentless_context_ref(chunk_ref):
+                continue
+            raise ValueError("Stored retrieved context is malformed") from exc
     return chunks
+
+
+def _is_legacy_contentless_context_ref(chunk_ref: dict) -> bool:
+    legacy_keys = {"chunkId", "sourceId", "sourceTitle"}
+    return isinstance(chunk_ref, dict) and set(chunk_ref) == legacy_keys
 
 
 def _title_from_content(content: str) -> str:
