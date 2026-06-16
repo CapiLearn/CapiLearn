@@ -23,6 +23,11 @@ def test_eastern_activity_date_uses_east_coast_midnight() -> None:
     )
 
 
+def test_eastern_activity_date_rejects_naive_datetime() -> None:
+    with pytest.raises(ValueError, match="Activity timestamps must be timezone-aware."):
+        eastern_activity_date(datetime(2026, 6, 14, 3, 30))
+
+
 @pytest.mark.asyncio
 async def test_record_login_creates_activity_for_eastern_date() -> None:
     user = _current_user()
@@ -42,6 +47,25 @@ async def test_record_login_creates_activity_for_eastern_date() -> None:
     assert response.logged_in_today is True
     assert session.commits == 1
     assert repository.records[date(2026, 6, 13)].login_count == 1
+
+
+@pytest.mark.asyncio
+async def test_record_login_rejects_naive_clock_timestamp() -> None:
+    user = _current_user()
+    repository = FakeActivityRepository()
+    session = FakeSession()
+    service = StudentActivityService(
+        session=session,
+        current_user=user,
+        repository=repository,
+        clock=lambda: datetime(2026, 6, 14, 3, 30),
+    )
+
+    with pytest.raises(ValueError, match="Activity timestamps must be timezone-aware."):
+        await service.record_login()
+
+    assert repository.records == {}
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio

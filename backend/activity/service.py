@@ -121,8 +121,8 @@ def current_streak(activity_dates: Sequence[date], *, current_date: date) -> int
 
 
 def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("Activity timestamps must be timezone-aware.")
     return value.astimezone(UTC)
 
 
