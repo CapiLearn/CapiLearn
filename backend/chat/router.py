@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request, status
 
-from backend.chat.dependencies import ChatServiceDep
+from backend.chat.dependencies import ChatRateLimitUserDep, ChatServiceDep
 from backend.chat.schemas import (
     ConversationListResponse,
     MessageListResponse,
@@ -39,6 +39,7 @@ async def list_conversations(service: ChatServiceDep) -> ConversationListRespons
 async def create_conversation(
     request: Request,
     payload: SendMessageRequest,
+    rate_limit_user: ChatRateLimitUserDep,
     service: ChatServiceDep,
 ) -> SendMessageResponse:
     return await service.create_conversation_message(payload.content)
@@ -66,6 +67,7 @@ async def create_message(
     request: Request,
     conversation_id: UUID,
     payload: SendMessageRequest,
+    rate_limit_user: ChatRateLimitUserDep,
     service: ChatServiceDep,
 ) -> SendMessageResponse:
     return await service.create_message(conversation_id, payload.content)

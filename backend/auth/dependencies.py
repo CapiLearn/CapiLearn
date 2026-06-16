@@ -3,7 +3,7 @@ from typing import Annotated, Any, Protocol
 
 from clerk_backend_api import Clerk
 from clerk_backend_api.security.types import AuthenticateRequestOptions
-from fastapi import Depends, Header, Request, status
+from fastapi import Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.repository import UserAccountRepository
@@ -139,14 +139,11 @@ ClerkAuthClaimsDep = Annotated[ClerkAuthClaims, Depends(require_clerk_auth)]
 
 
 async def get_current_user(
-    request: Request,
     session: DbSession,
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
 ) -> CurrentUser:
-    current_user = await service.get_or_create_current_user(session, auth_claims)
-    request.state.current_user = current_user
-    return current_user
+    return await service.get_or_create_current_user(session, auth_claims)
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]

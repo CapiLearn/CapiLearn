@@ -122,7 +122,7 @@ async def test_clerk_verifier_passes_normalized_bearer_request(monkeypatch) -> N
 def test_current_user_dependency_uses_one_configured_auth_service() -> None:
     parameters = signature(get_current_user).parameters
 
-    assert list(parameters) == ["request", "session", "auth_claims", "service"]
+    assert list(parameters) == ["session", "auth_claims", "service"]
     assert "settings" not in parameters
     assert "test_service" not in parameters
 
@@ -154,21 +154,19 @@ def test_auth_user_service_dependency_selects_test_mode_service() -> None:
 
 
 @pytest.mark.asyncio
-async def test_current_user_dependency_stores_user_on_request_state() -> None:
+async def test_current_user_dependency_resolves_user() -> None:
     user = CurrentUser(
         id=uuid4(),
         clerk_id="user_state",
         role=UserRole.STUDENT,
     )
-    request = SimpleNamespace(state=SimpleNamespace())
     claims = ClerkAuthClaims(clerk_id="user_state", claims={"sub": "user_state"})
     service = FakeCurrentUserResolver(user)
     session = object()
 
-    resolved_user = await get_current_user(request, session, claims, service)
+    resolved_user = await get_current_user(session, claims, service)
 
     assert resolved_user == user
-    assert request.state.current_user == user
     assert service.calls == [(session, claims)]
 
 

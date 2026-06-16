@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.dependencies import (
@@ -83,12 +82,10 @@ def _authorize(
     *,
     current_user_factory: Callable[[], CurrentUser] | None = None,
 ) -> None:
-    async def override(request: Request) -> CurrentUser:
-        current_user = (
-            current_user_factory() if current_user_factory is not None else _current_user(role)
-        )
-        request.state.current_user = current_user
-        return current_user
+    async def override() -> CurrentUser:
+        if current_user_factory is not None:
+            return current_user_factory()
+        return _current_user(role)
 
     app.dependency_overrides[get_current_user] = override
 
