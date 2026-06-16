@@ -110,7 +110,8 @@ async def test_llm_service_accepts_retrieval_result_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_service_omits_retrieved_context_block_without_chunks() -> None:
+async def test_llm_service_omits_retrieved_context_block_without_chunks(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="backend.llm.service")
     provider = FakeProvider()
     service = LLMService(
         provider=provider,
@@ -125,6 +126,9 @@ async def test_llm_service_omits_retrieved_context_block_without_chunks() -> Non
     assert provider.messages[-1].content == (
         "<student_message>\nWhat is photosynthesis?\n</student_message>"
     )
+    retrieval_events = _events(caplog.records, "rag.retrieve.completed")
+    assert retrieval_events[-1].chunk_count == 0
+    assert _events(caplog.records, "rag.retrieve.degraded") == []
 
 
 @pytest.mark.asyncio
@@ -212,7 +216,7 @@ async def test_llm_service_consumes_ignored_retrieval_exception() -> None:
 async def test_llm_service_degrades_allowed_retrieval_failure_to_empty_context(
     caplog,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="backend.llm.service")
+    caplog.set_level(logging.WARNING, logger="backend.llm.service")
     provider = FakeProvider()
     trace_sink = RecordingTraceSink()
     service = LLMService(
@@ -221,16 +225,33 @@ async def test_llm_service_degrades_allowed_retrieval_failure_to_empty_context(
         retriever=FailingRetriever(),
         trace_sink=trace_sink,
     )
+    request = _request("What private prompt should not leak?")
 
-    result = await service.complete(_request("What is photosynthesis?"))
+    result = await service.complete(request)
 
     assert result.content == "Plants turn light into energy."
     assert result.retrieved_context == []
     assert provider.complete_called
     assert "<retrieved_context>" not in provider.messages[-1].content
-    failed_events = _events(caplog.records, "rag.retrieve.failed")
-    assert failed_events[-1].error_type == "RuntimeError"
-    assert failed_events[-1].retriever_class == "FailingRetriever"
+    degraded_events = _events(caplog.records, "rag.retrieve.degraded")
+    assert degraded_events
+    degraded_event = degraded_events[-1]
+    assert degraded_event.levelno == logging.WARNING
+    assert degraded_event.event == "rag.retrieve.degraded"
+    assert degraded_event.user_id == str(request.user_id)
+    assert degraded_event.conversation_id == str(request.conversation_id)
+    assert degraded_event.user_message_id == str(request.user_message_id)
+    assert degraded_event.assistant_message_id == str(request.assistant_message_id)
+    assert degraded_event.latency_ms >= 0
+    assert degraded_event.retriever_class == "FailingRetriever"
+    assert degraded_event.error_type == "RuntimeError"
+    assert degraded_event.exc_info is None
+    assert "What private prompt should not leak?" not in caplog.text
+    assert "retrieval failed while processing" not in caplog.text
+    assert "What private prompt should not leak?" not in str(degraded_event.__dict__)
+    assert "retrieval failed while processing" not in str(degraded_event.__dict__)
     assert _events(caplog.records, "rag.retrieve.completed") == []
     assert trace_sink.errors[-1]["error_type"] == "RuntimeError"
     assert trace_sink.errors[-1]["retriever_class"] == "FailingRetriever"
+    assert "What private prompt should not leak?" not in str(trace_sink.errors[-1])
+    assert "retrieval failed while processing" not in str(trace_sink.errors[-1])

@@ -154,7 +154,7 @@ class FailingRetriever:
         user_message_id: UUID,
     ):
         try:
-            raise RuntimeError("ignored retrieval failure")
+            raise RuntimeError(f"retrieval failed while processing: {query}")
         finally:
             self.done.set()
 

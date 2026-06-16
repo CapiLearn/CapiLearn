@@ -107,10 +107,9 @@ class LLMEventRecorder:
         await self._trace_sink.record(LLMTraceOperation.RECORD_ERROR, fields)
         log_event(
             self._logger,
-            "rag.retrieve.failed",
-            level=logging.ERROR,
+            "rag.retrieve.degraded",
+            level=logging.WARNING,
             **fields,
-            exc_info=exc,
         )
 
     async def record_generation_error(
