@@ -153,6 +153,33 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
 
 
 @pytest.mark.asyncio
+async def test_pgvector_rag_none_count_scalar_is_unhealthy() -> None:
+    service = AdminHealthService(
+        session=ScalarSession([2, None]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
+        llm_config=LLMSettings(
+            model="openai/gpt-4o-mini",
+            guardrails_enabled=False,
+        ),
+        rag_config=RagSettings(
+            backend=RagBackend.PGVECTOR,
+            model_name=DEFAULT_RAG_MODEL_NAME,
+            index_version="v1",
+        ),
+    )
+
+    rag_check = await service._check_rag()
+
+    assert rag_check.status == HealthStatus.UNHEALTHY
+    assert rag_check.message == "RAG storage health check failed."
+    assert rag_check.details == {
+        "backend": RagBackend.PGVECTOR.value,
+        "modelName": DEFAULT_RAG_MODEL_NAME,
+        "indexVersion": "v1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_pgvector_rag_is_degraded_when_only_old_model_embeddings_exist() -> None:
     service = AdminHealthService(
         session=ScalarSession(
