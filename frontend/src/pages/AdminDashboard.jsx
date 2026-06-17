@@ -37,6 +37,18 @@ const recentEvents = [
   },
 ];
 
+function getDefaultDateRange() {
+  const today = new Date();
+  const fromDate = new Date();
+
+  fromDate.setDate(today.getDate() - 7);
+
+  return {
+    fromDate: fromDate.toISOString().slice(0, 10),
+    toDate: today.toISOString().slice(0, 10),
+  };
+}
+
 function getStatusClass(status) {
   if (status === "healthy") {
     return "admin-status-good";
@@ -94,14 +106,24 @@ function AdminDashboard() {
   const [isLoadingSystemHealth, setIsLoadingSystemHealth] = useState(false);
   const [usageErrorMessage, setUsageErrorMessage] = useState("");
   const [systemHealthErrorMessage, setSystemHealthErrorMessage] = useState("");
+  const [metricsDateRange, setMetricsDateRange] = useState(getDefaultDateRange);
+  const isMetricsDateRangeInvalid =
+    metricsDateRange.fromDate &&
+    metricsDateRange.toDate &&
+    metricsDateRange.fromDate > metricsDateRange.toDate;
 
   useEffect(() => {
     async function loadUsageSummary() {
+      if (isMetricsDateRangeInvalid) {
+        setUsageErrorMessage("Start date must be before or equal to end date.");
+        return;
+      }
+
       try {
         setIsLoadingUsage(true);
         setUsageErrorMessage("");
 
-        const data = await getAdminUsageSummary();
+        const data = await getAdminUsageSummary(metricsDateRange);
 
         setUsageSummary(data);
       } catch (error) {
@@ -113,6 +135,10 @@ function AdminDashboard() {
       }
     }
 
+    loadUsageSummary();
+  }, [metricsDateRange, isMetricsDateRangeInvalid]);
+
+  useEffect(() => {
     async function loadSystemHealth() {
       try {
         setIsLoadingSystemHealth(true);
@@ -130,7 +156,6 @@ function AdminDashboard() {
       }
     }
 
-    loadUsageSummary();
     loadSystemHealth();
   }, []);
 
@@ -352,6 +377,44 @@ function AdminDashboard() {
               <p className="admin-panel-label">Usage Details</p>
               <h2>Response and cost metrics</h2>
 
+              <div className="metrics-date-controls">
+                <label>
+                  From
+                  <input
+                    type="date"
+                    value={metricsDateRange.fromDate}
+                    max={metricsDateRange.toDate}
+                    onChange={(event) =>
+                      setMetricsDateRange((currentRange) => ({
+                        ...currentRange,
+                        fromDate: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  To
+                  <input
+                    type="date"
+                    value={metricsDateRange.toDate}
+                    min={metricsDateRange.fromDate}
+                    onChange={(event) =>
+                      setMetricsDateRange((currentRange) => ({
+                        ...currentRange,
+                        toDate: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+
+              {isMetricsDateRangeInvalid && (
+                <p className="metrics-date-error">
+                  Start date must be before or equal to end date.
+                </p>
+              )}
+
               <div className="usage-detail-list">
                 {operationalStats.map((item) => (
                   <div className="usage-detail-item" key={item.label}>
@@ -361,15 +424,6 @@ function AdminDashboard() {
                   </div>
                 ))}
               </div>
-            </article>
-
-            <article className="admin-panel admin-safety-card">
-              <p className="admin-panel-label">Safety</p>
-              <h2>Guided learning mode active</h2>
-              <p>
-                The assistant is configured to guide students with hints and
-                questions instead of giving direct answers.
-              </p>
             </article>
           </aside>
         </section>

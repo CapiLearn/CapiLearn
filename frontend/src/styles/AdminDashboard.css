@@ -236,6 +236,41 @@ body {
   padding: 20px;
 }
 
+.metrics-date-controls {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.metrics-date-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #867a69;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metrics-date-controls input {
+  border: 1px solid #d8cfb1;
+  border-radius: 10px;
+  background: #fffdf0;
+  color: #2b1d15;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.metrics-date-error {
+  margin: 10px 0 0;
+  color: #8a3d21;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .admin-status-dot {
   position: absolute;
   top: 18px;
@@ -502,21 +537,6 @@ body {
 
 .ingestion-item span {
   color: #5f554b;
-  font-size: 14px;
-}
-
-.admin-safety-card {
-  background: #557c38;
-  color: #fff7e3;
-}
-
-.admin-safety-card .admin-panel-label {
-  color: rgba(255, 247, 227, 0.78);
-}
-
-.admin-safety-card p {
-  margin: 14px 0 0;
-  line-height: 1.5;
   font-size: 14px;
 }
 
