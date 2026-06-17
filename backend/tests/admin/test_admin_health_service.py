@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from backend.admin.health_service import (
     AdminHealthResponseCache,
@@ -143,6 +144,12 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
     assert rag_check.details["configuredModelEmbeddings"] == 4
     assert rag_check.details["chunksMissingConfiguredModelEmbeddings"] == 1
     assert rag_check.details["latestDocumentUpdatedAt"] == "2026-06-09T11:00:00+00:00"
+    configured_embeddings_sql = _compiled_sql(session.scalar_statements[5])
+    missing_configured_embeddings_sql = _compiled_sql(session.scalar_statements[6])
+    assert "rag_embeddings.embedding_provider" in configured_embeddings_sql
+    assert "rag_embeddings.embedding_dimensions" in configured_embeddings_sql
+    assert "rag_embeddings.embedding_provider" in missing_configured_embeddings_sql
+    assert "rag_embeddings.embedding_dimensions" in missing_configured_embeddings_sql
 
 
 @pytest.mark.asyncio
@@ -427,6 +434,15 @@ def _check(checks: list[AdminHealthCheck], name: str) -> AdminHealthCheck:
         if check.name == name:
             return check
     raise AssertionError(f"Missing health check: {name}")
+
+
+def _compiled_sql(statement) -> str:
+    return str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": False},
+        )
+    )
 
 
 class ScalarSession:

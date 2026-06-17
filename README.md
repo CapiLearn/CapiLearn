@@ -171,11 +171,14 @@ frontend/
 
     ```env
     RAG_BACKEND=pgvector
+    RAG_EMBEDDING_PROVIDER=openai
+    RAG_MODEL_NAME=text-embedding-3-small
+    RAG_EMBEDDING_DIMENSIONS=384
     RAG_WRITE_RETRIEVAL_LOGS=true
     ```
 
-    Chroma remains available as a rollback path with `RAG_BACKEND=chroma`.
-    Restart the backend whenever this setting changes.
+    `RAG_BACKEND=chroma` is no longer supported. Restart the backend whenever
+    RAG settings change.
 
 8. Start the FastAPI backend:
 

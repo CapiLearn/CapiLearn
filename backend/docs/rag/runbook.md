@@ -9,9 +9,8 @@
 - `DATABASE_URL` using `postgresql+asyncpg://`
 - A database backup or snapshot before production schema changes
 
-PostgreSQL uses pgvector with 384-dimensional
-`sentence-transformers/all-MiniLM-L6-v2` embeddings. No psycopg package is
-used.
+PostgreSQL uses pgvector with 384-dimensional OpenAI embeddings. No psycopg
+package is used.
 
 ## Phase 2 Deployment Order
 
@@ -278,7 +277,9 @@ Set these values before application startup:
 
 ```dotenv
 RAG_BACKEND=pgvector
-RAG_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+RAG_EMBEDDING_PROVIDER=openai
+RAG_MODEL_NAME=text-embedding-3-small
+RAG_EMBEDDING_DIMENSIONS=384
 RAG_TOP_K=5
 RAG_CANDIDATE_POOL_MULTIPLIER=3
 RAG_MAX_CANDIDATES=50
@@ -317,23 +318,15 @@ contain the final retained chunks used by the prompt.
 
 Application rollback must happen before schema downgrade.
 
-1. Set `RAG_BACKEND=chroma` or deploy the previous application version.
-2. Restart the backend and verify Chroma retrieval.
+1. Deploy the previous application version.
+2. Restart the backend and verify retrieval.
 3. Leave the Phase 2 PostgreSQL schema and soft-deleted rows in place unless a
    separately approved rollback requires schema downgrade.
 4. Only then consider `alembic downgrade`. Downgrading removes Phase 2 columns
    and constraints and must not occur while Phase 2 application code is live.
 
 Inactive rows remain retained unless a later, explicit hard-deletion process
-is approved. Switching to Chroma does not require deleting PostgreSQL data.
-
-If the Chroma store must be rebuilt:
-
-```bash
-uv run python backend/ingestion/ingest_repo.py
-uv run python backend/rag/chunk_documents.py
-uv run python backend/rag/build_chroma_vector_store.py
-```
+is approved.
 
 ## Troubleshooting
 
@@ -361,8 +354,8 @@ reconciliation while diagnosing incomplete source discovery.
 ### Embedding Dimension Mismatch
 
 The pgvector schema stores `vector(384)`. Both ingestion and retrieval must use
-`sentence-transformers/all-MiniLM-L6-v2`; unsupported pgvector models fail
-configuration validation.
+the configured OpenAI embedding contract; unsupported pgvector embedding
+contracts fail configuration validation.
 
 ### Alembic Migration Issues
 
@@ -378,8 +371,8 @@ destructive volume reset for shared, staging, or production data.
 
 ### Backend Selection
 
-Valid values are `RAG_BACKEND=pgvector` and `RAG_BACKEND=chroma`. Settings are
-cached at startup, so restart FastAPI after changing the value.
+The only supported runtime value is `RAG_BACKEND=pgvector`. Settings are cached
+at startup, so restart FastAPI after changing the value.
 
 ### Downstream LLM Failure
 
@@ -387,7 +380,7 @@ An external LLM authentication or billing failure after successful
 `rag.provider.retrieve.completed` and `rag.retrieve.completed` events is not a
 pgvector retrieval failure.
 
-### Embedding Model Download
+### Embedding Provider Configuration
 
-The first model load may download files from Hugging Face. Use `--dry-run` when
-only preprocessing counts are needed.
+Set `OPENAI_API_KEY` before running ingestion or retrieval. Use `--dry-run`
+when only preprocessing counts are needed.

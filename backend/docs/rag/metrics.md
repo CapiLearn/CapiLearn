@@ -1,15 +1,22 @@
-# RAG Metrics
+# RAG Metrics (Historical Homework Assignment Snapshot)
 
-This document records dated, live-verified RAG measurements. Counts in
-architecture docs, runbooks, or the root README may describe an older chunker
-version; use the newest verified snapshot here when comparing ingestion runs.
+This document records a dated homework/assignment verification snapshot from
+older RAG work. It is not the current runtime configuration source of truth.
+Use current architecture and runbook docs for final pgvector/OpenAI runtime
+configuration.
 
 ## PR 2 Structure-Aware Chunking
 
 **Verified:** June 10, 2026  
 **Chunker version:** `markdown-structure-v3`  
-**Embedding model:** `sentence-transformers/all-MiniLM-L6-v2`  
+**Historical embedding model:** `sentence-transformers/all-MiniLM-L6-v2`  
 **Embedding dimensions:** 384
+
+This section records older PR 2 verification data. The MiniLM /
+sentence-transformers reference is historical and is not the current runtime
+embedding configuration. The final runtime uses PostgreSQL pgvector with OpenAI
+`text-embedding-3-small` embeddings and the persisted embedding contract:
+`embedding_provider`, `embedding_model`, and `embedding_dimensions`.
 
 ### Ingestion Results
 

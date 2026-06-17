@@ -214,10 +214,10 @@ async def ingest_corpus(
             len(all_chunks),
             config.embedding_batch_size,
         )
-        vectors = provider.embed_documents(
-            [chunk.content for chunk in all_chunks],
-            model_name=config.model_name,
-            embedding_dimensions=config.embedding_dimensions,
+        vectors = _embed_texts_in_batches(
+            provider=provider,
+            texts=[chunk.content for chunk in all_chunks],
+            config=config,
         )
         if len(vectors) != len(all_chunks):
             raise ValueError("Embedding model returned a different number of vectors than chunks.")
@@ -329,6 +329,25 @@ def _can_reconcile(config: IngestionConfig, summary: IngestionSummary) -> bool:
         and summary.preprocessing_failures == 0
         and summary.database_failures == 0
     )
+
+
+def _embed_texts_in_batches(
+    *,
+    provider: EmbeddingModel,
+    texts: list[str],
+    config: IngestionConfig,
+) -> list[list[float]]:
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), config.embedding_batch_size):
+        batch = texts[start : start + config.embedding_batch_size]
+        vectors.extend(
+            provider.embed_documents(
+                batch,
+                model_name=config.model_name,
+                embedding_dimensions=config.embedding_dimensions,
+            )
+        )
+    return vectors
 
 
 def _log_preprocessing_summary(summary: IngestionSummary) -> None:

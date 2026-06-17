@@ -1,10 +1,11 @@
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 import backend.ingestion.ingest_pgvector as ingestion_module
 from backend.ingestion.ingest_pgvector import IngestionConfig, ingest_corpus, prepare_corpus
+from backend.rag.chunking import PreparedChunk
 from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_PROVIDER, DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS
 
@@ -107,6 +108,43 @@ async def test_ingest_corpus_embeds_and_replaces_each_document(tmp_path: Path) -
     assert call["embeddings"][0].embedding_provider == DEFAULT_RAG_EMBEDDING_PROVIDER
     assert call["embeddings"][0].embedding_model == DEFAULT_RAG_MODEL_NAME
     assert call["embeddings"][0].embedding_dimensions == EMBEDDING_DIMENSIONS
+
+
+@pytest.mark.asyncio
+async def test_ingest_corpus_batches_embeddings_and_preserves_order(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = "src/content/1/en/part1.md"
+    _write(tmp_path / source_path, "# State\n\nCourse content")
+    chunks = [
+        _prepared_chunk(source_path=source_path, chunk_index=index, content=f"chunk {index}")
+        for index in range(5)
+    ]
+    monkeypatch.setattr(ingestion_module, "prepare_chunks", lambda *args, **kwargs: chunks)
+    provider = RecordingBatchEmbeddingProvider()
+    service = CapturingService()
+
+    summary = await ingest_corpus(
+        IngestionConfig(repo_path=tmp_path, embedding_batch_size=2),
+        model_factory=lambda: provider,
+        session_factory=FakeSessionFactory,
+        service_factory=lambda *, session: service,
+    )
+
+    assert summary.embeddings_written == 5
+    assert provider.calls == [
+        ["chunk 0", "chunk 1"],
+        ["chunk 2", "chunk 3"],
+        ["chunk 4"],
+    ]
+    assert [record.embedding[0] for record in service.calls[0]["embeddings"]] == [
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+    ]
 
 
 @pytest.mark.asyncio
@@ -290,11 +328,46 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _prepared_chunk(
+    *,
+    source_path: str,
+    chunk_index: int,
+    content: str,
+) -> PreparedChunk:
+    return PreparedChunk(
+        chunk_id=uuid4(),
+        content=content,
+        chunk_index=chunk_index,
+        source_type="course_repo",
+        source_path=source_path,
+        heading_path=("State",),
+        section_heading="State",
+        chunk_type="prose",
+        char_start=chunk_index,
+        char_end=chunk_index + len(content),
+        content_hash=f"hash-{chunk_index}",
+        chunker_version="test",
+    )
+
+
 class FakeEmbeddingProvider:
     def embed_documents(self, texts, *, model_name, embedding_dimensions):
         assert model_name == DEFAULT_RAG_MODEL_NAME
         assert embedding_dimensions == EMBEDDING_DIMENSIONS
         return [[0.0] * EMBEDDING_DIMENSIONS for _ in texts]
+
+
+class RecordingBatchEmbeddingProvider:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def embed_documents(self, texts, *, model_name, embedding_dimensions):
+        assert model_name == DEFAULT_RAG_MODEL_NAME
+        assert embedding_dimensions == EMBEDDING_DIMENSIONS
+        self.calls.append(list(texts))
+        return [
+            [float(text.rsplit(" ", 1)[1]), *([0.0] * (EMBEDDING_DIMENSIONS - 1))] for text in texts
+        ]
 
 
 class FakeSessionFactory:

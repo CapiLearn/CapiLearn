@@ -55,6 +55,19 @@ class SimilarChunk:
     similarity: float
 
 
+def embedding_contract_filter(
+    *,
+    embedding_provider: str,
+    embedding_model: str,
+    embedding_dimensions: int,
+):
+    return (
+        RagEmbedding.embedding_provider == embedding_provider,
+        RagEmbedding.embedding_model == embedding_model,
+        RagEmbedding.embedding_dimensions == embedding_dimensions,
+    )
+
+
 class RagRepository:
     async def upsert_document(
         self,
@@ -249,9 +262,11 @@ class RagRepository:
             .join(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
             .join(RagDocument, RagDocument.id == RagChunk.document_id)
             .where(
-                RagEmbedding.embedding_provider == embedding_provider,
-                RagEmbedding.embedding_model == embedding_model,
-                RagEmbedding.embedding_dimensions == embedding_dimensions,
+                *embedding_contract_filter(
+                    embedding_provider=embedding_provider,
+                    embedding_model=embedding_model,
+                    embedding_dimensions=embedding_dimensions,
+                ),
                 RagDocument.is_active.is_(True),
             )
             .order_by(distance)

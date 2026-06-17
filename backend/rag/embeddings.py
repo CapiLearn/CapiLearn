@@ -72,6 +72,12 @@ class OpenAIEmbeddingProvider:
             raise ValueError(
                 "Embedding provider returned a different number of vectors than texts."
             )
+        for vector in vectors:
+            if len(vector) != embedding_dimensions:
+                raise ValueError(
+                    "Embedding provider returned a vector with "
+                    f"{len(vector)} dimensions; expected {embedding_dimensions}."
+                )
         return vectors
 
 

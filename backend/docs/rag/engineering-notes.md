@@ -79,12 +79,9 @@ ordering issues may only appear in real Markdown.
   ingestion.
 - `RAG_BACKEND` is selected at application startup; changing it requires a
   backend restart.
-- Keep Chroma metadata scalar-compatible and retain the Chroma path as the
-  current rollback option.
+- Runtime RAG is pgvector-only; rollback should deploy an earlier application
+  version rather than switching this branch to a local vector backend.
 - Retrieval health and downstream LLM health are separate. Successful
   ingestion and retrieval can be verified through table counts and RAG events
   even if generation later fails for provider credentials or billing.
-- The SentenceTransformer API currently emits a deprecation warning for
-  `get_sentence_embedding_dimension()`; migrate to `get_embedding_dimension()`
-  in a separately scoped maintenance change.
 
