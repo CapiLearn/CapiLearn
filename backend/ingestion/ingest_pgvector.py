@@ -3,13 +3,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import SessionFactory
@@ -23,8 +22,13 @@ from backend.rag.chunking import (
     SourceDocument,
     prepare_chunks,
 )
-from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME, validate_pgvector_model_name
-from backend.rag.models import EMBEDDING_DIMENSIONS
+from backend.rag.defaults import (
+    DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+    DEFAULT_RAG_EMBEDDING_PROVIDER,
+    DEFAULT_RAG_MODEL_NAME,
+    validate_pgvector_embedding_contract,
+)
+from backend.rag.embeddings import QueryEmbeddingProvider, get_embedding_provider
 from backend.rag.repository import ChunkRecord, EmbeddingRecord
 from backend.rag.service import RagService
 
@@ -40,15 +44,13 @@ RagServiceFactory = Callable[..., RagService]
 
 
 class EmbeddingModel(Protocol):
-    def get_sentence_embedding_dimension(self) -> int | None: ...
-
-    def encode(
+    def embed_documents(
         self,
-        sentences: Sequence[str],
+        texts: list[str],
         *,
-        batch_size: int,
-        show_progress_bar: bool,
-    ) -> Any: ...
+        model_name: str,
+        embedding_dimensions: int,
+    ) -> list[list[float]]: ...
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,9 @@ class IngestionConfig:
     repo_path: Path = DEFAULT_REPO_PATH
     source_type: str = "course_repo"
     course_name: str = "Full Stack Open"
+    embedding_provider: str = DEFAULT_RAG_EMBEDDING_PROVIDER
     model_name: str = DEFAULT_MODEL_NAME
+    embedding_dimensions: int = DEFAULT_RAG_EMBEDDING_DIMENSIONS
     chunk_size: int = DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
     min_chunk_chars: int = DEFAULT_MIN_CHUNK_CHARS
@@ -172,11 +176,16 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
 async def ingest_corpus(
     config: IngestionConfig,
     *,
-    model_factory: Callable[[str], EmbeddingModel] = SentenceTransformer,
+    embedding_provider_factory: Callable[[], QueryEmbeddingProvider] = get_embedding_provider,
+    model_factory: Callable[[], EmbeddingModel] | None = None,
     session_factory: SessionFactoryCallable = SessionFactory,
     service_factory: RagServiceFactory = RagService,
 ) -> IngestionSummary:
-    validate_pgvector_model_name(config.model_name)
+    validate_pgvector_embedding_contract(
+        embedding_provider=config.embedding_provider,
+        model_name=config.model_name,
+        embedding_dimensions=config.embedding_dimensions,
+    )
     prepared, summary = prepare_corpus(config)
     _log_preprocessing_summary(summary)
 
@@ -195,27 +204,21 @@ async def ingest_corpus(
 
     vectors: list[Any] = []
     if prepared:
-        model = model_factory(config.model_name)
-        dimensions = model.get_sentence_embedding_dimension()
-        if dimensions != EMBEDDING_DIMENSIONS:
-            raise ValueError(
-                f"Embedding model must produce {EMBEDDING_DIMENSIONS} dimensions; "
-                f"{config.model_name} reports {dimensions}."
-            )
-
+        provider = model_factory() if model_factory is not None else embedding_provider_factory()
         all_chunks = [chunk for document in prepared for chunk in document.chunks]
         logger.info(
-            "Generating embeddings: model=%s chunks=%d batch_size=%d",
+            "Generating embeddings: provider=%s model=%s dimensions=%d chunks=%d batch_size=%d",
+            config.embedding_provider,
             config.model_name,
+            config.embedding_dimensions,
             len(all_chunks),
             config.embedding_batch_size,
         )
-        encoded = model.encode(
-            [chunk.content for chunk in all_chunks],
-            batch_size=config.embedding_batch_size,
-            show_progress_bar=True,
+        vectors = _embed_texts_in_batches(
+            provider=provider,
+            texts=[chunk.content for chunk in all_chunks],
+            config=config,
         )
-        vectors = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
         if len(vectors) != len(all_chunks):
             raise ValueError("Embedding model returned a different number of vectors than chunks.")
 
@@ -246,7 +249,9 @@ async def ingest_corpus(
                     EmbeddingRecord(
                         chunk_id=chunk.id,
                         embedding=vector,
+                        embedding_provider=config.embedding_provider,
                         embedding_model=config.model_name,
+                        embedding_dimensions=config.embedding_dimensions,
                     )
                     for chunk, vector in zip(chunks, document_vectors, strict=True)
                 ]
@@ -324,6 +329,25 @@ def _can_reconcile(config: IngestionConfig, summary: IngestionSummary) -> bool:
         and summary.preprocessing_failures == 0
         and summary.database_failures == 0
     )
+
+
+def _embed_texts_in_batches(
+    *,
+    provider: EmbeddingModel,
+    texts: list[str],
+    config: IngestionConfig,
+) -> list[list[float]]:
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), config.embedding_batch_size):
+        batch = texts[start : start + config.embedding_batch_size]
+        vectors.extend(
+            provider.embed_documents(
+                batch,
+                model_name=config.model_name,
+                embedding_dimensions=config.embedding_dimensions,
+            )
+        )
+    return vectors
 
 
 def _log_preprocessing_summary(summary: IngestionSummary) -> None:

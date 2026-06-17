@@ -4,8 +4,8 @@
 
 The RAG layer converts course source files into structured, searchable chunks
 and supplies retained retrieval results to the existing chat generation flow.
-PostgreSQL with pgvector is the preferred runtime. Chroma remains available
-through `RAG_BACKEND=chroma` as an application rollback path.
+PostgreSQL with pgvector is the only supported runtime backend. Runtime
+embeddings are generated through the OpenAI embedding provider.
 
 The RAG layer owns source ingestion, chunk contracts, embeddings, retrieval,
 deduplication, and retrieval tracing. `LLMService` continues to own guardrails,
@@ -37,8 +37,8 @@ LLMService and chat generation
 ```
 
 Input guardrail evaluation and retrieval run concurrently. Query embedding runs
-in a worker thread because `sentence-transformers` is synchronous; pgvector
-queries use asynchronous SQLAlchemy sessions.
+through the OpenAI embedding provider; pgvector queries use asynchronous
+SQLAlchemy sessions.
 
 The June 10, 2026 verified active corpus contains 72 documents, 4,274 chunks,
 and 4,274 embeddings. All active chunks use `markdown-structure-v3`.
@@ -55,7 +55,7 @@ atomically:
 1. Upsert and reactivate the document.
 2. Delete its previous chunks, which cascades to embeddings.
 3. Insert the new typed chunks.
-4. Insert one embedding per chunk and model.
+4. Insert one embedding per chunk and embedding contract.
 5. Commit the document replacement as one transaction.
 
 An individual document failure rolls back that replacement. The corpus is not
@@ -104,10 +104,10 @@ into the original source.
 
 ## Persistence and Migrations
 
-Migration `20260610_0011` adds nullable chunk-contract columns and unique
-constraints on `(document_id, chunk_index)` and
-`(chunk_id, embedding_model)`. The columns are nullable so existing rows remain
-readable during rollout; fresh re-ingestion is required to populate them.
+Migration `20260610_0011` adds nullable chunk-contract columns and a unique
+constraint on `(document_id, chunk_index)`. The columns are nullable so existing
+rows remain readable during rollout; fresh re-ingestion is required to populate
+them.
 
 Migration `20260610_0012` adds:
 
@@ -120,8 +120,11 @@ populates `markdown-structure-v3` metadata. Deployment preflight must check for
 duplicates before applying `0011`; see `runbook.md`.
 
 `rag_embeddings.embedding` remains `vector(384)` with an HNSW cosine index.
-Chroma metadata is flattened to scalar values so the retained Chroma builder
-can persist the same contract.
+Embedding identity is the full contract:
+
+- `embedding_provider`
+- `embedding_model`
+- `embedding_dimensions`
 
 ## Soft Deletion
 
@@ -145,11 +148,11 @@ failed ingestions cannot reconcile stale sources.
 ## Runtime Retrieval
 
 `PgvectorRagRetrievalProvider` embeds the query, then delegates to
-`RagService`. The repository filters by embedding model and
-`rag_documents.is_active IS TRUE` directly in the nearest-neighbor SQL query,
-so inactive sources never enter the pgvector candidate set.
+`RagService`. The repository filters by embedding provider, model, dimensions,
+and `rag_documents.is_active IS TRUE` directly in the nearest-neighbor SQL
+query, so inactive sources never enter the pgvector candidate set.
 
-Both pgvector and Chroma retrieve up to:
+Pgvector retrieves up to:
 
 ```text
 min(RAG_TOP_K * RAG_CANDIDATE_POOL_MULTIPLIER, RAG_MAX_CANDIDATES)
@@ -188,23 +191,6 @@ source path | heading > breadcrumb | useful chunk type
 
 Plain prose and unknown type labels are omitted. Missing metadata degrades to a
 numbered context block without failing prompt construction.
-
-## Chroma Rollback Compatibility
-
-Chroma remains selectable with:
-
-```dotenv
-RAG_BACKEND=chroma
-```
-
-The legacy JSON wrapper now uses the typed chunker, and the Chroma builder
-flattens heading paths and Phase 2 metadata into scalar-compatible values.
-Both runtime providers apply the same bounded oversampling and deduplication
-policy.
-
-Application rollback to Chroma or a previous backend version must occur before
-any schema downgrade. The PostgreSQL schema and inactive rows can remain in
-place during application rollback.
 
 ## Deferred Work
 

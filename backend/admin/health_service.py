@@ -18,6 +18,7 @@ from backend.llm.config import (
 )
 from backend.rag.config import RagBackend, RagSettings, rag_settings
 from backend.rag.models import RagChunk, RagDocument, RagEmbedding, RagRetrievalLog
+from backend.rag.repository import embedding_contract_filter
 
 PROVIDER_METADATA_CACHE_TTL_SECONDS = 300
 ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
@@ -409,7 +410,11 @@ class AdminHealthService:
     async def _count_configured_model_embeddings(self) -> int:
         value = await self._session.scalar(
             select(func.count(RagEmbedding.id)).where(
-                RagEmbedding.embedding_model == self._rag_config.model_name
+                *embedding_contract_filter(
+                    embedding_provider=self._rag_config.embedding_provider,
+                    embedding_model=self._rag_config.model_name,
+                    embedding_dimensions=self._rag_config.embedding_dimensions,
+                )
             )
         )
         return int(value or 0)
@@ -421,7 +426,11 @@ class AdminHealthService:
                 RagEmbedding,
                 and_(
                     RagEmbedding.chunk_id == RagChunk.id,
-                    RagEmbedding.embedding_model == self._rag_config.model_name,
+                    *embedding_contract_filter(
+                        embedding_provider=self._rag_config.embedding_provider,
+                        embedding_model=self._rag_config.model_name,
+                        embedding_dimensions=self._rag_config.embedding_dimensions,
+                    ),
                 ),
             )
             .where(RagEmbedding.id.is_(None))
