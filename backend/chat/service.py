@@ -22,7 +22,9 @@ from backend.chat.schemas import (
 )
 from backend.core.exceptions import ApiError
 from backend.core.observability import (
+    LLMTraceOperation,
     LLMTraceSink,
+    NoopLLMTraceSink,
     elapsed_ms,
     get_request_id,
     log_event,
@@ -57,7 +59,7 @@ class ChatService:
         self._current_user = current_user
         self._llm_service = llm_service
         self._repository = repository or ChatRepository()
-        self._trace_sink = trace_sink or LLMTraceSink()
+        self._trace_sink = trace_sink or NoopLLMTraceSink()
 
     async def list_conversations(self) -> ConversationListResponse:
         conversations = await self._repository.list_conversations(
@@ -160,7 +162,7 @@ class ChatService:
             assistant_message=assistant_message,
             request_id=request_id,
         )
-        await self._trace_sink.start_chat_turn(event_fields)
+        await self._trace_sink.record(LLMTraceOperation.START_CHAT_TURN, event_fields)
         log_event(logger, "chat.turn.started", **event_fields)
 
         request = LLMRequest(
@@ -190,8 +192,8 @@ class ChatService:
                 "latency_ms": latency_ms,
                 "error_type": type(original_exc).__name__,
             }
-            await self._trace_sink.record_error(failed_fields)
-            await self._trace_sink.finish_chat_turn(failed_fields)
+            await self._trace_sink.record(LLMTraceOperation.RECORD_ERROR, failed_fields)
+            await self._trace_sink.record(LLMTraceOperation.FINISH_CHAT_TURN, failed_fields)
             log_event(logger, "chat.turn.failed", level=logging.ERROR, **failed_fields)
             raise ApiError(
                 code="llm_unavailable",
@@ -212,7 +214,7 @@ class ChatService:
                 "input_blocked": result.input_guardrail_result.blocked,
                 "output_blocked": result.output_guardrail_result.blocked,
             }
-            await self._trace_sink.finish_chat_turn(blocked_fields)
+            await self._trace_sink.record(LLMTraceOperation.FINISH_CHAT_TURN, blocked_fields)
             log_event(logger, "chat.turn.blocked", **blocked_fields)
         else:
             await self._save_user_retrieval(user_message, result)
@@ -223,7 +225,7 @@ class ChatService:
                 "status": MessageStatus.COMPLETED.value,
                 "latency_ms": latency_ms,
             }
-            await self._trace_sink.finish_chat_turn(completed_fields)
+            await self._trace_sink.record(LLMTraceOperation.FINISH_CHAT_TURN, completed_fields)
             log_event(logger, "chat.turn.completed", **completed_fields)
 
         finish_reason = None

@@ -14,7 +14,11 @@ from backend.chat.schemas import (
 )
 from backend.chat.service import ChatService
 from backend.core.exceptions import ApiError
-from backend.core.observability import LLMTraceSink
+from backend.core.observability import (
+    BestEffortLLMTraceSink,
+    LLMTraceSink,
+    NoopLLMTraceSink,
+)
 from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
@@ -437,6 +441,25 @@ async def test_llm_service_error_persists_failed_cost_components() -> None:
 
 
 @pytest.mark.asyncio
+async def test_default_trace_sink_is_explicit_noop() -> None:
+    user = _current_user()
+    service = ChatService(
+        session=FakeSession(),
+        current_user=user,
+        llm_service=FakeLLMService(LLMResult(content="ok")),
+        repository=FakeChatRepository(user_id=user.id),
+    )
+
+    assert isinstance(service._trace_sink, NoopLLMTraceSink)
+
+
+@pytest.mark.asyncio
+async def test_incomplete_trace_sink_cannot_be_constructed() -> None:
+    with pytest.raises(TypeError):
+        IncompleteTraceSink()
+
+
+@pytest.mark.asyncio
 async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="backend.core.observability.tracing")
     user = _current_user()
@@ -452,7 +475,7 @@ async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> No
             )
         ),
         repository=repository,
-        trace_sink=FailingTraceSink(),
+        trace_sink=BestEffortLLMTraceSink(FailingTraceSink()),
     )
 
     response = await service.create_conversation_message("Explain cells.")
@@ -461,7 +484,7 @@ async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> No
     assert repository.messages[-1].status == MessageStatus.COMPLETED.value
     assert repository.messages[-1].content == "Cells are small units."
     assert session.commit_count == 2
-    assert _events(caplog.records, "llm.trace_sink.failed")
+    assert _events(caplog.records, "trace_sink.failed")
 
 
 @pytest.mark.asyncio
@@ -483,7 +506,7 @@ async def test_trace_sink_failure_does_not_block_blocked_message() -> None:
             )
         ),
         repository=repository,
-        trace_sink=FailingTraceSink(),
+        trace_sink=BestEffortLLMTraceSink(FailingTraceSink()),
     )
 
     response = await service.create_conversation_message("unsafe")
@@ -504,7 +527,7 @@ async def test_trace_sink_failure_preserves_llm_unavailable_error() -> None:
         current_user=user,
         llm_service=FailingLLMService(),
         repository=repository,
-        trace_sink=FailingTraceSink(),
+        trace_sink=BestEffortLLMTraceSink(FailingTraceSink()),
     )
 
     with pytest.raises(ApiError) as exc_info:
@@ -669,14 +692,12 @@ class FailingCostedLLMService:
         )
 
 
-class FailingTraceSink(LLMTraceSink):
-    async def _start_chat_turn(self, metadata):
-        raise RuntimeError("trace sink unavailable")
+class IncompleteTraceSink(LLMTraceSink):
+    pass
 
-    async def _record_error(self, metadata):
-        raise RuntimeError("trace sink unavailable")
 
-    async def _finish_chat_turn(self, metadata):
+class FailingTraceSink(NoopLLMTraceSink):
+    async def record(self, operation, metadata):
         raise RuntimeError("trace sink unavailable")
 
 

@@ -1,13 +1,14 @@
 import logging
 from typing import Any
 
-from backend.core.observability import LLMTraceSink, elapsed_ms, log_event
+from backend.core.observability import LLMTraceOperation, LLMTraceSink, elapsed_ms, log_event
 from backend.llm.schemas import GuardrailResult, LLMRequest, ProviderResponse
 from backend.rag.schemas import (
     RetrievalResult,
     build_rag_retrieval_log_record,
     retrieval_chunk_log_metadata,
 )
+from backend.rag.trace_contracts import RetrievalTraceSink
 
 
 class LLMEventRecorder:
@@ -15,10 +16,12 @@ class LLMEventRecorder:
         self,
         *,
         trace_sink: LLMTraceSink,
+        retrieval_trace_sink: RetrievalTraceSink,
         logger: logging.Logger,
         request: LLMRequest,
     ) -> None:
         self._trace_sink = trace_sink
+        self._retrieval_trace_sink = retrieval_trace_sink
         self._logger = logger
         self._request_fields = request_event_fields(request)
         self._query_text = request.content
@@ -36,7 +39,7 @@ class LLMEventRecorder:
             "guardrail_stage": stage,
             "latency_ms": elapsed_ms(started_at),
         }
-        await self._trace_sink.record_guardrail(fields)
+        await self._trace_sink.record(LLMTraceOperation.RECORD_GUARDRAIL, fields)
         log_event(self._logger, "guardrail.check.completed", **fields)
 
     async def record_guardrail_error(
@@ -52,7 +55,7 @@ class LLMEventRecorder:
             "latency_ms": elapsed_ms(started_at),
             "error_type": type(exc).__name__,
         }
-        await self._trace_sink.record_error(fields)
+        await self._trace_sink.record(LLMTraceOperation.RECORD_ERROR, fields)
         log_event(
             self._logger,
             "guardrail.check.failed",
@@ -74,16 +77,13 @@ class LLMEventRecorder:
             "chunk_count": len(result.chunks),
             "chunks": chunks,
         }
-        await self._trace_sink.record_retrieval(
-            {
-                **fields,
-                "rag_retrieval": build_rag_retrieval_log_record(
-                    query_text=self._query_text,
-                    result=result,
-                    conversation_id=self._request_fields["conversation_id"],
-                    user_message_id=self._request_fields["user_message_id"],
-                ),
-            }
+        await self._retrieval_trace_sink.record_retrieval(
+            build_rag_retrieval_log_record(
+                query_text=self._query_text,
+                result=result,
+                conversation_id=self._request_fields["conversation_id"],
+                user_message_id=self._request_fields["user_message_id"],
+            )
         )
         log_event(
             self._logger,
@@ -104,7 +104,7 @@ class LLMEventRecorder:
             "error_type": type(exc).__name__,
             "retriever_class": retriever_class,
         }
-        await self._trace_sink.record_error(fields)
+        await self._trace_sink.record(LLMTraceOperation.RECORD_ERROR, fields)
         log_event(
             self._logger,
             "rag.retrieve.failed",
@@ -126,7 +126,7 @@ class LLMEventRecorder:
             "latency_ms": elapsed_ms(started_at),
             "error_type": type(exc).__name__,
         }
-        await self._trace_sink.record_error(fields)
+        await self._trace_sink.record(LLMTraceOperation.RECORD_ERROR, fields)
         log_event(
             self._logger,
             "llm.generation.failed",
@@ -151,7 +151,7 @@ class LLMEventRecorder:
             "total_tokens": provider_response.total_tokens,
             "latency_ms": provider_response.latency_ms,
         }
-        await self._trace_sink.record_generation(fields)
+        await self._trace_sink.record(LLMTraceOperation.RECORD_GENERATION, fields)
         log_event(self._logger, "llm.generation.completed", **fields)
 
     async def record_repair_completed(
@@ -169,7 +169,7 @@ class LLMEventRecorder:
             "initial_rail": initial_result.rail,
             "final_rail": repair_result.rail,
         }
-        await self._trace_sink.record_repair(fields)
+        await self._trace_sink.record(LLMTraceOperation.RECORD_REPAIR, fields)
         log_event(self._logger, "chat.repair.completed", **fields)
 
 
