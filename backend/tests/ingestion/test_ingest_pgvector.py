@@ -5,7 +5,7 @@ import pytest
 
 import backend.ingestion.ingest_pgvector as ingestion_module
 from backend.ingestion.ingest_pgvector import IngestionConfig, ingest_corpus, prepare_corpus
-from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
+from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_PROVIDER, DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS
 
 
@@ -41,7 +41,7 @@ async def test_dry_run_does_not_load_model_or_open_database(tmp_path: Path) -> N
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, dry_run=True, reconcile_deletions=True),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
     )
 
@@ -55,7 +55,7 @@ async def test_dry_run_does_not_load_model_or_open_database(tmp_path: Path) -> N
 async def test_empty_scan_does_not_open_database_or_reconcile(tmp_path: Path) -> None:
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
     )
 
@@ -67,14 +67,14 @@ async def test_empty_scan_does_not_open_database_or_reconcile(tmp_path: Path) ->
 async def test_ingestion_rejects_unsupported_pgvector_model_before_loading_it(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="database schema stores 384-dimensional"):
+    with pytest.raises(ValueError, match="RAG_MODEL_NAME"):
         await ingest_corpus(
             IngestionConfig(
                 repo_path=tmp_path,
                 model_name=f"{DEFAULT_RAG_MODEL_NAME}-other",
                 dry_run=True,
             ),
-            model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+            model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         )
 
 
@@ -85,7 +85,7 @@ async def test_ingest_corpus_embeds_and_replaces_each_document(tmp_path: Path) -
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        model_factory=lambda: FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -104,6 +104,9 @@ async def test_ingest_corpus_embeds_and_replaces_each_document(tmp_path: Path) -
     assert call["chunks"][0].char_start == 0
     assert call["chunks"][0].char_end == len("# State\n\nCourse content")
     assert len(call["embeddings"][0].embedding) == EMBEDDING_DIMENSIONS
+    assert call["embeddings"][0].embedding_provider == DEFAULT_RAG_EMBEDDING_PROVIDER
+    assert call["embeddings"][0].embedding_model == DEFAULT_RAG_MODEL_NAME
+    assert call["embeddings"][0].embedding_dimensions == EMBEDDING_DIMENSIONS
 
 
 @pytest.mark.asyncio
@@ -115,7 +118,7 @@ async def test_reconciliation_is_opt_in_and_uses_seen_english_paths(tmp_path: Pa
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        model_factory=lambda: FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -150,7 +153,7 @@ async def test_reconciliation_does_not_run_without_opt_in(tmp_path: Path) -> Non
 
     await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        model_factory=lambda: FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -166,7 +169,7 @@ async def test_partial_database_failure_skips_reconciliation(tmp_path: Path) -> 
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        model_factory=lambda: FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -183,7 +186,7 @@ async def test_preprocessing_failure_skips_reconciliation(tmp_path: Path) -> Non
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: FakeEmbeddingModel(),
+        model_factory=lambda: FakeEmbeddingProvider(),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -200,7 +203,7 @@ async def test_empty_existing_source_is_targeted_for_deactivation(tmp_path: Path
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -221,7 +224,7 @@ async def test_zero_chunk_source_is_targeted_for_deactivation(
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -238,7 +241,7 @@ async def test_excluded_existing_source_is_targeted_for_deactivation(tmp_path: P
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -254,7 +257,7 @@ async def test_preprocessing_failure_is_not_targeted_for_deactivation(tmp_path: 
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path, reconcile_deletions=True),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         session_factory=lambda: (_ for _ in ()).throw(AssertionError("database opened")),
         service_factory=lambda *, session: service,
     )
@@ -273,7 +276,7 @@ async def test_ingestion_deactivates_unindexable_sources_without_loading_embeddi
 
     summary = await ingest_corpus(
         IngestionConfig(repo_path=tmp_path),
-        model_factory=lambda name: (_ for _ in ()).throw(AssertionError("model loaded")),
+        model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
         session_factory=FakeSessionFactory,
         service_factory=lambda *, session: service,
     )
@@ -287,12 +290,11 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-class FakeEmbeddingModel:
-    def get_sentence_embedding_dimension(self) -> int:
-        return EMBEDDING_DIMENSIONS
-
-    def encode(self, sentences, *, batch_size, show_progress_bar):
-        return [[0.0] * EMBEDDING_DIMENSIONS for _ in sentences]
+class FakeEmbeddingProvider:
+    def embed_documents(self, texts, *, model_name, embedding_dimensions):
+        assert model_name == DEFAULT_RAG_MODEL_NAME
+        assert embedding_dimensions == EMBEDDING_DIMENSIONS
+        return [[0.0] * EMBEDDING_DIMENSIONS for _ in texts]
 
 
 class FakeSessionFactory:

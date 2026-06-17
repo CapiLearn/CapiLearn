@@ -33,7 +33,7 @@ async def test_admin_health_reports_database_success() -> None:
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
         clock=lambda: datetime(2026, 6, 9, 12, tzinfo=UTC),
     )
 
@@ -57,7 +57,7 @@ async def test_admin_health_response_is_cached_for_short_ttl() -> None:
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
         clock=lambda: datetime(2026, 6, 9, 12, tzinfo=UTC),
     )
 
@@ -67,7 +67,7 @@ async def test_admin_health_response_is_cached_for_short_ttl() -> None:
 
     assert first_response.checked_at == second_response.checked_at
     assert second_response.checks[0].message == "Backend process is responding."
-    assert len(session.scalar_statements) == 1
+    assert len(session.scalar_statements) == 9
     assert provider.requested_providers == ["openai"]
 
 
@@ -94,7 +94,7 @@ async def test_admin_health_reports_database_failure() -> None:
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     response = await service.get_health()
@@ -127,7 +127,7 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
         ),
         rag_config=RagSettings(
             backend=RagBackend.PGVECTOR,
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_name=DEFAULT_RAG_MODEL_NAME,
             index_version="v1",
         ),
     )
@@ -226,7 +226,7 @@ async def test_guardrails_regex_or_off_is_ok_without_provider_metadata_call() ->
             output_guardrail_mode=OutputGuardrailMode.OFF,
             guardrails_judge_enabled=True,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_guardrails()
@@ -248,7 +248,7 @@ async def test_guardrails_policy_uses_provider_metadata_without_completion_call(
             guardrails_judge_enabled=True,
             guardrails_judge_model="openai/gpt-4o-mini",
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_guardrails()
@@ -267,7 +267,7 @@ async def test_llm_provider_metadata_empty_model_list_is_degraded() -> None:
         session=ScalarSession([]),
         provider_metadata_provider=StaticModelProvider([]),
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_llm_provider_metadata()
@@ -284,7 +284,7 @@ async def test_llm_provider_metadata_does_not_require_exact_configured_model() -
         session=ScalarSession([]),
         provider_metadata_provider=provider,
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_llm_provider_metadata()
@@ -305,7 +305,7 @@ async def test_llm_provider_metadata_failure_is_degraded() -> None:
         session=ScalarSession([]),
         provider_metadata_provider=FailingModelProvider(),
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_llm_provider_metadata()
@@ -336,7 +336,7 @@ async def test_provider_metadata_result_is_cached_within_request_for_same_provid
             guardrails_judge_enabled=True,
             guardrails_judge_model="openai/gpt-4o",
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     response = await service.get_health()
@@ -365,7 +365,7 @@ async def test_provider_metadata_checks_main_and_guardrail_judge_providers_separ
             guardrails_judge_enabled=True,
             guardrails_judge_model="gemini/gemini-1.5-flash",
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     response = await service.get_health()

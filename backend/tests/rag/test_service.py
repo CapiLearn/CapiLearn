@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 
+from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_PROVIDER, DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS
 from backend.rag.repository import ChunkRecord, EmbeddingRecord, SimilarChunk
 from backend.rag.service import RagService
@@ -19,7 +20,9 @@ async def test_insert_embeddings_rejects_wrong_dimension_without_writing() -> No
                 EmbeddingRecord(
                     chunk_id=uuid4(),
                     embedding=[0.1, 0.2],
-                    embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                    embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+                    embedding_model=DEFAULT_RAG_MODEL_NAME,
+                    embedding_dimensions=EMBEDDING_DIMENSIONS,
                 )
             ]
         )
@@ -37,7 +40,9 @@ async def test_insert_embeddings_writes_and_commits_valid_vectors() -> None:
         EmbeddingRecord(
             chunk_id=uuid4(),
             embedding=[0.0] * EMBEDDING_DIMENSIONS,
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+            embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+            embedding_model=DEFAULT_RAG_MODEL_NAME,
+            embedding_dimensions=EMBEDDING_DIMENSIONS,
         )
     ]
 
@@ -68,11 +73,14 @@ async def test_retrieve_returns_results_without_logging_side_effects() -> None:
 
     results = await service.retrieve(
         query_embedding=[0.0] * EMBEDDING_DIMENSIONS,
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+        embedding_model=DEFAULT_RAG_MODEL_NAME,
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
         top_k=4,
     )
 
     assert results == [result]
+    assert repository.search_embedding_provider == DEFAULT_RAG_EMBEDDING_PROVIDER
     assert repository.search_top_k == 4
     assert session.commit_count == 0
 
@@ -88,7 +96,9 @@ async def test_replace_document_index_writes_atomically() -> None:
         EmbeddingRecord(
             chunk_id=chunk_id,
             embedding=[0.0] * EMBEDDING_DIMENSIONS,
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+            embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+            embedding_model=DEFAULT_RAG_MODEL_NAME,
+            embedding_dimensions=EMBEDDING_DIMENSIONS,
         )
     ]
 
@@ -125,7 +135,9 @@ async def test_replace_document_index_rolls_back_on_failure() -> None:
                 EmbeddingRecord(
                     chunk_id=chunk_id,
                     embedding=[0.0] * EMBEDDING_DIMENSIONS,
-                    embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                    embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+                    embedding_model=DEFAULT_RAG_MODEL_NAME,
+                    embedding_dimensions=EMBEDDING_DIMENSIONS,
                 )
             ],
         )
@@ -155,12 +167,16 @@ async def test_replace_document_index_rejects_duplicate_chunk_indexes() -> None:
                 EmbeddingRecord(
                     chunk_id=first_id,
                     embedding=[0.0] * EMBEDDING_DIMENSIONS,
-                    embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                    embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+                    embedding_model=DEFAULT_RAG_MODEL_NAME,
+                    embedding_dimensions=EMBEDDING_DIMENSIONS,
                 ),
                 EmbeddingRecord(
                     chunk_id=second_id,
                     embedding=[0.0] * EMBEDDING_DIMENSIONS,
-                    embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                    embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+                    embedding_model=DEFAULT_RAG_MODEL_NAME,
+                    embedding_dimensions=EMBEDDING_DIMENSIONS,
                 ),
             ],
         )
@@ -266,7 +282,9 @@ class CapturingRepository:
         self.inserted_chunks = None
         self.deleted_document_id = None
         self.search_query_embedding = None
+        self.search_embedding_provider = None
         self.search_embedding_model = None
+        self.search_embedding_dimensions = None
         self.search_top_k = None
         self.deactivated_count = 0
         self.reconciliation = None
@@ -293,11 +311,15 @@ class CapturingRepository:
         session,
         *,
         query_embedding,
+        embedding_provider,
         embedding_model,
+        embedding_dimensions,
         top_k,
     ):
         self.search_query_embedding = query_embedding
+        self.search_embedding_provider = embedding_provider
         self.search_embedding_model = embedding_model
+        self.search_embedding_dimensions = embedding_dimensions
         self.search_top_k = top_k
         return self.results
 

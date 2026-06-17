@@ -36,7 +36,9 @@ class ChunkRecord:
 class EmbeddingRecord:
     chunk_id: UUID
     embedding: Sequence[float]
+    embedding_provider: str
     embedding_model: str
+    embedding_dimensions: int
 
 
 @dataclass(frozen=True)
@@ -204,7 +206,9 @@ class RagRepository:
             RagEmbedding(
                 chunk_id=record.chunk_id,
                 embedding=list(record.embedding),
+                embedding_provider=record.embedding_provider,
                 embedding_model=record.embedding_model,
+                embedding_dimensions=record.embedding_dimensions,
             )
             for record in embeddings
         ]
@@ -217,7 +221,9 @@ class RagRepository:
         session: AsyncSession,
         *,
         query_embedding: Sequence[float],
+        embedding_provider: str,
         embedding_model: str,
+        embedding_dimensions: int,
         top_k: int,
     ) -> list[SimilarChunk]:
         distance = RagEmbedding.embedding.cosine_distance(list(query_embedding)).label("distance")
@@ -243,7 +249,9 @@ class RagRepository:
             .join(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
             .join(RagDocument, RagDocument.id == RagChunk.document_id)
             .where(
+                RagEmbedding.embedding_provider == embedding_provider,
                 RagEmbedding.embedding_model == embedding_model,
+                RagEmbedding.embedding_dimensions == embedding_dimensions,
                 RagDocument.is_active.is_(True),
             )
             .order_by(distance)

@@ -80,7 +80,7 @@ class RagService:
         embeddings: Sequence[EmbeddingRecord],
     ) -> list[RagEmbedding]:
         for record in embeddings:
-            _validate_embedding(record.embedding)
+            _validate_embedding_record(record)
         rows = await self._repository.insert_embeddings(
             self._session,
             embeddings=embeddings,
@@ -176,17 +176,26 @@ class RagService:
         self,
         *,
         query_embedding: Sequence[float],
+        embedding_provider: str,
         embedding_model: str,
+        embedding_dimensions: int,
         top_k: int = 5,
     ) -> list[SimilarChunk]:
         _validate_embedding(query_embedding)
+        if embedding_dimensions != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"embedding_dimensions must be {EMBEDDING_DIMENSIONS}; "
+                f"received {embedding_dimensions}."
+            )
         if top_k < 1:
             raise ValueError("top_k must be at least 1")
 
         results = await self._repository.find_similar_chunks(
             self._session,
             query_embedding=query_embedding,
+            embedding_provider=embedding_provider,
             embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
             top_k=top_k,
         )
         return results
@@ -197,6 +206,15 @@ def _validate_embedding(embedding: Sequence[float]) -> None:
         raise ValueError(
             f"Embeddings must contain exactly {EMBEDDING_DIMENSIONS} dimensions; "
             f"received {len(embedding)}."
+        )
+
+
+def _validate_embedding_record(record: EmbeddingRecord) -> None:
+    _validate_embedding(record.embedding)
+    if record.embedding_dimensions != EMBEDDING_DIMENSIONS:
+        raise ValueError(
+            f"embedding_dimensions must be {EMBEDDING_DIMENSIONS}; "
+            f"received {record.embedding_dimensions}."
         )
 
 
@@ -220,4 +238,4 @@ def _validate_chunk_embeddings(
     if embedding_chunk_ids != chunk_ids:
         raise ValueError("Embedding chunk IDs must match the supplied chunk IDs.")
     for record in embeddings:
-        _validate_embedding(record.embedding)
+        _validate_embedding_record(record)

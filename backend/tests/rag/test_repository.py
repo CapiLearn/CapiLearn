@@ -3,8 +3,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_PROVIDER, DEFAULT_RAG_MODEL_NAME
 from backend.rag.models import EMBEDDING_DIMENSIONS, RagChunk, RagDocument, RagEmbedding
-from backend.rag.repository import ChunkRecord, RagRepository, SimilarChunk
+from backend.rag.repository import ChunkRecord, EmbeddingRecord, RagRepository, SimilarChunk
 
 
 def test_rag_embedding_uses_384_dimension_vector_and_cosine_index() -> None:
@@ -31,7 +32,32 @@ def test_rag_chunk_and_embedding_identity_constraints_are_unique() -> None:
     embedding_constraints = {constraint.name for constraint in RagEmbedding.__table__.constraints}
 
     assert "rag_chunks_document_id_chunk_index_key" in chunk_constraints
-    assert "rag_embeddings_chunk_id_embedding_model_key" in embedding_constraints
+    assert "rag_embeddings_chunk_id_embedding_contract_key" in embedding_constraints
+    assert "embedding_provider" in RagEmbedding.__table__.c
+    assert "embedding_dimensions" in RagEmbedding.__table__.c
+
+
+@pytest.mark.asyncio
+async def test_insert_embeddings_maps_full_contract_to_model() -> None:
+    session = InsertSession()
+    chunk_id = uuid4()
+    record = EmbeddingRecord(
+        chunk_id=chunk_id,
+        embedding=[0.0] * EMBEDDING_DIMENSIONS,
+        embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+        embedding_model=DEFAULT_RAG_MODEL_NAME,
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
+    )
+
+    rows = await RagRepository().insert_embeddings(
+        session,
+        embeddings=[record],
+    )
+
+    assert rows[0].chunk_id == chunk_id
+    assert rows[0].embedding_provider == DEFAULT_RAG_EMBEDDING_PROVIDER
+    assert rows[0].embedding_model == DEFAULT_RAG_MODEL_NAME
+    assert rows[0].embedding_dimensions == EMBEDDING_DIMENSIONS
 
 
 @pytest.mark.asyncio
@@ -214,7 +240,9 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
     results = await RagRepository().find_similar_chunks(
         session,
         query_embedding=[0.0] * EMBEDDING_DIMENSIONS,
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+        embedding_model=DEFAULT_RAG_MODEL_NAME,
+        embedding_dimensions=EMBEDDING_DIMENSIONS,
         top_k=3,
     )
 
@@ -225,7 +253,9 @@ async def test_find_similar_chunks_uses_cosine_distance_and_maps_source_data() -
         )
     )
     assert "rag_embeddings.embedding <=>" in sql
+    assert "rag_embeddings.embedding_provider" in sql
     assert "rag_embeddings.embedding_model" in sql
+    assert "rag_embeddings.embedding_dimensions" in sql
     assert "rag_documents.is_active IS true" in sql
     assert "LIMIT" in sql
     assert results == [
