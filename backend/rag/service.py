@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.rag.defaults import validate_pgvector_embedding_contract
 from backend.rag.models import EMBEDDING_DIMENSIONS, RagChunk, RagDocument, RagEmbedding
 from backend.rag.repository import (
     ChunkRecord,
@@ -211,11 +212,11 @@ def _validate_embedding(embedding: Sequence[float]) -> None:
 
 def _validate_embedding_record(record: EmbeddingRecord) -> None:
     _validate_embedding(record.embedding)
-    if record.embedding_dimensions != EMBEDDING_DIMENSIONS:
-        raise ValueError(
-            f"embedding_dimensions must be {EMBEDDING_DIMENSIONS}; "
-            f"received {record.embedding_dimensions}."
-        )
+    validate_pgvector_embedding_contract(
+        embedding_provider=record.embedding_provider,
+        model_name=record.embedding_model,
+        embedding_dimensions=record.embedding_dimensions,
+    )
 
 
 def _validate_chunk_embeddings(

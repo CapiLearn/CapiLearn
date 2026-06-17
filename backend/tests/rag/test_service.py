@@ -32,6 +32,52 @@ async def test_insert_embeddings_rejects_wrong_dimension_without_writing() -> No
 
 
 @pytest.mark.asyncio
+async def test_insert_embeddings_rejects_wrong_provider_without_writing() -> None:
+    session = FakeSession()
+    repository = CapturingRepository()
+    service = RagService(session=session, repository=repository)
+
+    with pytest.raises(ValueError, match="RAG_EMBEDDING_PROVIDER"):
+        await service.insert_embeddings(
+            embeddings=[
+                EmbeddingRecord(
+                    chunk_id=uuid4(),
+                    embedding=[0.0] * EMBEDDING_DIMENSIONS,
+                    embedding_provider="sentence-transformers",
+                    embedding_model=DEFAULT_RAG_MODEL_NAME,
+                    embedding_dimensions=EMBEDDING_DIMENSIONS,
+                )
+            ]
+        )
+
+    assert repository.inserted_embeddings is None
+    assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_insert_embeddings_rejects_wrong_model_without_writing() -> None:
+    session = FakeSession()
+    repository = CapturingRepository()
+    service = RagService(session=session, repository=repository)
+
+    with pytest.raises(ValueError, match="RAG_MODEL_NAME"):
+        await service.insert_embeddings(
+            embeddings=[
+                EmbeddingRecord(
+                    chunk_id=uuid4(),
+                    embedding=[0.0] * EMBEDDING_DIMENSIONS,
+                    embedding_provider=DEFAULT_RAG_EMBEDDING_PROVIDER,
+                    embedding_model="text-embedding-ada-002",
+                    embedding_dimensions=EMBEDDING_DIMENSIONS,
+                )
+            ]
+        )
+
+    assert repository.inserted_embeddings is None
+    assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
 async def test_insert_embeddings_writes_and_commits_valid_vectors() -> None:
     session = FakeSession()
     repository = CapturingRepository()

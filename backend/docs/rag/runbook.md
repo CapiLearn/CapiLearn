@@ -82,10 +82,10 @@ uv run python -m backend.ingestion.ingest_pgvector --help
 
 ## Duplicate Preflight Before Migration 0011
 
-Migration `20260610_0011` adds unique constraints for chunk order and embedding
-model identity. Migration `20260609_0010` establishes document source
-identity. Run all three checks before upgrading a populated database. Each
-query must return zero rows.
+Migration `20260610_0011` adds unique constraints for chunk order and the full
+embedding contract identity. Migration `20260609_0010` establishes document
+source identity. Run all three checks before upgrading a populated database.
+Each query must return zero rows.
 
 ```sql
 SELECT source_type, source_path, COUNT(*) AS duplicate_count
@@ -102,9 +102,14 @@ HAVING COUNT(*) > 1;
 ```
 
 ```sql
-SELECT chunk_id, embedding_model, COUNT(*) AS duplicate_count
+SELECT
+    chunk_id,
+    embedding_provider,
+    embedding_model,
+    embedding_dimensions,
+    COUNT(*) AS duplicate_count
 FROM rag_embeddings
-GROUP BY chunk_id, embedding_model
+GROUP BY chunk_id, embedding_provider, embedding_model, embedding_dimensions
 HAVING COUNT(*) > 1;
 ```
 
@@ -356,6 +361,10 @@ reconciliation while diagnosing incomplete source discovery.
 The pgvector schema stores `vector(384)`. Both ingestion and retrieval must use
 the configured OpenAI embedding contract; unsupported pgvector embedding
 contracts fail configuration validation.
+
+Follow-up: introduce a first-class
+`EmbeddingContract(provider, model, dimensions)` value object to reduce loose
+primitive plumbing across validation, ingestion, and retrieval.
 
 ### Alembic Migration Issues
 

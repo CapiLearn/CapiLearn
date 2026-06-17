@@ -40,6 +40,7 @@ class OpenAIEmbeddingProvider:
         )
         if api_key is None and not os.getenv("OPENAI_API_KEY"):
             raise ValueError("OPENAI_API_KEY is required for OpenAI RAG embeddings.")
+        self._api_key = api_key
         self._embedding_dimensions = embedding_dimensions
         self._embedding_client = embedding_client
 
@@ -62,11 +63,14 @@ class OpenAIEmbeddingProvider:
             model_name=model_name,
             embedding_dimensions=embedding_dimensions,
         )
-        response = self._embedding_client(
-            model=model_name,
-            input=texts,
-            dimensions=embedding_dimensions,
-        )
+        kwargs = {
+            "model": model_name,
+            "input": texts,
+            "dimensions": embedding_dimensions,
+        }
+        if self._api_key is not None:
+            kwargs["api_key"] = self._api_key
+        response = self._embedding_client(**kwargs)
         vectors = [_embedding_to_vector(_embedding_value(item)) for item in response.data]
         if len(vectors) != len(texts):
             raise ValueError(

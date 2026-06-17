@@ -21,6 +21,7 @@ def test_openai_embedding_provider_embeds_query_with_configured_dimensions() -> 
             "model": DEFAULT_RAG_MODEL_NAME,
             "input": ["What is state?"],
             "dimensions": DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+            "api_key": "test-key",
         }
     ]
 
@@ -84,12 +85,13 @@ class FakeEmbeddingClient:
         self.vectors = vectors or [[0.0] * DEFAULT_RAG_EMBEDDING_DIMENSIONS]
         self.calls = []
 
-    def __call__(self, *, model, input, dimensions):
+    def __call__(self, *, model, input, dimensions, api_key=None):
         self.calls.append(
             {
                 "model": model,
                 "input": input,
                 "dimensions": dimensions,
+                "api_key": api_key,
             }
         )
         return SimpleNamespace(

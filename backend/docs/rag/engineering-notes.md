@@ -36,8 +36,8 @@ replacement, and SQL checks against the configured PostgreSQL database.
 - Distinguish intentional nullable values from persistence failures. For
   example, a null `section_heading` is valid only when `heading_path` is empty.
 - Keep database constraints for `(document_id, chunk_index)` and
-  `(chunk_id, embedding_model)` even when service validation catches duplicate
-  values earlier.
+  `(chunk_id, embedding_provider, embedding_model, embedding_dimensions)` even
+  when service validation catches duplicate values earlier.
 - Do not use destructive volume resets as a normal migration step. They are
   appropriate only for explicitly disposable local databases with unrecoverable
   stale migration state.
@@ -84,4 +84,7 @@ ordering issues may only appear in real Markdown.
 - Retrieval health and downstream LLM health are separate. Successful
   ingestion and retrieval can be verified through table counts and RAG events
   even if generation later fails for provider credentials or billing.
+- Future refactor: introduce a first-class
+  `EmbeddingContract(provider, model, dimensions)` value object to reduce loose
+  primitive plumbing across validation, ingestion, and retrieval.
 

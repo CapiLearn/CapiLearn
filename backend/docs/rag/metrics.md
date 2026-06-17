@@ -81,7 +81,8 @@ persistence.
 - Content hashes not 64 characters long: 0
 - Unique `(document_id, chunk_index)` pairs: 4,274
 - Unique chunk IDs: 4,274
-- Unique `(chunk_id, embedding_model)` pairs: 4,274
+- Unique `(chunk_id, embedding_provider, embedding_model, embedding_dimensions)`
+  identities: 4,274
 - Column-to-JSON metadata mismatches for hash, offsets, version, and type: 0
 - Distinct stored chunker versions after ingestion: one,
   `markdown-structure-v3`
