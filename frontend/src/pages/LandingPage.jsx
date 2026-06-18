@@ -20,10 +20,6 @@ function LandingPage() {
           backgroundRepeat: "no-repeat",
         }}
       >
-        <header className="capilearn-nav">
-          <button className="capilearn-login">Log in</button>
-        </header>
-
         <section className="capilearn-hero">
           <div className="capilearn-hero-inner">
             <h2 className="capilearn-headline">
