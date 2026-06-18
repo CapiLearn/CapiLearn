@@ -1,10 +1,11 @@
 /**
- * Shared base URL for local backend API calls.
+ * Shared base URL for backend API calls.
  *
- * The Vite frontend runs on localhost:5173 and the FastAPI backend runs on
- * 127.0.0.1:8001 during local development.
+ * Deployed Vite static builds should set VITE_API_BASE_URL to the backend
+ * service URL. Local development falls back to the local FastAPI backend.
  */
-export const API_BASE_URL = "http://127.0.0.1:8001";
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001";
 
 /**
  * Parses a fetch response and throws a readable error for failed API calls.

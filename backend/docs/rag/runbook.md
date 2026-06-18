@@ -28,6 +28,10 @@ package is used.
 
 ## Required Commands
 
+Ingestion commands in this runbook are manual RAG maintenance commands. They are
+not Render startup or build commands. Render backend startup should only start
+the API server, and the frontend build should only build the static site.
+
 Start PostgreSQL and check its health:
 
 ```bash
@@ -47,19 +51,19 @@ uv run alembic check
 
 The single current head after upgrade must be `20260613_0013`.
 
-Preview ingestion without loading the model or opening PostgreSQL:
+Preview ingestion manually without loading the model or opening PostgreSQL:
 
 ```bash
 uv run python -m backend.ingestion.ingest_pgvector --dry-run --fail-fast
 ```
 
-Run a fresh ingestion without stale-source reconciliation:
+Run a fresh manual ingestion without stale-source reconciliation:
 
 ```bash
 uv run python -m backend.ingestion.ingest_pgvector --fail-fast
 ```
 
-Run ingestion with intentional stale-source reconciliation:
+Run manual ingestion with intentional stale-source reconciliation:
 
 ```bash
 uv run python -m backend.ingestion.ingest_pgvector --fail-fast --reconcile-deletions
@@ -346,7 +350,8 @@ The initialization script runs `CREATE EXTENSION IF NOT EXISTS vector`.
 
 ### Empty or Stale RAG Tables
 
-Run a dry run, then a normal ingestion:
+For manual maintenance only, run a dry run, then a normal ingestion. Do not use
+these commands as Render startup or build commands:
 
 ```bash
 uv run python -m backend.ingestion.ingest_pgvector --dry-run --fail-fast
