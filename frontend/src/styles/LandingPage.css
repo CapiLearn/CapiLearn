@@ -261,33 +261,22 @@ button {
   box-shadow: 0 14px 28px rgba(43, 29, 21, 0.18);
 }
 
+.capilearn-actions {
+  flex-direction: column;
+}
+
 /* Smaller screens */
 
 @media (max-width: 800px) {
-  .capilearn-page {
-  min-height: 100vh;
-  padding: 0;
-  background:
-    linear-gradient(
-      rgba(246, 243, 228, 0.08),
-      rgba(246, 243, 228, 0.08)
-    ),
-    url("../assets/capilearn-landing-background.png");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-}
-
-
   .capilearn-slide-title {
     font-size: 34px;
     margin-bottom: 24px;
   }
 
   .capilearn-card {
-     width: 100%;
-     min-height: 100vh;
-     background: transparent;
+    width: 100%;
+    min-height: 100vh;
+    background: transparent;
   }
 
   .capilearn-links {
@@ -314,12 +303,9 @@ button {
     font-size: 17px;
   }
 
-  .capilearn-actions,
   .capilearn-feature-row {
-    flex-direction: column;
-  }
-
-  .capilearn-feature-row {
-    gap: 18px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 18px 28px;
   }
 }
