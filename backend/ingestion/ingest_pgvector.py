@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import SessionFactory
@@ -42,6 +43,30 @@ DEFAULT_REPO_PATH = Path(__file__).parent / "data" / "raw" / "fullstack-hy2020.g
 SessionFactoryCallable = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 RagServiceFactory = Callable[..., RagService]
 
+REQUIRED_RAG_STORAGE_COLUMNS = {
+    "rag_documents": {
+        "id",
+        "source_type",
+        "source_path",
+        "content_hash",
+        "is_active",
+    },
+    "rag_chunks": {
+        "id",
+        "document_id",
+        "chunk_index",
+        "content",
+    },
+    "rag_embeddings": {
+        "id",
+        "chunk_id",
+        "embedding",
+        "embedding_provider",
+        "embedding_model",
+        "embedding_dimensions",
+    },
+}
+
 
 class EmbeddingModel(Protocol):
     def embed_documents(
@@ -51,6 +76,18 @@ class EmbeddingModel(Protocol):
         model_name: str,
         embedding_dimensions: int,
     ) -> list[list[float]]: ...
+
+
+async def run_storage_preflight(session: AsyncSession, config: IngestionConfig) -> None:
+    """Fail before paid embedding work if pgvector storage is not ready."""
+    validate_pgvector_embedding_contract(
+        embedding_provider=config.embedding_provider,
+        model_name=config.model_name,
+        embedding_dimensions=config.embedding_dimensions,
+    )
+    await session.execute(text("SELECT 1"))
+    await _validate_required_storage_columns(session)
+    await _validate_pgvector_column(session, expected_dimensions=config.embedding_dimensions)
 
 
 @dataclass(frozen=True)
@@ -69,6 +106,9 @@ class IngestionConfig:
     dry_run: bool = False
     fail_fast: bool = False
     reconcile_deletions: bool = False
+
+
+StoragePreflight = Callable[[AsyncSession, IngestionConfig], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -180,6 +220,7 @@ async def ingest_corpus(
     model_factory: Callable[[], EmbeddingModel] | None = None,
     session_factory: SessionFactoryCallable = SessionFactory,
     service_factory: RagServiceFactory = RagService,
+    storage_preflight: StoragePreflight = run_storage_preflight,
 ) -> IngestionSummary:
     validate_pgvector_embedding_contract(
         embedding_provider=config.embedding_provider,
@@ -203,28 +244,34 @@ async def ingest_corpus(
         return summary
 
     vectors: list[Any] = []
-    if prepared:
-        provider = model_factory() if model_factory is not None else embedding_provider_factory()
-        all_chunks = [chunk for document in prepared for chunk in document.chunks]
-        logger.info(
-            "Generating embeddings: provider=%s model=%s dimensions=%d chunks=%d batch_size=%d",
-            config.embedding_provider,
-            config.model_name,
-            config.embedding_dimensions,
-            len(all_chunks),
-            config.embedding_batch_size,
-        )
-        vectors = _embed_texts_in_batches(
-            provider=provider,
-            texts=[chunk.content for chunk in all_chunks],
-            config=config,
-        )
-        if len(vectors) != len(all_chunks):
-            raise ValueError("Embedding model returned a different number of vectors than chunks.")
-
-    vector_offset = 0
     async with session_factory() as session:
         service = service_factory(session=session)
+        await storage_preflight(session, config)
+
+        if prepared:
+            provider = (
+                model_factory() if model_factory is not None else embedding_provider_factory()
+            )
+            all_chunks = [chunk for document in prepared for chunk in document.chunks]
+            logger.info(
+                "Generating embeddings: provider=%s model=%s dimensions=%d chunks=%d batch_size=%d",
+                config.embedding_provider,
+                config.model_name,
+                config.embedding_dimensions,
+                len(all_chunks),
+                config.embedding_batch_size,
+            )
+            vectors = _embed_texts_in_batches(
+                provider=provider,
+                texts=[chunk.content for chunk in all_chunks],
+                config=config,
+            )
+            if len(vectors) != len(all_chunks):
+                raise ValueError(
+                    "Embedding model returned a different number of vectors than chunks."
+                )
+
+        vector_offset = 0
         for document in prepared:
             document_vectors = vectors[vector_offset : vector_offset + len(document.chunks)]
             vector_offset += len(document.chunks)
@@ -329,6 +376,66 @@ def _can_reconcile(config: IngestionConfig, summary: IngestionSummary) -> bool:
         and summary.preprocessing_failures == 0
         and summary.database_failures == 0
     )
+
+
+async def _validate_required_storage_columns(session: AsyncSession) -> None:
+    table_names = tuple(REQUIRED_RAG_STORAGE_COLUMNS)
+    column_names = tuple(
+        sorted({column for columns in REQUIRED_RAG_STORAGE_COLUMNS.values() for column in columns})
+    )
+    result = await session.execute(
+        text(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+                AND table_name = ANY(:table_names)
+                AND column_name = ANY(:column_names)
+            """
+        ),
+        {"table_names": list(table_names), "column_names": list(column_names)},
+    )
+    present = {(row[0], row[1]) for row in result.all()}
+    missing = sorted(
+        f"{table}.{column}"
+        for table, columns in REQUIRED_RAG_STORAGE_COLUMNS.items()
+        for column in columns
+        if (table, column) not in present
+    )
+    if missing:
+        raise RuntimeError(
+            "RAG storage schema is missing required tables or columns: " + ", ".join(missing)
+        )
+
+
+async def _validate_pgvector_column(session: AsyncSession, *, expected_dimensions: int) -> None:
+    extension_result = await session.execute(
+        text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')")
+    )
+    if not extension_result.scalar_one():
+        raise RuntimeError("Postgres extension 'vector' is not installed.")
+
+    column_result = await session.execute(
+        text(
+            """
+            SELECT format_type(attribute.atttypid, attribute.atttypmod)
+            FROM pg_attribute attribute
+            JOIN pg_class relation ON relation.oid = attribute.attrelid
+            JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = current_schema()
+                AND relation.relname = 'rag_embeddings'
+                AND attribute.attname = 'embedding'
+                AND NOT attribute.attisdropped
+            """
+        )
+    )
+    column_type = column_result.scalar_one_or_none()
+    expected_type = f"vector({expected_dimensions})"
+    if column_type != expected_type:
+        raise RuntimeError(
+            "RAG embedding column has unexpected type: "
+            f"expected {expected_type}, found {column_type or 'missing'}."
+        )
 
 
 def _embed_texts_in_batches(

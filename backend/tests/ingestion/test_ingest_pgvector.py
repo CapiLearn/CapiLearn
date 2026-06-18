@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.sql.elements import TextClause
 
 import backend.ingestion.ingest_pgvector as ingestion_module
 from backend.ingestion.ingest_pgvector import IngestionConfig, ingest_corpus, prepare_corpus
@@ -76,6 +77,22 @@ async def test_ingestion_rejects_unsupported_pgvector_model_before_loading_it(
                 dry_run=True,
             ),
             model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
+        )
+
+
+@pytest.mark.asyncio
+async def test_storage_preflight_failure_prevents_embedding_generation(tmp_path: Path) -> None:
+    _write(tmp_path / "src/content/1/en/part1.md", "# State\n\nCourse content")
+
+    async def failing_preflight(*args, **kwargs) -> None:
+        raise RuntimeError("rag storage schema is not ready")
+
+    with pytest.raises(RuntimeError, match="storage schema"):
+        await ingest_corpus(
+            IngestionConfig(repo_path=tmp_path),
+            model_factory=lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
+            session_factory=FakeSessionFactory,
+            storage_preflight=failing_preflight,
         )
 
 
@@ -372,13 +389,51 @@ class RecordingBatchEmbeddingProvider:
 
 class FakeSessionFactory:
     def __init__(self) -> None:
-        self.session = object()
+        self.session = FakeStorageSession()
 
     async def __aenter__(self):
         return self.session
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:
         return None
+
+
+class FakeStorageSession:
+    async def execute(self, statement, parameters=None):
+        sql = _statement_text(statement)
+        if "information_schema.columns" in sql:
+            rows = [
+                (table, column)
+                for table, columns in ingestion_module.REQUIRED_RAG_STORAGE_COLUMNS.items()
+                for column in columns
+            ]
+            return FakeResult(rows=rows)
+        if "pg_extension" in sql:
+            return FakeResult(scalar=True)
+        if "format_type" in sql:
+            return FakeResult(scalar=f"vector({ingestion_module.DEFAULT_RAG_EMBEDDING_DIMENSIONS})")
+        return FakeResult(scalar=1)
+
+
+class FakeResult:
+    def __init__(self, *, rows=None, scalar=None) -> None:
+        self._rows = rows or []
+        self._scalar = scalar
+
+    def all(self):
+        return self._rows
+
+    def scalar_one(self):
+        return self._scalar
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+
+def _statement_text(statement) -> str:
+    if isinstance(statement, TextClause):
+        return statement.text
+    return str(statement)
 
 
 class CapturingService:
