@@ -266,7 +266,9 @@ async def test_usage_summary_rejects_non_admin_roles(role: UserRole) -> None:
 @pytest.mark.asyncio
 async def test_usage_summary_rejects_missing_local_user_without_provisioning() -> None:
     repository = FakeUserRepository()
-    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    session = FakeSession()
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_mode="clerk")
+    app.dependency_overrides[get_db] = _fake_db_override(session)
     app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
         ClerkAuthClaims(clerk_id="user_missing", claims={"sub": "user_missing"})
@@ -290,6 +292,7 @@ async def test_usage_summary_rejects_missing_local_user_without_provisioning() -
     }
     assert repository.calls == [("get_by_clerk_id", "user_missing")]
     assert repository.user is None
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
@@ -414,9 +417,13 @@ async def test_test_auth_mode_rejects_non_admin_role() -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "admin_required"
-    assert repository.calls == [("get_by_clerk_id", "user_test_student")]
-    assert repository.user is None
-    assert session.commits == 0
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_test_student"),
+        ("create", "user_test_student", UserRole.STUDENT),
+    ]
+    assert repository.user is not None
+    assert repository.user.role == UserRole.STUDENT.value
+    assert session.commits == 1
 
 
 @pytest.mark.asyncio
@@ -443,9 +450,13 @@ async def test_test_auth_mode_accepts_admin_role() -> None:
 
     assert response.status_code == 200
     assert response.json()["metrics"]["totalUsers"] == 18
-    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
-    assert repository.user is None
-    assert session.commits == 0
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_test_admin"),
+        ("create", "user_test_admin", UserRole.STUDENT),
+    ]
+    assert repository.user is not None
+    assert repository.user.role == UserRole.STUDENT.value
+    assert session.commits == 1
 
 
 @pytest.mark.asyncio

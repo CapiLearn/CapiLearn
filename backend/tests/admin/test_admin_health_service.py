@@ -48,7 +48,7 @@ async def test_admin_health_reports_database_success() -> None:
 @pytest.mark.asyncio
 async def test_admin_health_response_is_cached_for_short_ttl() -> None:
     cache = AdminHealthResponseCache(ttl_seconds=30)
-    session = ScalarSession([1])
+    session = ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None])
     provider = StaticModelProvider(["gpt-4o-mini"])
     service = AdminHealthService(
         session=session,
@@ -150,6 +150,33 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
     assert "rag_embeddings.embedding_dimensions" in configured_embeddings_sql
     assert "rag_embeddings.embedding_provider" in missing_configured_embeddings_sql
     assert "rag_embeddings.embedding_dimensions" in missing_configured_embeddings_sql
+
+
+@pytest.mark.asyncio
+async def test_pgvector_rag_none_count_scalar_is_unhealthy() -> None:
+    service = AdminHealthService(
+        session=ScalarSession([2, None]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
+        llm_config=LLMSettings(
+            model="openai/gpt-4o-mini",
+            guardrails_enabled=False,
+        ),
+        rag_config=RagSettings(
+            backend=RagBackend.PGVECTOR,
+            model_name=DEFAULT_RAG_MODEL_NAME,
+            index_version="v1",
+        ),
+    )
+
+    rag_check = await service._check_rag()
+
+    assert rag_check.status == HealthStatus.UNHEALTHY
+    assert rag_check.message == "RAG storage health check failed."
+    assert rag_check.details == {
+        "backend": RagBackend.PGVECTOR.value,
+        "modelName": DEFAULT_RAG_MODEL_NAME,
+        "indexVersion": "v1",
+    }
 
 
 @pytest.mark.asyncio

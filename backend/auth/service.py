@@ -119,19 +119,11 @@ class AuthTestModeService:
         session: AsyncSession,
         claims: ClerkAuthClaims,
     ) -> AuthPrincipal:
-        current_user = await self._auth_service.get_existing_current_user(
+        current_user = await self.get_or_create_current_user(
             session,
             claims,
         )
-        if current_user is None:
-            return AuthPrincipal(
-                clerk_id=claims.clerk_id,
-                email=claims.email,
-                display_name=claims.display_name,
-                role=self._role,
-            )
-
-        return current_user_to_principal(current_user, role=self._role)
+        return current_user_to_principal(current_user)
 
 
 def _reject_disabled_user(user: UserAccount) -> None:
@@ -147,11 +139,7 @@ def _current_user_from_model(user: UserAccount, *, claims: ClerkAuthClaims) -> C
     try:
         role = UserRole(user.role)
     except ValueError as exc:
-        raise ApiError(
-            code="forbidden",
-            message="This user account has an invalid role.",
-            status_code=status.HTTP_403_FORBIDDEN,
-        ) from exc
+        raise ValueError(f"Invalid persisted user role: {user.role!r}") from exc
     return CurrentUser(
         id=user.id,
         clerk_id=user.clerk_id,

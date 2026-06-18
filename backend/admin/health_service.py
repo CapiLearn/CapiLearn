@@ -397,7 +397,7 @@ class AdminHealthService:
 
     async def _count(self, column) -> int:
         value = await self._session.scalar(select(func.count(column)))
-        return int(value or 0)
+        return _count_value(value)
 
     async def _count_chunks_missing_embeddings(self) -> int:
         value = await self._session.scalar(
@@ -405,7 +405,7 @@ class AdminHealthService:
             .outerjoin(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
             .where(RagEmbedding.id.is_(None))
         )
-        return int(value or 0)
+        return _count_value(value)
 
     async def _count_configured_model_embeddings(self) -> int:
         value = await self._session.scalar(
@@ -417,7 +417,7 @@ class AdminHealthService:
                 )
             )
         )
-        return int(value or 0)
+        return _count_value(value)
 
     async def _count_chunks_missing_configured_model_embeddings(self) -> int:
         value = await self._session.scalar(
@@ -435,7 +435,7 @@ class AdminHealthService:
             )
             .where(RagEmbedding.id.is_(None))
         )
-        return int(value or 0)
+        return _count_value(value)
 
 
 def _provider_for_model(model: str) -> str:
@@ -443,6 +443,12 @@ def _provider_for_model(model: str) -> str:
     if not provider:
         raise ValueError("LiteLLM did not resolve a provider for the configured model.")
     return provider
+
+
+def _count_value(value: int | None) -> int:
+    if value is None:
+        raise ValueError("COUNT query returned no scalar value.")
+    return int(value)
 
 
 def _aggregate_status(checks: list[AdminHealthCheck]) -> HealthStatus:

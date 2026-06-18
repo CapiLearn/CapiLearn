@@ -166,6 +166,126 @@ async def test_create_message_uses_completed_history() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "sequence"),
+    [
+        (MessageRole.USER, 1),
+        (MessageRole.ASSISTANT, 2),
+    ],
+)
+async def test_create_message_rejects_completed_history_missing_content(
+    role: MessageRole,
+    sequence: int,
+) -> None:
+    service, session, _repository, llm_service, conversation = _service_with_existing_message(
+        sequence=sequence,
+        role=role,
+        status=MessageStatus.COMPLETED,
+        content=None,
+        llm_result=LLMResult(
+            content="Cells contain organelles.",
+            provider_response=ProviderResponse(content="Cells contain organelles."),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="missing required content"):
+        await service.create_message(conversation.id, "Tell me more.")
+
+    assert llm_service.requests == []
+    assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "status"),
+    [
+        (MessageRole.USER, MessageStatus.COMPLETED),
+        (MessageRole.ASSISTANT, MessageStatus.COMPLETED),
+        (MessageRole.ASSISTANT, MessageStatus.BLOCKED),
+    ],
+)
+async def test_list_messages_rejects_required_response_content_missing(
+    role: MessageRole,
+    status: MessageStatus,
+) -> None:
+    service, _session, _repository, _llm_service, conversation = _service_with_existing_message(
+        role=role,
+        status=status,
+        content=None,
+    )
+
+    with pytest.raises(ValueError, match="missing required content"):
+        await service.list_messages(conversation.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [MessageStatus.PENDING, MessageStatus.FAILED])
+async def test_list_messages_allows_empty_unfinished_assistant_content(
+    status: MessageStatus,
+) -> None:
+    service, _session, _repository, _llm_service, conversation = _service_with_existing_message(
+        role=MessageRole.ASSISTANT,
+        status=status,
+        content=None,
+    )
+
+    response = await service.list_messages(conversation.id)
+
+    assert response.messages[0].content == ""
+    assert response.messages[0].status == status
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_message_warns_when_provider_metadata_missing(
+    caplog,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="backend.chat.service")
+    service, _session, repository = _new_conversation_service(
+        LLMResult(content="ok", provider_response=None)
+    )
+
+    response = await service.create_conversation_message("Explain cells.")
+
+    assert response.assistant_message.status == MessageStatus.COMPLETED
+    assert response.assistant_message.content == "ok"
+    assert response.finish_reason is None
+    assert repository.messages[-1].finish_reason is None
+    assert repository.messages[-1].prompt_tokens is None
+    assert repository.messages[-1].completion_tokens is None
+    assert repository.messages[-1].total_tokens is None
+    assert repository.messages[-1].provider_response is None
+    warning_events = _events(caplog.records, "chat.turn.provider_response_missing")
+    assert len(warning_events) == 1
+    assert warning_events[0].status == MessageStatus.COMPLETED.value
+    assert warning_events[0].conversation_id == str(response.conversation.id)
+    assert warning_events[0].assistant_message_id == str(repository.messages[-1].id)
+
+
+@pytest.mark.asyncio
+async def test_blocked_message_warns_when_provider_metadata_missing(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="backend.chat.service")
+    service, _session, _repository = _new_conversation_service(
+        LLMResult(
+            content="Input blocked.",
+            input_guardrail_result=GuardrailResult(
+                blocked=True,
+                reason="Input blocked.",
+                rail="input",
+            ),
+            provider_response=None,
+        )
+    )
+
+    response = await service.create_conversation_message("unsafe")
+
+    assert response.assistant_message.status == MessageStatus.BLOCKED
+    assert response.blocked_reason == "Input blocked."
+    warning_events = _events(caplog.records, "chat.turn.provider_response_missing")
+    assert len(warning_events) == 1
+    assert warning_events[0].status == MessageStatus.BLOCKED.value
+
+
+@pytest.mark.asyncio
 async def test_create_conversation_message_persists_llm_cost_components() -> None:
     user = _current_user()
     session = FakeSession()
@@ -277,49 +397,39 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
 
 
 @pytest.mark.asyncio
-async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
-    user = _current_user()
-    session = FakeSession()
-    conversation = _conversation(user_id=user.id)
-    repository = FakeChatRepository(
-        user_id=user.id,
-        conversations=[conversation],
-        messages=[
-            _message(
-                conversation=conversation,
-                user_id=user.id,
-                sequence=1,
-                role=MessageRole.USER,
-                status=MessageStatus.COMPLETED,
-                content="What is a cell?",
-                retrieved_context=[
-                    {
-                        "chunkId": "legacy_chunk",
-                        "sourceId": "doc_1",
-                        "sourceTitle": "Biology Notes",
-                    }
-                ],
-            ),
-        ],
-    )
-    llm_service = FakeLLMService(
-        LLMResult(
+@pytest.mark.parametrize(
+    "retrieved_context",
+    [
+        pytest.param(
+            [{"content": "Stored note", "metadata": "bad"}],
+            id="current-metadata-not-mapping",
+        ),
+        pytest.param(
+            [{"metadata": {"source": "Biology Notes"}}],
+            id="missing-content",
+        ),
+        pytest.param([42], id="scalar-item"),
+    ],
+)
+async def test_create_message_rejects_malformed_retrieved_context(
+    retrieved_context,
+) -> None:
+    service, session, _repository, llm_service, conversation = _service_with_existing_message(
+        role=MessageRole.USER,
+        status=MessageStatus.COMPLETED,
+        content="What is a cell?",
+        retrieved_context=retrieved_context,
+        llm_result=LLMResult(
             content="A cell is a basic unit of life.",
             provider_response=ProviderResponse(content="A cell is a basic unit of life."),
-        )
-    )
-    service = ChatService(
-        session=session,
-        current_user=user,
-        llm_service=llm_service,
-        repository=repository,
+        ),
     )
 
-    await service.create_message(conversation.id, "Tell me more.")
+    with pytest.raises(ValueError, match="retrieved context is malformed"):
+        await service.create_message(conversation.id, "Tell me more.")
 
-    assert llm_service.requests[0].history == [
-        ChatMessage(role=ChatRole.USER, content="What is a cell?"),
-    ]
+    assert llm_service.requests == []
+    assert session.commit_count == 0
 
 
 @pytest.mark.asyncio
@@ -701,6 +811,56 @@ class FailingTraceSink(NoopLLMTraceSink):
         raise RuntimeError("trace sink unavailable")
 
 
+def _new_conversation_service(llm_result: LLMResult):
+    user = _current_user()
+    session = FakeSession()
+    repository = FakeChatRepository(user_id=user.id)
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=FakeLLMService(llm_result),
+        repository=repository,
+    )
+    return service, session, repository
+
+
+def _service_with_existing_message(
+    *,
+    role: MessageRole,
+    status: MessageStatus,
+    content: str | None,
+    sequence: int = 1,
+    retrieved_context=None,
+    llm_result: LLMResult | None = None,
+):
+    user = _current_user()
+    session = FakeSession()
+    conversation = _conversation(user_id=user.id)
+    repository = FakeChatRepository(
+        user_id=user.id,
+        conversations=[conversation],
+        messages=[
+            _message(
+                conversation=conversation,
+                user_id=user.id,
+                sequence=sequence,
+                role=role,
+                status=status,
+                content=content,
+                retrieved_context=retrieved_context,
+            ),
+        ],
+    )
+    llm_service = FakeLLMService(llm_result or LLMResult(content="unused"))
+    service = ChatService(
+        session=session,
+        current_user=user,
+        llm_service=llm_service,
+        repository=repository,
+    )
+    return service, session, repository, llm_service, conversation
+
+
 def _events(records, event: str):
     return [record for record in records if getattr(record, "event", None) == event]
 
@@ -729,7 +889,7 @@ def _message(
     sequence: int,
     role: MessageRole,
     status: MessageStatus,
-    content: str,
+    content: str | None,
     retrieved_context: list[dict] | None = None,
 ) -> Message:
     return Message(

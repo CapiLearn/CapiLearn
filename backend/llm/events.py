@@ -108,9 +108,8 @@ class LLMEventRecorder:
         log_event(
             self._logger,
             "rag.retrieve.failed",
-            level=logging.ERROR,
+            level=logging.WARNING,
             **fields,
-            exc_info=exc,
         )
 
     async def record_generation_error(
