@@ -37,6 +37,13 @@ const recentEvents = [
   },
 ];
 
+function addUtcCalendarDay(dateString) {
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+
+  return date.toISOString().slice(0, 10);
+}
+
 function getDefaultDateRange() {
   const today = new Date();
   const fromDate = new Date();
@@ -123,7 +130,12 @@ function AdminDashboard() {
         setIsLoadingUsage(true);
         setUsageErrorMessage("");
 
-        const data = await getAdminUsageSummary(metricsDateRange);
+        const apiDateRange = {
+          fromDate: metricsDateRange.fromDate,
+          toDate: addUtcCalendarDay(metricsDateRange.toDate),
+        };
+
+        const data = await getAdminUsageSummary(apiDateRange);
 
         setUsageSummary(data);
       } catch (error) {
