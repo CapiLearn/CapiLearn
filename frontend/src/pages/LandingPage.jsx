@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import "../styles/LandingPage.css";
-import landingBackground from "../assets/capilearn-landing-background-v2.png";
+import landingBackground from "../assets/capilearn-landing-background-v2.webp";
 
 function LandingPage() {
   return (
