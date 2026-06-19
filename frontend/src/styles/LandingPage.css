@@ -21,10 +21,6 @@ button {
   font-family: inherit;
 }
 
-.capilearn-page {
-  min-height: 100vh;
-}
-
 .link-button {
   text-decoration: none;
   display: inline-flex;
@@ -36,18 +32,6 @@ button {
 .capilearn-page {
   min-height: 100vh;
   padding: 0;
-  background: #fbf8e8;
-}
-
-/* Presentation slide title */
-
-.capilearn-slide-title {
-  margin: 0 0 36px;
-  color: #050505;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 42px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
 }
 
 /* Landing page mockup card */
@@ -55,56 +39,13 @@ button {
 .capilearn-card {
   width: 100%;
   min-height: 100vh;
-  background: #fbf8e8;
-}
-
-/* Header */
-
-.capilearn-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.capilearn-brand-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  background: #557c38;
-  color: #fff7e3;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  font-size: 17px;
-  font-weight: 800;
-}
-
-.capilearn-brand-name {
-  font-size: 18px;
-  font-weight: 800;
-  color: #2b1d15;
-}
-
-.capilearn-links {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 42px;
-}
-
-.capilearn-links a {
-  color: #4e453c;
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
+  background: transparent;
 }
 
 /* Hero section */
 
 .capilearn-hero {
-  min-height: calc(100vh - 72px);
+  min-height: 100vh;
   padding: 80px 24px 90px;
 
   display: flex;
@@ -141,29 +82,6 @@ button {
   width: 100%;
   max-width: 920px;
   text-align: center;
-}
-
-.capilearn-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-
-  min-height: 42px;
-  padding: 0 22px;
-  margin-bottom: 48px;
-
-  border: 1px solid #d8cfb1;
-  border-radius: 999px;
-  background: rgba(255, 253, 238, 0.82);
-
-  color: #5f554b;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.capilearn-badge span:first-child {
-  color: #557c38;
-  font-size: 17px;
 }
 
 .capilearn-headline {
@@ -261,26 +179,13 @@ button {
   box-shadow: 0 14px 28px rgba(43, 29, 21, 0.18);
 }
 
-.capilearn-actions {
-  flex-direction: column;
-}
-
 /* Smaller screens */
 
 @media (max-width: 800px) {
-  .capilearn-slide-title {
-    font-size: 34px;
-    margin-bottom: 24px;
-  }
-
-  .capilearn-card {
+   .capilearn-card {
     width: 100%;
     min-height: 100vh;
     background: transparent;
-  }
-
-  .capilearn-links {
-    display: none;
   }
 
   .capilearn-hero {
