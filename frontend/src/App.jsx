@@ -1,11 +1,29 @@
-import { SignIn, SignUp } from "@clerk/react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { SignIn, SignUp, useAuth } from "@clerk/react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import LandingPage from "./pages/LandingPage";
 import LearningWorkspace from "./pages/LearningWorkspace";
 import StudentDashboard from "./pages/StudentDashboard";
 import InstructorDashboard from "./pages/InstructorDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+
+function ProtectedRoute({ children }) {
+  const { isLoaded, isSignedIn } = useAuth();
+
+  if (!isLoaded) {
+    return (
+      <main className="auth-page">
+        <p>Loading...</p>
+      </main>
+    );
+  }
+
+  if (!isSignedIn) {
+    return <Navigate to="/sign-in" replace />;
+  }
+
+  return children;
+}
 
 function App() {
   return (
@@ -75,10 +93,41 @@ function App() {
           }
         />
 
-        <Route path="/workspace" element={<LearningWorkspace />} />
-        <Route path="/student-dashboard" element={<StudentDashboard />} />
-        <Route path="/instructor-dashboard" element={<InstructorDashboard />} />
-        <Route path="/admin-dashboard" element={<AdminDashboard />} />
+        <Route
+          path="/workspace"
+          element={
+            <ProtectedRoute>
+              <LearningWorkspace />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/student-dashboard"
+          element={
+            <ProtectedRoute>
+              <StudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/instructor-dashboard"
+          element={
+            <ProtectedRoute>
+              <InstructorDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin-dashboard"
+          element={
+            <ProtectedRoute>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );
