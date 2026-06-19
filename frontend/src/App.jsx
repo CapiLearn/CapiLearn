@@ -1,12 +1,12 @@
 import { useAuth } from "@clerk/react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
-import LandingPage from "./pages/LandingPage";
 import LearningWorkspace from "./pages/LearningWorkspace";
 import StudentDashboard from "./pages/StudentDashboard";
 import InstructorDashboard from "./pages/InstructorDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import AuthPage from "./pages/AuthPage";
+import HomeEntryPage from "./pages/HomeEntryPage";
 
 function ProtectedRoute({ children }) {
   const { isLoaded, isSignedIn } = useAuth();
@@ -30,7 +30,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<LandingPage />} />
+        <Route path="/" element={<HomeEntryPage />} />
 
         <Route
           path="/sign-in/*"
