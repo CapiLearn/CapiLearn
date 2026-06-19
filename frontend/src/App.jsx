@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { SignIn, SignUp } from "@clerk/react";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import LandingPage from "./pages/LandingPage";
 import LearningWorkspace from "./pages/LearningWorkspace";
@@ -11,6 +12,17 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
+
+        <Route
+          path="/sign-in/*"
+          element={<SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" />}
+        />
+
+        <Route
+          path="/sign-up/*"
+          element={<SignUp routing="path" path="/sign-up" signInUrl="/sign-in" />}
+        />
+
         <Route path="/workspace" element={<LearningWorkspace />} />
         <Route path="/student-dashboard" element={<StudentDashboard />} />
         <Route path="/instructor-dashboard" element={<InstructorDashboard />} />
