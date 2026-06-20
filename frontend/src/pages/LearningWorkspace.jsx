@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
+import { useAuth } from "@clerk/react";
 
 import {
   createConversation,
@@ -185,13 +186,14 @@ function LearningWorkspace() {
   const [messageSearchTerm, setMessageSearchTerm] = useState("");
   const [conversationSearchTerm, setConversationSearchTerm] = useState("");
   const [currentDate, setCurrentDate] = useState(() => new Date());
+  const { getToken } = useAuth();
 
   useEffect(() => {
     async function loadConversations() {
       try {
         setIsLoadingConversations(true);
 
-        const data = await listConversations();
+        const data = await listConversations(getToken);
 
         setConversations(data.conversations || []);
       } catch (error) {
@@ -202,7 +204,7 @@ function LearningWorkspace() {
     }
 
     loadConversations();
-  }, []);
+  }, [getToken]);
 
   useEffect(() => {
     const timerId = setInterval(() => {
@@ -228,7 +230,7 @@ function LearningWorkspace() {
       setErrorMessage("");
 
       if (targetConversationId) {
-        const data = await createMessage(targetConversationId, trimmedMessage);
+        const data = await createMessage(targetConversationId, trimmedMessage, getToken);
 
         if (activeConversationIdRef.current === targetConversationId) {
           setChatMessages((currentMessages) => [
@@ -238,7 +240,7 @@ function LearningWorkspace() {
           ]);
         }
       } else {
-        const data = await createConversation(trimmedMessage);
+        const data = await createConversation(trimmedMessage, getToken);
         const newConversationId = data.conversation.id;
 
         if (activeConversationIdRef.current === null) {
@@ -281,7 +283,7 @@ function LearningWorkspace() {
     setMessageSearchTerm("");
 
     try {
-      const data = await listMessages(selectedConversationId);
+      const data = await listMessages(selectedConversationId, getToken);
 
       if (activeConversationIdRef.current !== selectedConversationId) {
         return;
