@@ -130,10 +130,11 @@ class AdminUsageRepository:
             LLMCostComponent.created_at < range_end,
         )
         estimated_cost_usd = await session.scalar(cost_statement)
-        total_tokens = await _get_total_pipeline_tokens(
-            session,
-            range_start=range_start,
-            range_end=range_end,
+        total_tokens = await session.scalar(
+            select(func.coalesce(func.sum(LLMCostComponent.total_tokens), 0)).where(
+                LLMCostComponent.created_at >= range_start,
+                LLMCostComponent.created_at < range_end,
+            )
         )
 
         return UsageMetricsAggregate(
@@ -143,7 +144,7 @@ class AdminUsageRepository:
             assistant_responses=int(row[2] or 0),
             failed_responses=int(row[3] or 0),
             blocked_responses=int(row[4] or 0),
-            total_tokens=total_tokens,
+            total_tokens=int(total_tokens or 0),
             estimated_cost_usd=Decimal(estimated_cost_usd or 0),
             average_latency_ms=row[5],
         )
@@ -177,7 +178,7 @@ class AdminUsageRepository:
         )
 
         rows = (await session.execute(statement)).all()
-        token_totals = await _list_daily_pipeline_tokens(
+        token_totals = await _list_daily_component_tokens(
             session,
             range_start=range_start,
             range_end=range_end,
@@ -343,30 +344,7 @@ class AdminUsageRepository:
         ]
 
 
-async def _get_total_pipeline_tokens(
-    session: AsyncSession,
-    *,
-    range_start: datetime,
-    range_end: datetime,
-) -> int:
-    component_tokens = await session.scalar(
-        select(func.coalesce(func.sum(LLMCostComponent.total_tokens), 0)).where(
-            LLMCostComponent.created_at >= range_start,
-            LLMCostComponent.created_at < range_end,
-        )
-    )
-    legacy_tokens = await session.scalar(
-        select(func.coalesce(func.sum(Message.total_tokens), 0)).where(
-            Message.role == MessageRole.ASSISTANT.value,
-            Message.created_at >= range_start,
-            Message.created_at < range_end,
-            ~_message_has_cost_components(),
-        )
-    )
-    return int(component_tokens or 0) + int(legacy_tokens or 0)
-
-
-async def _list_daily_pipeline_tokens(
+async def _list_daily_component_tokens(
     session: AsyncSession,
     *,
     range_start: datetime,
@@ -386,34 +364,10 @@ async def _list_daily_pipeline_tokens(
     )
     component_rows = (await session.execute(component_statement)).all()
 
-    legacy_date = _utc_date(Message.created_at)
-    legacy_statement = (
-        select(
-            legacy_date.label("usage_date"),
-            func.coalesce(func.sum(Message.total_tokens), 0),
-        )
-        .where(
-            Message.role == MessageRole.ASSISTANT.value,
-            Message.created_at >= range_start,
-            Message.created_at < range_end,
-            ~_message_has_cost_components(),
-        )
-        .group_by(legacy_date)
-    )
-    legacy_rows = (await session.execute(legacy_statement)).all()
-
     totals: dict[date, int] = {}
-    for row in [*component_rows, *legacy_rows]:
+    for row in component_rows:
         totals[row[0]] = totals.get(row[0], 0) + int(row[1] or 0)
     return totals
-
-
-def _message_has_cost_components():
-    return (
-        select(LLMCostComponent.id)
-        .where(LLMCostComponent.assistant_message_id == Message.id)
-        .exists()
-    )
 
 
 def _utc_date(column):

@@ -262,7 +262,7 @@ async def test_user_overview_repository_sorts_by_name_parts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_usage_metrics_uses_component_tokens_plus_legacy_fallback() -> None:
+async def test_usage_metrics_uses_component_tokens() -> None:
     session = SequencedSession(
         execute_results=[
             [
@@ -280,7 +280,6 @@ async def test_usage_metrics_uses_component_tokens_plus_legacy_fallback() -> Non
             3,
             Decimal("1.2"),
             12,
-            7,
         ],
     )
     repository = AdminUsageRepository()
@@ -297,14 +296,14 @@ async def test_usage_metrics_uses_component_tokens_plus_legacy_fallback() -> Non
     assert metrics.assistant_responses == 4
     assert metrics.failed_responses == 1
     assert metrics.blocked_responses == 2
-    assert metrics.total_tokens == 19
+    assert metrics.total_tokens == 12
     assert metrics.estimated_cost_usd == Decimal("1.2")
     assert metrics.average_latency_ms == Decimal("1830.2")
-    assert len(session.scalar_statements) == 4
+    assert len(session.scalar_statements) == 3
 
 
 @pytest.mark.asyncio
-async def test_daily_usage_uses_pipeline_tokens_and_zeroes_nulls() -> None:
+async def test_daily_usage_uses_component_tokens_and_zeroes_nulls() -> None:
     session = SequencedSession(
         execute_results=[
             [
@@ -315,10 +314,6 @@ async def test_daily_usage_uses_pipeline_tokens_and_zeroes_nulls() -> None:
                 (date(2026, 5, 1), 12),
                 (date(2026, 5, 3), 5),
                 (date(2026, 5, 4), None),
-            ],
-            [
-                (date(2026, 5, 1), 7),
-                (date(2026, 5, 2), None),
             ],
         ],
     )
@@ -335,7 +330,7 @@ async def test_daily_usage_uses_pipeline_tokens_and_zeroes_nulls() -> None:
             date=date(2026, 5, 1),
             user_queries=2,
             assistant_responses=1,
-            total_tokens=19,
+            total_tokens=12,
         ),
         DailyUsageAggregate(
             date=date(2026, 5, 2),
@@ -356,7 +351,7 @@ async def test_daily_usage_uses_pipeline_tokens_and_zeroes_nulls() -> None:
             total_tokens=0,
         ),
     ]
-    assert len(session.execute_statements) == 3
+    assert len(session.execute_statements) == 2
 
 
 class SyncExecuteSession:
