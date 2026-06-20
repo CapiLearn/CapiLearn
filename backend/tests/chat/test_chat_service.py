@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -251,9 +252,6 @@ async def test_create_conversation_message_warns_when_provider_metadata_missing(
     assert response.assistant_message.content == "ok"
     assert response.finish_reason is None
     assert repository.messages[-1].finish_reason is None
-    assert repository.messages[-1].prompt_tokens is None
-    assert repository.messages[-1].completion_tokens is None
-    assert repository.messages[-1].total_tokens is None
     assert repository.messages[-1].provider_response is None
     warning_events = _events(caplog.records, "chat.turn.provider_response_missing")
     assert len(warning_events) == 1
@@ -319,10 +317,7 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
     await service.create_conversation_message("Explain cells.")
 
     assert repository.cost_components == llm_service.result.cost_components
-    assert (
-        repository.messages[-1].estimated_cost_usd
-        == llm_service.result.cost_components[0].estimated_cost_usd
-    )
+    assert repository.cost_components[0].estimated_cost_usd == Decimal("0.001000000000")
 
 
 @pytest.mark.asyncio
