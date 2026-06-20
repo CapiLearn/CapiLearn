@@ -1,3 +1,4 @@
+import { getToken } from "@clerk/react";
 import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
 // Set to true while backend branch is unavailable.
@@ -5,11 +6,6 @@ import { API_BASE_URL, handleApiResponse } from "./apiClient";
 const USE_MOCK_API = false;
 const mockConversations = [];
 const mockMessagesByConversationId = {};
-
-const DEV_USER_HEADERS = {
-  "X-User-Id": "00000000-0000-0000-0000-000000000001",
-  "X-User-Email": "student@example.com",
-};
 
 function createMockId(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -117,32 +113,45 @@ async function mockListMessages(conversationId) {
   };
 }
 
-export async function listConversations() {
+async function authFetch(path, getToken, options = {}) {
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("Not authenticated.");
+  }
+
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+
+  return fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+  });
+}
+
+export async function listConversations(getToken) {
   if (USE_MOCK_API) {
     return {
       conversations: [...mockConversations],
     };
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/conversations`, {
-    method: "GET",
-    headers: {
-      ...DEV_USER_HEADERS,
-    },
+  const response = await authFetch("/api/conversations", getToken, {
+        method: "GET",
   });
 
   return handleApiResponse(response, "Unable to load conversations.");
 }
+
 export async function createConversation(content) {
   if (USE_MOCK_API) {
-    return mockCreateConversation(content);
+    return mockCreateConversation(content, getToken);
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+  const response = await authFetch("/api/conversations", getToken, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...DEV_USER_HEADERS,
     },
     body: JSON.stringify({
       content,
@@ -157,13 +166,11 @@ export async function listMessages(conversationId) {
     return mockListMessages(conversationId);
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/api/conversations/${conversationId}/messages`,
+  const response = await authFetch(
+    `/api/conversations/${conversationId}/messages`,
+    getToken,
     {
       method: "GET",
-      headers: {
-        ...DEV_USER_HEADERS,
-      },
     }
   );
 
@@ -175,13 +182,13 @@ export async function createMessage(conversationId, content) {
     return mockCreateMessage(conversationId, content);
   }
 
-  const response = await fetch(
-    `${API_BASE_URL}/api/conversations/${conversationId}/messages`,
+  const response = await authFetch(
+    `/api/conversations/${conversationId}/messages`,
+    getToken,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...DEV_USER_HEADERS,
       },
       body: JSON.stringify({
         content,
