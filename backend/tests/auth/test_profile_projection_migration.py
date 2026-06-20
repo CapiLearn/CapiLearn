@@ -2,7 +2,7 @@ from runpy import run_path
 
 import pytest
 
-MIGRATION = run_path("alembic/versions/20260615_0014_restore_user_profile_projection.py")
+MIGRATION = run_path("alembic/versions/20260617_0015_restore_user_profile_projection.py")
 
 
 def test_restore_profile_projection_migration_allows_empty_user_account() -> None:

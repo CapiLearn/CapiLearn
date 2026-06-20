@@ -1,8 +1,8 @@
 """Restore Clerk-owned user name projection fields.
 
-Revision ID: 20260615_0014
-Revises: 20260613_0013
-Create Date: 2026-06-15
+Revision ID: 20260617_0015
+Revises: 20260616_0014
+Create Date: 2026-06-17
 
 """
 
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20260615_0014"
-down_revision: str | None = "20260613_0013"
+revision: str = "20260617_0015"
+down_revision: str | None = "20260616_0014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
