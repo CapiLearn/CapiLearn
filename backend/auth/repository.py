@@ -4,7 +4,7 @@ from sqlalchemy import case, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.models import UserAccount
+from backend.auth.models import UserAccount, utc_now
 from backend.auth.schemas import UserRole
 
 
@@ -24,16 +24,14 @@ class UserAccountRepository:
         *,
         clerk_id: str,
         role: UserRole = UserRole.STUDENT,
-        display_name: str,
-        email: str | None = None,
-        profile_synced_at: datetime,
+        first_name: str,
+        last_name: str,
     ) -> UserAccount:
         user = UserAccount(
             clerk_id=clerk_id,
             role=role.value,
-            display_name=display_name,
-            email=email,
-            profile_synced_at=profile_synced_at,
+            first_name=first_name,
+            last_name=last_name,
         )
         session.add(user)
         await session.flush()
@@ -44,16 +42,14 @@ class UserAccountRepository:
         session: AsyncSession,
         *,
         user: UserAccount,
-        display_name: str,
-        email: str | None,
-        synced_at: datetime,
+        first_name: str,
+        last_name: str,
     ) -> bool:
-        if user.display_name == display_name and user.email == email:
+        if user.first_name == first_name and user.last_name == last_name:
             return False
 
-        user.display_name = display_name
-        user.email = email
-        user.profile_synced_at = synced_at
+        user.first_name = first_name
+        user.last_name = last_name
         await session.flush()
         return True
 
@@ -62,21 +58,20 @@ class UserAccountRepository:
         session: AsyncSession,
         *,
         clerk_id: str,
-        display_name: str,
-        email: str | None,
+        first_name: str,
+        last_name: str,
         clerk_profile_updated_at: datetime,
-        synced_at: datetime,
         default_role: UserRole = UserRole.STUDENT,
     ) -> UserAccount:
         # Webhooks own profile projection only; app-owned role and soft-delete state stay intact.
         statement = insert(UserAccount).values(
             clerk_id=clerk_id,
             role=default_role.value,
-            display_name=display_name,
-            email=email,
-            profile_synced_at=synced_at,
+            first_name=first_name,
+            last_name=last_name,
             clerk_profile_updated_at=clerk_profile_updated_at,
         )
+        updated_at = utc_now()
         incoming_profile_updated_at = statement.excluded.clerk_profile_updated_at
         applies_profile_update = or_(
             UserAccount.clerk_profile_updated_at.is_(None),
@@ -86,24 +81,20 @@ class UserAccountRepository:
             statement.on_conflict_do_update(
                 index_elements=[UserAccount.clerk_id],
                 set_={
-                    "display_name": case(
-                        (applies_profile_update, statement.excluded.display_name),
-                        else_=UserAccount.display_name,
+                    "first_name": case(
+                        (applies_profile_update, statement.excluded.first_name),
+                        else_=UserAccount.first_name,
                     ),
-                    "email": case(
-                        (applies_profile_update, statement.excluded.email),
-                        else_=UserAccount.email,
-                    ),
-                    "profile_synced_at": case(
-                        (applies_profile_update, statement.excluded.profile_synced_at),
-                        else_=UserAccount.profile_synced_at,
+                    "last_name": case(
+                        (applies_profile_update, statement.excluded.last_name),
+                        else_=UserAccount.last_name,
                     ),
                     "clerk_profile_updated_at": case(
                         (applies_profile_update, incoming_profile_updated_at),
                         else_=UserAccount.clerk_profile_updated_at,
                     ),
                     "updated_at": case(
-                        (applies_profile_update, synced_at),
+                        (applies_profile_update, updated_at),
                         else_=UserAccount.updated_at,
                     ),
                 },

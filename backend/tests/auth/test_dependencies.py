@@ -38,8 +38,6 @@ def test_claim_parser_preserves_subject_and_raw_payload() -> None:
     claims = _claims_from_verifier_payload(payload)
 
     assert claims.clerk_id == "user_not-a-uuid"
-    assert claims.email is None
-    assert claims.display_name is None
     assert claims.claims == payload
 
 
@@ -61,19 +59,15 @@ async def test_test_verifier_uses_clerk_profile_claim_parser() -> None:
         Settings(
             auth_mode="test",
             test_auth_clerk_id="user_test",
-            test_auth_email="dev@example.com",
             test_auth_first_name="Local",
             test_auth_last_name="Dev",
         )
     ).verify("test-token")
 
     assert claims.clerk_id == "user_test"
-    assert claims.email is None
-    assert claims.display_name is None
     assert claims.claims == {
         "sub": "user_test",
         "role": "student",
-        "email": "dev@example.com",
         "first_name": "Local",
         "last_name": "Dev",
     }
@@ -157,7 +151,6 @@ async def test_clerk_verifier_passes_normalized_bearer_request(monkeypatch) -> N
     claims = await verifier.verify("raw-token")
 
     assert claims.clerk_id == "user_123"
-    assert claims.display_name is None
     assert captured["bearer_auth"] == "sk_test_123"
     assert captured["headers"] == {"Authorization": "Bearer raw-token"}
     assert captured["options"].secret_key == "sk_test_123"
@@ -188,7 +181,6 @@ async def test_clerk_verifier_accepts_authenticated_subject_without_profile_clai
     claims = await verifier.verify("raw-token")
 
     assert claims.clerk_id == "user_123"
-    assert claims.display_name is None
     assert claims.claims == {"sub": "user_123"}
 
 

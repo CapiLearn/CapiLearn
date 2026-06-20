@@ -4,7 +4,6 @@ from typing import Any
 from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.models import utc_now
 from backend.auth.profile_projection import profile_from_clerk_user
 from backend.auth.repository import UserAccountRepository
 from backend.core.exceptions import ApiError
@@ -26,10 +25,9 @@ class ClerkWebhookService:
             await self._repository.upsert_from_clerk_profile(
                 session,
                 clerk_id=profile.clerk_id,
-                display_name=profile.display_name,
-                email=profile.email,
+                first_name=profile.first_name,
+                last_name=profile.last_name,
                 clerk_profile_updated_at=profile.clerk_profile_updated_at,
-                synced_at=utc_now(),
             )
             return
 

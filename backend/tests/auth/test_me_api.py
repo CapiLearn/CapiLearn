@@ -99,7 +99,6 @@ async def test_me_bootstraps_current_user_response() -> None:
     app.dependency_overrides[get_settings] = lambda: Settings(
         auth_mode="test",
         test_auth_clerk_id="user_test_mode",
-        test_auth_email="dev@example.com",
         test_auth_first_name="Local",
         test_auth_last_name="Dev",
         test_auth_role="admin",
@@ -121,7 +120,6 @@ async def test_me_bootstraps_current_user_response() -> None:
     assert payload == {
         "id": str(repository.user.id),
         "clerkId": "user_test_mode",
-        "email": "dev@example.com",
         "displayName": "Local Dev",
         "role": "admin",
     }

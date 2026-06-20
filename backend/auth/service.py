@@ -2,7 +2,7 @@ from fastapi import status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.models import UserAccount, utc_now
+from backend.auth.models import UserAccount
 from backend.auth.profile_projection import profile_from_clerk_payload
 from backend.auth.repository import UserAccountRepository
 from backend.auth.schemas import (
@@ -77,15 +77,13 @@ class AuthUserService:
         initial_role: UserRole,
     ) -> tuple[UserAccount, bool]:
         profile = profile_from_clerk_payload(claims.claims)
-        profile_synced_at = utc_now()
         try:
             user = await self._repository.create(
                 session,
                 clerk_id=claims.clerk_id,
                 role=initial_role,
-                display_name=profile.display_name,
-                email=profile.email,
-                profile_synced_at=profile_synced_at,
+                first_name=profile.first_name,
+                last_name=profile.last_name,
             )
             await session.commit()
         except IntegrityError:
@@ -115,9 +113,8 @@ class AuthUserService:
         profile_synced = await self._repository.update_profile_projection(
             session,
             user=user,
-            display_name=profile.display_name,
-            email=profile.email,
-            synced_at=utc_now(),
+            first_name=profile.first_name,
+            last_name=profile.last_name,
         )
         if profile_synced:
             await session.commit()
@@ -147,7 +144,6 @@ class AuthTestModeService:
         return CurrentUser(
             id=current_user.id,
             clerk_id=current_user.clerk_id,
-            email=current_user.email,
             display_name=current_user.display_name,
             role=self._role,
         )
@@ -167,7 +163,6 @@ class AuthTestModeService:
         return CurrentUser(
             id=current_user.id,
             clerk_id=current_user.clerk_id,
-            email=current_user.email,
             display_name=current_user.display_name,
             role=self._role,
         )
@@ -204,8 +199,7 @@ def _current_user_from_model(user: UserAccount) -> CurrentUser:
     return CurrentUser(
         id=user.id,
         clerk_id=user.clerk_id,
-        email=user.email,
-        display_name=user.display_name,
+        display_name=f"{user.first_name} {user.last_name}",
         role=role,
     )
 

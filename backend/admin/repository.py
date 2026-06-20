@@ -309,7 +309,8 @@ class AdminUsageRepository:
 
         statement = (
             select(
-                UserAccount.display_name,
+                UserAccount.first_name,
+                UserAccount.last_name,
                 UserAccount.role.label("access_level"),
                 activity.c.total_messages_sent,
                 activity.c.blocked_requests,
@@ -320,8 +321,8 @@ class AdminUsageRepository:
             .where(UserAccount.deleted_at.is_(None))
             .order_by(
                 activity.c.last_activity.desc().nulls_last(),
-                UserAccount.display_name.asc(),
-                UserAccount.email.asc().nulls_last(),
+                UserAccount.first_name.asc().nulls_last(),
+                UserAccount.last_name.asc().nulls_last(),
                 UserAccount.clerk_id.asc(),
                 UserAccount.id.asc(),
             )
@@ -332,7 +333,7 @@ class AdminUsageRepository:
         rows = (await session.execute(statement)).all()
         return [
             UserOverviewAggregate(
-                display_name=row.display_name,
+                display_name=f"{row.first_name} {row.last_name}",
                 access_level=row.access_level,
                 total_messages_sent=int(row.total_messages_sent or 0),
                 blocked_requests=int(row.blocked_requests or 0),

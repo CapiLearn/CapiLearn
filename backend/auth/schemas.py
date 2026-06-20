@@ -22,7 +22,6 @@ class UserRole(StrEnum):
 class CurrentUser(AuthBaseModel):
     id: UUID
     clerk_id: str
-    email: str | None = None
     display_name: str
     role: UserRole
 
@@ -35,15 +34,12 @@ class AuthPrincipal(AuthBaseModel):
 class CurrentUserResponse(AuthBaseModel):
     id: UUID
     clerk_id: str
-    email: str | None = None
     display_name: str
     role: UserRole
 
 
 class ClerkAuthClaims(BaseModel):
     clerk_id: str
-    email: str | None = None
-    display_name: str | None = None
     claims: dict
 
 

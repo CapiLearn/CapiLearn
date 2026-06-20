@@ -161,7 +161,6 @@ async def test_chat_routes_pass_current_user_to_chat_service(monkeypatch) -> Non
         id=user_id,
         clerk_id="user_chat_existing",
         display_name="Stored User",
-        email="stored@example.com",
         role=UserRole.STUDENT,
     )
     session = FakeSession()

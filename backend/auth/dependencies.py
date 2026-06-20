@@ -86,8 +86,6 @@ class TestRequestVerifier:
             "sub": self._settings.test_auth_clerk_id,
             "role": self._settings.test_auth_role,
         }
-        if self._settings.test_auth_email is not None:
-            payload["email"] = self._settings.test_auth_email
         if self._settings.test_auth_first_name is not None:
             payload["first_name"] = self._settings.test_auth_first_name
         if self._settings.test_auth_last_name is not None:

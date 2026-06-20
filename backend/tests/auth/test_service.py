@@ -7,27 +7,23 @@ from fastapi import status
 from sqlalchemy.exc import IntegrityError
 
 from backend.auth.models import UserAccount
-from backend.auth.schemas import (
-    ClerkAuthClaims,
-    UserRole,
-)
+from backend.auth.schemas import ClerkAuthClaims, UserRole
 from backend.auth.service import AuthTestModeService, AuthUserService
 from backend.core.exceptions import ApiError
 from backend.tests.fakes import FakeUserRepository
 
 
 @pytest.mark.asyncio
-async def test_missing_local_user_creates_student_user() -> None:
+async def test_missing_local_user_creates_student_user_from_complete_claims() -> None:
     session = FakeSession()
     repository = FakeUserRepository()
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_new", email="new@example.com", display_name="New User"),
+        _claims("user_new", first_name="New", last_name="User"),
     )
 
     assert current_user.clerk_id == "user_new"
-    assert current_user.email == "new@example.com"
     assert current_user.display_name == "New User"
     assert current_user.role == UserRole.STUDENT
     assert session.commits == 1
@@ -37,53 +33,44 @@ async def test_missing_local_user_creates_student_user() -> None:
         ("create", "user_new", UserRole.STUDENT),
     ]
     assert repository.user is not None
-    assert repository.user.email == "new@example.com"
-    assert repository.user.display_name == "New User"
-    assert repository.user.profile_synced_at is not None
+    assert repository.user.first_name == "New"
+    assert repository.user.last_name == "User"
 
 
 @pytest.mark.asyncio
-async def test_existing_local_user_syncs_changed_profile_claims() -> None:
-    user = _user(clerk_id="user_existing", display_name="Old Name", email="old@example.com")
+async def test_existing_local_user_repairs_changed_claim_names_before_webhook_sync() -> None:
+    user = _user(clerk_id="user_existing", first_name="Old", last_name="Name")
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_existing", email="new@example.com", display_name="New Name"),
+        _claims("user_existing", first_name="New", last_name="Name"),
     )
 
     assert current_user.id == user.id
-    assert current_user.email == "new@example.com"
     assert current_user.display_name == "New Name"
-    assert current_user.role == UserRole.STUDENT
-    assert user.email == "new@example.com"
-    assert user.display_name == "New Name"
-    assert user.profile_synced_at is not None
+    assert user.first_name == "New"
+    assert user.last_name == "Name"
     assert session.commits == 1
     assert repository.calls == [("get_by_clerk_id", "user_existing")]
-    assert len(repository.profile_update_calls) == 1
-    assert repository.profile_update_calls[0][:3] == (user, "New Name", "new@example.com")
+    assert repository.profile_update_calls == [(user, "New", "Name")]
 
 
 @pytest.mark.asyncio
-async def test_existing_local_user_skips_unchanged_profile_claims() -> None:
-    user = _user(clerk_id="user_existing", display_name="Same Name", email="same@example.com")
-    original_synced_at = user.profile_synced_at
+async def test_existing_local_user_skips_unchanged_claim_names() -> None:
+    user = _user(clerk_id="user_existing", first_name="Same", last_name="Name")
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_existing", email="same@example.com", display_name="Same Name"),
+        _claims("user_existing", first_name="Same", last_name="Name"),
     )
 
-    assert current_user.email == "same@example.com"
     assert current_user.display_name == "Same Name"
-    assert user.profile_synced_at == original_synced_at
     assert session.commits == 0
-    assert len(repository.profile_update_calls) == 1
-    assert repository.profile_update_calls[0][:3] == (user, "Same Name", "same@example.com")
+    assert repository.profile_update_calls == [(user, "Same", "Name")]
 
 
 @pytest.mark.asyncio
@@ -93,7 +80,15 @@ async def test_auth_claim_role_payload_does_not_seed_local_role() -> None:
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_role_claim", claims={"sub": "user_role_claim", "role": "admin"}),
+        _claims(
+            "user_role_claim",
+            claims={
+                "sub": "user_role_claim",
+                "first_name": "Test",
+                "last_name": "User",
+                "role": "admin",
+            },
+        ),
     )
 
     assert current_user.role == UserRole.STUDENT
@@ -110,7 +105,15 @@ async def test_auth_claim_role_payload_does_not_override_existing_local_role() -
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_role_claim", claims={"sub": "user_role_claim", "role": "admin"}),
+        _claims(
+            "user_role_claim",
+            claims={
+                "sub": "user_role_claim",
+                "first_name": "Test",
+                "last_name": "User",
+                "role": "admin",
+            },
+        ),
     )
 
     assert current_user.role == UserRole.STUDENT
@@ -125,7 +128,7 @@ async def test_explicit_initial_role_seeds_new_local_user() -> None:
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_test_admin", display_name="Test Admin"),
+        _claims("user_test_admin", first_name="Test", last_name="Admin"),
         initial_role=UserRole.ADMIN,
     )
 
@@ -151,36 +154,28 @@ async def test_existing_current_user_returns_none_for_missing_local_user() -> No
 
 
 @pytest.mark.asyncio
-async def test_existing_current_user_reads_stored_profile_without_syncing_claims() -> None:
-    user = _user(clerk_id="user_existing", display_name="Old Name", email="old@example.com")
-    original_synced_at = user.profile_synced_at
+async def test_existing_current_user_reads_stored_names_without_syncing_claims() -> None:
+    user = _user(clerk_id="user_existing", first_name="Old", last_name="Name")
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
     current_user = await AuthUserService(repository).get_existing_current_user(
         session,
-        _claims("user_existing", email="new@example.com", display_name="New Name"),
+        _claims("user_existing", first_name="New", last_name="Name"),
     )
 
     assert current_user is not None
     assert current_user.id == user.id
-    assert current_user.email == "old@example.com"
     assert current_user.display_name == "Old Name"
-    assert user.email == "old@example.com"
-    assert user.display_name == "Old Name"
-    assert user.profile_synced_at == original_synced_at
+    assert user.first_name == "Old"
+    assert user.last_name == "Name"
     assert session.commits == 0
     assert repository.profile_update_calls == []
 
 
 @pytest.mark.asyncio
 async def test_existing_current_user_accepts_subject_only_claims_without_profile_sync() -> None:
-    user = _user(
-        clerk_id="user_subject_only",
-        display_name="Stored User",
-        email="stored@example.com",
-    )
-    original_synced_at = user.profile_synced_at
+    user = _user(clerk_id="user_subject_only", first_name="Stored", last_name="User")
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
@@ -194,11 +189,7 @@ async def test_existing_current_user_accepts_subject_only_claims_without_profile
 
     assert current_user is not None
     assert current_user.id == user.id
-    assert current_user.email == "stored@example.com"
     assert current_user.display_name == "Stored User"
-    assert user.email == "stored@example.com"
-    assert user.display_name == "Stored User"
-    assert user.profile_synced_at == original_synced_at
     assert session.commits == 0
     assert repository.profile_update_calls == []
 
@@ -208,6 +199,8 @@ async def test_existing_current_user_rejects_invalid_persisted_role() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_invalid_role",
+        first_name="Invalid",
+        last_name="Role",
         role="owner",
     )
     session = FakeSession()
@@ -229,34 +222,7 @@ async def test_existing_current_user_rejects_invalid_persisted_role() -> None:
 
 
 @pytest.mark.asyncio
-async def test_current_principal_uses_stored_profile_without_syncing_claims() -> None:
-    user = _user(
-        clerk_id="user_existing",
-        display_name="Stored Name",
-        email="stored@example.com",
-        role=UserRole.ADMIN,
-    )
-    original_synced_at = user.profile_synced_at
-    session = FakeSession()
-    repository = FakeUserRepository(user=user)
-
-    principal = await AuthUserService(repository).get_current_principal(
-        session,
-        _claims("user_existing", email="claim@example.com", display_name="Claim Name"),
-    )
-
-    assert principal is not None
-    assert principal.clerk_id == "user_existing"
-    assert principal.role == UserRole.ADMIN
-    assert user.email == "stored@example.com"
-    assert user.display_name == "Stored Name"
-    assert user.profile_synced_at == original_synced_at
-    assert session.commits == 0
-    assert repository.profile_update_calls == []
-
-
-@pytest.mark.asyncio
-async def test_current_principal_does_not_require_profile_claims() -> None:
+async def test_current_principal_uses_role_without_profile_claims_or_sync() -> None:
     user = _user(clerk_id="user_existing", role=UserRole.ADMIN)
     session = FakeSession()
     repository = FakeUserRepository(user=user)
@@ -285,13 +251,13 @@ async def test_claim_updates_do_not_mutate_soft_deleted_user() -> None:
     with pytest.raises(ApiError) as exc_info:
         await AuthUserService(repository).get_or_create_current_user(
             session,
-            _claims("user_deleted", email="new@example.com", display_name="New Name"),
+            _claims("user_deleted", first_name="New", last_name="Name"),
         )
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert exc_info.value.code == "forbidden"
-    assert user.email is None
-    assert user.display_name == "Test User"
+    assert user.first_name == "Test"
+    assert user.last_name == "User"
     assert session.commits == 0
     assert repository.profile_update_calls == []
 
@@ -314,8 +280,8 @@ async def test_existing_current_user_rejects_soft_deleted_user() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_first_request_conflict_syncs_existing_user_profile() -> None:
-    existing_user = _user(clerk_id="user_race", display_name="Old Race", email="old@example.com")
+async def test_concurrent_first_request_conflict_repairs_existing_user_profile() -> None:
+    existing_user = _user(clerk_id="user_race", first_name="Old", last_name="Race")
     session = FakeSession()
     repository = FakeUserRepository(
         lookup_results=[None, existing_user],
@@ -324,15 +290,13 @@ async def test_concurrent_first_request_conflict_syncs_existing_user_profile() -
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_race", email="race@example.com", display_name="Race User"),
+        _claims("user_race", first_name="Race", last_name="User"),
     )
 
     assert current_user.id == existing_user.id
-    assert current_user.email == "race@example.com"
     assert current_user.display_name == "Race User"
-    assert existing_user.email == "race@example.com"
-    assert existing_user.display_name == "Race User"
-    assert existing_user.profile_synced_at is not None
+    assert existing_user.first_name == "Race"
+    assert existing_user.last_name == "User"
     assert session.rollbacks == 1
     assert session.commits == 1
     assert repository.calls == [
@@ -340,22 +304,12 @@ async def test_concurrent_first_request_conflict_syncs_existing_user_profile() -
         ("create", "user_race", UserRole.STUDENT),
         ("get_by_clerk_id", "user_race"),
     ]
-    assert len(repository.profile_update_calls) == 1
-    assert repository.profile_update_calls[0][:3] == (
-        existing_user,
-        "Race User",
-        "race@example.com",
-    )
+    assert repository.profile_update_calls == [(existing_user, "Race", "User")]
 
 
 @pytest.mark.asyncio
-async def test_concurrent_first_request_conflict_skips_unchanged_profile_timestamp() -> None:
-    existing_user = _user(
-        clerk_id="user_race",
-        display_name="Race User",
-        email="race@example.com",
-    )
-    original_synced_at = existing_user.profile_synced_at
+async def test_concurrent_first_request_conflict_skips_unchanged_profile() -> None:
+    existing_user = _user(clerk_id="user_race", first_name="Race", last_name="User")
     session = FakeSession()
     repository = FakeUserRepository(
         lookup_results=[None, existing_user],
@@ -364,13 +318,11 @@ async def test_concurrent_first_request_conflict_skips_unchanged_profile_timesta
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_race", email="race@example.com", display_name="Race User"),
+        _claims("user_race", first_name="Race", last_name="User"),
     )
 
     assert current_user.id == existing_user.id
-    assert current_user.email == "race@example.com"
     assert current_user.display_name == "Race User"
-    assert existing_user.profile_synced_at == original_synced_at
     assert session.rollbacks == 1
     assert session.commits == 0
     assert repository.calls == [
@@ -384,24 +336,21 @@ async def test_concurrent_first_request_conflict_skips_unchanged_profile_timesta
 async def test_session_claim_repair_does_not_override_webhook_synced_profile() -> None:
     user = _user(
         clerk_id="user_existing",
-        display_name="Webhook Name",
-        email="webhook@example.com",
+        first_name="Webhook",
+        last_name="Name",
         clerk_profile_updated_at=datetime(2026, 6, 14, tzinfo=UTC),
     )
-    original_synced_at = user.profile_synced_at
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
         session,
-        _claims("user_existing", email="claim@example.com", display_name="Claim Name"),
+        _claims("user_existing", first_name="Claim", last_name="Name"),
     )
 
-    assert current_user.email == "webhook@example.com"
     assert current_user.display_name == "Webhook Name"
-    assert user.email == "webhook@example.com"
-    assert user.display_name == "Webhook Name"
-    assert user.profile_synced_at == original_synced_at
+    assert user.first_name == "Webhook"
+    assert user.last_name == "Name"
     assert session.commits == 0
     assert repository.profile_update_calls == []
 
@@ -434,12 +383,7 @@ def test_get_or_create_current_user_has_no_role_override_parameter() -> None:
 
 @pytest.mark.asyncio
 async def test_test_auth_current_user_overrides_role_without_mutating_local_role() -> None:
-    user = _user(
-        clerk_id="user_test_admin",
-        display_name="Test Admin",
-        email="admin@example.com",
-    )
-    original_synced_at = user.profile_synced_at
+    user = _user(clerk_id="user_test_admin", first_name="Test", last_name="Admin")
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
@@ -448,16 +392,14 @@ async def test_test_auth_current_user_overrides_role_without_mutating_local_role
         role=UserRole.ADMIN,
     ).get_or_create_current_user(
         session,
-        _claims("user_test_admin", email="admin@example.com", display_name="Test Admin"),
+        _claims("user_test_admin", first_name="Test", last_name="Admin"),
     )
 
     assert current_user.id == user.id
     assert current_user.clerk_id == "user_test_admin"
-    assert current_user.email == "admin@example.com"
     assert current_user.display_name == "Test Admin"
     assert current_user.role == UserRole.ADMIN
     assert user.role == UserRole.STUDENT.value
-    assert user.profile_synced_at == original_synced_at
     assert session.commits == 0
 
 
@@ -471,7 +413,7 @@ async def test_test_auth_principal_for_missing_user_returns_none() -> None:
         role=UserRole.ADMIN,
     ).get_current_principal(
         session,
-        _claims("user_test_admin", email="admin@example.com", display_name="Test Admin"),
+        _claims("user_test_admin", first_name="Test", last_name="Admin"),
     )
 
     assert principal is None
@@ -481,12 +423,7 @@ async def test_test_auth_principal_for_missing_user_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_test_auth_principal_overrides_role_without_syncing_existing_user() -> None:
-    user = _user(
-        clerk_id="user_test_admin",
-        display_name="Stored Admin",
-        email="stored@example.com",
-    )
-    original_synced_at = user.profile_synced_at
+    user = _user(clerk_id="user_test_admin", first_name="Stored", last_name="Admin")
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
@@ -495,15 +432,14 @@ async def test_test_auth_principal_overrides_role_without_syncing_existing_user(
         role=UserRole.ADMIN,
     ).get_current_principal(
         session,
-        _claims("user_test_admin", email="claim@example.com", display_name="Claim Admin"),
+        _claims("user_test_admin", first_name="Claim", last_name="Admin"),
     )
 
     assert principal is not None
     assert principal.clerk_id == "user_test_admin"
     assert principal.role == UserRole.ADMIN
-    assert user.email == "stored@example.com"
-    assert user.display_name == "Stored Admin"
-    assert user.profile_synced_at == original_synced_at
+    assert user.first_name == "Stored"
+    assert user.last_name == "Admin"
     assert session.commits == 0
     assert repository.profile_update_calls == []
 
@@ -531,24 +467,19 @@ async def test_test_auth_principal_propagates_disabled_user_error() -> None:
 def _claims(
     clerk_id: str,
     *,
-    email: str | None = None,
-    display_name: str = "Test User",
+    first_name: str = "Test",
+    last_name: str = "User",
     claims: dict | None = None,
 ) -> ClerkAuthClaims:
-    first_name, _, last_name = display_name.partition(" ")
     payload = {
         "sub": clerk_id,
         "first_name": first_name,
-        "last_name": last_name or "User",
+        "last_name": last_name,
     }
-    if email is not None:
-        payload["email"] = email
     if claims is not None:
         payload.update(claims)
     return ClerkAuthClaims(
         clerk_id=clerk_id,
-        email=email,
-        display_name=display_name,
         claims=payload,
     )
 
@@ -556,8 +487,8 @@ def _claims(
 def _user(
     *,
     clerk_id: str,
-    display_name: str = "Test User",
-    email: str | None = None,
+    first_name: str = "Test",
+    last_name: str = "User",
     role: UserRole = UserRole.STUDENT,
     deleted_at: datetime | None = None,
     clerk_profile_updated_at: datetime | None = None,
@@ -565,9 +496,8 @@ def _user(
     return UserAccount(
         id=uuid4(),
         clerk_id=clerk_id,
-        display_name=display_name,
-        email=email,
-        profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+        first_name=first_name,
+        last_name=last_name,
         clerk_profile_updated_at=clerk_profile_updated_at,
         role=role.value,
         deleted_at=deleted_at,

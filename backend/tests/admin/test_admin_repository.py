@@ -47,40 +47,36 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
         admin_user = UserAccount(
             id=uuid4(),
             clerk_id="user_admin",
-            display_name="Admin User",
-            email="admin@example.com",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Admin",
+            last_name="User",
             role="admin",
         )
         student_user = UserAccount(
             id=uuid4(),
             clerk_id="user_student",
-            display_name="Student User",
-            email="student@example.com",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Student",
+            last_name="User",
             role="student",
         )
         inactive_alpha = UserAccount(
             id=uuid4(),
             clerk_id="user_alpha",
-            display_name="Alpha User",
-            email="alpha@example.com",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Alpha",
+            last_name="User",
             role="instructor",
         )
         inactive_zeta = UserAccount(
             id=uuid4(),
             clerk_id="user_zeta",
-            display_name="Zeta User",
-            email="zeta@example.com",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Zeta",
+            last_name="User",
             role="student",
         )
         disabled_user = UserAccount(
             id=uuid4(),
             clerk_id="user_disabled",
-            display_name="Disabled User",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Disabled",
+            last_name="User",
             role="student",
             deleted_at=datetime(2026, 5, 1, tzinfo=UTC),
         )
@@ -212,7 +208,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_user_overview_repository_sorts_by_display_name() -> None:
+async def test_user_overview_repository_sorts_by_name_parts() -> None:
     engine = create_engine("sqlite:///:memory:")
     UserAccount.__table__.create(engine)
     Conversation.__table__.create(engine)
@@ -223,32 +219,29 @@ async def test_user_overview_repository_sorts_by_display_name() -> None:
         gamma_user = UserAccount(
             id=uuid4(),
             clerk_id="user_4",
-            display_name="Gamma",
-            email="late@example.com",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Gamma",
+            last_name="User",
             role="student",
         )
         alpha_user = UserAccount(
             id=uuid4(),
             clerk_id="user_2",
-            display_name="Alpha",
-            email="early@example.com",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Alpha",
+            last_name="User",
             role="student",
         )
         delta_user = UserAccount(
             id=uuid4(),
             clerk_id="user_3",
-            display_name="Delta",
-            email="late@example.com",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Delta",
+            last_name="User",
             role="student",
         )
         beta_user = UserAccount(
             id=uuid4(),
             clerk_id="user_1",
-            display_name="Beta",
-            profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+            first_name="Beta",
+            last_name="User",
             role="student",
         )
         sync_session.add_all([beta_user, gamma_user, delta_user, alpha_user])
@@ -260,7 +253,12 @@ async def test_user_overview_repository_sorts_by_display_name() -> None:
             range_end=datetime(2026, 5, 2, tzinfo=UTC),
         )
 
-    assert [row.display_name for row in rows] == ["Alpha", "Beta", "Delta", "Gamma"]
+    assert [row.display_name for row in rows] == [
+        "Alpha User",
+        "Beta User",
+        "Delta User",
+        "Gamma User",
+    ]
 
 
 @pytest.mark.asyncio

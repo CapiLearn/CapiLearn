@@ -190,8 +190,8 @@ async def test_clerk_webhook_service_dispatches_profile_upsert_and_soft_delete()
     assert repository.upserts[0][0] is session
     assert repository.upserts[0][1] == {
         "clerk_id": "user_123",
-        "display_name": "Jane Doe",
-        "email": "jane@example.com",
+        "first_name": "Jane",
+        "last_name": "Doe",
         "clerk_profile_updated_at": datetime(2026, 6, 15, 16, 0, tzinfo=UTC),
     }
     assert repository.deletes[0][0] is session
@@ -267,21 +267,19 @@ class CapturingRepository:
         session,
         *,
         clerk_id,
-        display_name,
-        email,
+        first_name,
+        last_name,
         clerk_profile_updated_at,
-        synced_at,
     ):
         self.upserts.append(
             (
                 session,
                 {
                     "clerk_id": clerk_id,
-                    "display_name": display_name,
-                    "email": email,
+                    "first_name": first_name,
+                    "last_name": last_name,
                     "clerk_profile_updated_at": clerk_profile_updated_at,
                 },
-                synced_at,
             )
         )
 

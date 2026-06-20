@@ -334,7 +334,6 @@ async def test_usage_summary_rejects_missing_local_user_without_provisioning() -
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
         ClerkAuthClaims(
             clerk_id="user_missing",
-            display_name="Missing User",
             claims={"sub": "user_missing"},
         )
     )
@@ -364,12 +363,10 @@ async def test_usage_summary_rejects_existing_non_admin_local_user() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_student",
-        display_name="Student User",
-        email="student@example.com",
-        profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+        first_name="Student",
+        last_name="User",
         role=UserRole.STUDENT.value,
     )
-    original_synced_at = user.profile_synced_at
     repository = FakeUserRepository(user=user)
     session = FakeSession()
     app.dependency_overrides[get_db] = _fake_db_override(session)
@@ -377,9 +374,11 @@ async def test_usage_summary_rejects_existing_non_admin_local_user() -> None:
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
         ClerkAuthClaims(
             clerk_id="user_student",
-            email="changed@example.com",
-            display_name="Changed Student",
-            claims={"sub": "user_student"},
+            claims={
+                "sub": "user_student",
+                "first_name": "Changed",
+                "last_name": "Student",
+            },
         )
     )
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
@@ -396,9 +395,8 @@ async def test_usage_summary_rejects_existing_non_admin_local_user() -> None:
     assert response.status_code == 403
     assert response.json()["code"] == "admin_required"
     assert repository.profile_update_calls == []
-    assert user.email == "student@example.com"
-    assert user.display_name == "Student User"
-    assert user.profile_synced_at == original_synced_at
+    assert user.first_name == "Student"
+    assert user.last_name == "User"
     assert session.commits == 0
 
 
@@ -407,8 +405,8 @@ async def test_usage_summary_rejects_existing_disabled_admin_local_user() -> Non
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_disabled_admin",
-        display_name="Disabled Admin",
-        profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+        first_name="Disabled",
+        last_name="Admin",
         role=UserRole.ADMIN.value,
         deleted_at=datetime.now(UTC),
     )
@@ -419,7 +417,6 @@ async def test_usage_summary_rejects_existing_disabled_admin_local_user() -> Non
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
         ClerkAuthClaims(
             clerk_id="user_disabled_admin",
-            display_name="Disabled Admin",
             claims={"sub": "user_disabled_admin"},
         )
     )
@@ -448,11 +445,10 @@ async def test_usage_summary_accepts_existing_admin_local_user() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_admin",
-        display_name="Admin User",
-        profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+        first_name="Admin",
+        last_name="User",
         role=UserRole.ADMIN.value,
     )
-    original_synced_at = user.profile_synced_at
     repository = FakeUserRepository(user=user)
     session = FakeSession()
     app.dependency_overrides[get_settings] = lambda: Settings(auth_mode="clerk")
@@ -461,7 +457,6 @@ async def test_usage_summary_accepts_existing_admin_local_user() -> None:
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
         ClerkAuthClaims(
             clerk_id="user_admin",
-            display_name="Admin User",
             claims={"sub": "user_admin"},
         )
     )
@@ -478,7 +473,6 @@ async def test_usage_summary_accepts_existing_admin_local_user() -> None:
 
     assert response.status_code == 200
     assert response.json()["metrics"]["totalUsers"] == 18
-    assert user.profile_synced_at == original_synced_at
     assert session.commits == 0
 
 
@@ -515,8 +509,8 @@ async def test_test_auth_mode_accepts_admin_role() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_test_admin",
-        display_name="Test Admin",
-        profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+        first_name="Test",
+        last_name="Admin",
         role=UserRole.STUDENT.value,
     )
     repository = FakeUserRepository(user=user)
@@ -550,8 +544,8 @@ async def test_test_auth_mode_rejects_disabled_local_user_before_admin_role_gate
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_test_disabled",
-        display_name="Disabled User",
-        profile_synced_at=datetime(2026, 6, 1, tzinfo=UTC),
+        first_name="Disabled",
+        last_name="User",
         role=UserRole.STUDENT.value,
         deleted_at=datetime.now(UTC),
     )

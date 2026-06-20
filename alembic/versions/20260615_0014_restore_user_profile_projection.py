@@ -1,4 +1,4 @@
-"""Restore local user profile projection fields.
+"""Restore Clerk-owned user name projection fields.
 
 Revision ID: 20260615_0014
 Revises: 20260613_0013
@@ -23,16 +23,25 @@ def upgrade() -> None:
 
     op.add_column(
         "user_account",
-        sa.Column("display_name", sa.String(length=255), nullable=False),
+        sa.Column("first_name", sa.String(length=255), nullable=False),
     )
-    op.add_column("user_account", sa.Column("email", sa.String(length=320), nullable=True))
     op.add_column(
         "user_account",
-        sa.Column("profile_synced_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("last_name", sa.String(length=255), nullable=False),
     )
     op.add_column(
         "user_account",
         sa.Column("clerk_profile_updated_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_check_constraint(
+        op.f("user_account_first_name_not_blank_check"),
+        "user_account",
+        "length(trim(first_name)) > 0",
+    )
+    op.create_check_constraint(
+        op.f("user_account_last_name_not_blank_check"),
+        "user_account",
+        "length(trim(last_name)) > 0",
     )
 
 
@@ -47,7 +56,16 @@ def _assert_user_account_empty(connection: sa.Connection) -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint(
+        op.f("user_account_last_name_not_blank_check"),
+        "user_account",
+        type_="check",
+    )
+    op.drop_constraint(
+        op.f("user_account_first_name_not_blank_check"),
+        "user_account",
+        type_="check",
+    )
     op.drop_column("user_account", "clerk_profile_updated_at")
-    op.drop_column("user_account", "profile_synced_at")
-    op.drop_column("user_account", "email")
-    op.drop_column("user_account", "display_name")
+    op.drop_column("user_account", "last_name")
+    op.drop_column("user_account", "first_name")

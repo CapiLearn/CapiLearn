@@ -47,9 +47,8 @@ class FakeUserRepository(UserAccountRepository):
         *,
         clerk_id: str,
         role: UserRole = UserRole.STUDENT,
-        display_name: str,
-        email: str | None = None,
-        profile_synced_at: datetime,
+        first_name: str,
+        last_name: str,
     ) -> UserAccount:
         self.calls.append(("create", clerk_id, role))
         if self.create_error is not None:
@@ -58,9 +57,8 @@ class FakeUserRepository(UserAccountRepository):
             id=uuid4(),
             clerk_id=clerk_id,
             role=role.value,
-            display_name=display_name,
-            email=email,
-            profile_synced_at=profile_synced_at,
+            first_name=first_name,
+            last_name=last_name,
         )
         return self.user
 
@@ -69,17 +67,15 @@ class FakeUserRepository(UserAccountRepository):
         session,
         *,
         user: UserAccount,
-        display_name: str,
-        email: str | None,
-        synced_at: datetime,
+        first_name: str,
+        last_name: str,
     ) -> bool:
-        self.profile_update_calls.append((user, display_name, email, synced_at))
+        self.profile_update_calls.append((user, first_name, last_name))
         return await super().update_profile_projection(
             session,
             user=user,
-            display_name=display_name,
-            email=email,
-            synced_at=synced_at,
+            first_name=first_name,
+            last_name=last_name,
         )
 
     async def upsert_from_clerk_profile(
@@ -87,20 +83,18 @@ class FakeUserRepository(UserAccountRepository):
         session,
         *,
         clerk_id: str,
-        display_name: str,
-        email: str | None,
+        first_name: str,
+        last_name: str,
         clerk_profile_updated_at: datetime,
-        synced_at: datetime,
         default_role: UserRole = UserRole.STUDENT,
     ) -> UserAccount:
         self.calls.append(
             (
                 "upsert_from_clerk_profile",
                 clerk_id,
-                display_name,
-                email,
+                first_name,
+                last_name,
                 clerk_profile_updated_at,
-                synced_at,
                 default_role,
             )
         )
@@ -109,9 +103,8 @@ class FakeUserRepository(UserAccountRepository):
                 id=uuid4(),
                 clerk_id=clerk_id,
                 role=default_role.value,
-                display_name=display_name,
-                email=email,
-                profile_synced_at=synced_at,
+                first_name=first_name,
+                last_name=last_name,
                 clerk_profile_updated_at=clerk_profile_updated_at,
             )
             return self.user
@@ -121,9 +114,8 @@ class FakeUserRepository(UserAccountRepository):
                 "FakeUserRepository stored user clerk_id "
                 f"{self.user.clerk_id!r} does not match upsert clerk_id {clerk_id!r}"
             )
-        self.user.display_name = display_name
-        self.user.email = email
-        self.user.profile_synced_at = synced_at
+        self.user.first_name = first_name
+        self.user.last_name = last_name
         self.user.clerk_profile_updated_at = clerk_profile_updated_at
         return self.user
 
