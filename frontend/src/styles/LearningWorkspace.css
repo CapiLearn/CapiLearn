@@ -262,15 +262,6 @@ body {
   font-size: 34px;
 }
 
-.suggested-section h2 {
-  margin: 0 0 14px;
-  font-size: 18px;
-}
-
-.prompt-card:hover {
-  border-color: #557c38;
-}
-
 .chat-preview {
   display: flex;
   flex-direction: column;
@@ -597,17 +588,6 @@ body {
   font-weight: 900;
 }
 
-.encouragement-card h2 {
-  margin: 0 0 8px;
-  font-size: 20px;
-}
-
-.encouragement-card p {
-  margin: 0;
-  line-height: 1.5;
-  font-size: 14px;
-}
-
 /* Responsive */
 
 @media (max-width: 1100px) {
@@ -654,10 +634,6 @@ body {
     flex-direction: column;
   }
   
-  .prompt-grid {
-    grid-template-columns: 1fr;
-  }
-
   .message {
     max-width: 92%;
   }
