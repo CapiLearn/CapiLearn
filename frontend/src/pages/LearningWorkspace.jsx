@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
 import { useAuth } from "@clerk/react";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
+import capiBooksIcon from "../assets/capi_books.png";
 
 import {
   createConversation,
@@ -347,7 +349,12 @@ function LearningWorkspace() {
     <main className="workspace-page">
       <aside className="workspace-sidebar">
         <div className="workspace-brand">
-          <div className="workspace-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="workspace-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
@@ -433,7 +440,12 @@ function LearningWorkspace() {
         </header>
 
         <section className="welcome-card">
-          <div className="capi-avatar">🌿</div>
+          <img
+            src={capiBooksIcon}
+            alt=""
+            className="capi-avatar"
+            aria-hidden="true"
+          />
 
           <div>
             <h2>Hi, I’m Capi.</h2>

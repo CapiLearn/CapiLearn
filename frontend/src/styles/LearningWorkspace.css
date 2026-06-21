@@ -40,15 +40,12 @@ body {
 }
 
 .workspace-brand-icon {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
   border-radius: 8px;
-  background: #557c38;
-  color: #fff7e3;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  object-fit: contain;
+  display: block;
 }
 
 .new-chat-button {
@@ -248,18 +245,16 @@ body {
 }
 
 .capi-avatar {
-  width: 72px;
-  height: 72px;
-  flex: 0 0 72px;
+  width: 78px;
+  height: 78px;
+  flex: 0 0 78px;
   border-radius: 18px;
-  background: #dfe8c1;
-  color: #557c38;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  font-size: 34px;
+  background: #fbf8e8;
+  padding: 2px;
+  object-fit: contain;
+  box-shadow: 0 10px 20px rgba(43, 29, 21, 0.1);
+  pointer-events: none;
+  user-select: none;
 }
 
 .chat-preview {
