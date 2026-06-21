@@ -1,5 +1,4 @@
 import logging
-from decimal import Decimal
 from uuid import UUID
 
 from fastapi import status
@@ -283,7 +282,6 @@ class ChatService:
             by_alias=True,
         )
         _apply_provider_response(message, result)
-        _apply_legacy_estimated_cost(message, result)
         await self._repository.create_llm_cost_components(
             self._session,
             components=result.cost_components,
@@ -311,7 +309,6 @@ class ChatService:
             by_alias=True,
         )
         _apply_provider_response(message, result)
-        _apply_legacy_estimated_cost(message, result)
         await self._repository.create_llm_cost_components(
             self._session,
             components=result.cost_components,
@@ -415,20 +412,7 @@ def _apply_provider_response(message: Message, result: LLMResult) -> None:
     if provider_response is None:
         return
     message.finish_reason = provider_response.finish_reason
-    message.prompt_tokens = provider_response.prompt_tokens
-    message.completion_tokens = provider_response.completion_tokens
-    message.total_tokens = provider_response.total_tokens
     message.provider_response = provider_response.raw_response
-
-
-def _apply_legacy_estimated_cost(message: Message, result: LLMResult) -> None:
-    component_costs = [
-        component.estimated_cost_usd
-        for component in result.cost_components
-        if component.estimated_cost_usd is not None
-    ]
-    if component_costs:
-        message.estimated_cost_usd = sum(component_costs, Decimal("0"))
 
 
 def _warn_missing_provider_response(

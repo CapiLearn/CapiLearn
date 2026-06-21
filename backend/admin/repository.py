@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.models import UserAccount
 from backend.chat.models import Conversation, LLMCostComponent, Message
 from backend.chat.schemas import MessageRole, MessageStatus
 
@@ -54,6 +55,15 @@ class CostComponentAggregate:
     error_type: str | None
     metadata: dict
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class UserOverviewAggregate:
+    display_name: str
+    access_level: str
+    total_messages_sent: int
+    blocked_requests: int
+    last_activity: datetime | None
 
 
 class AdminUsageRepository:
@@ -120,10 +130,11 @@ class AdminUsageRepository:
             LLMCostComponent.created_at < range_end,
         )
         estimated_cost_usd = await session.scalar(cost_statement)
-        total_tokens = await _get_total_pipeline_tokens(
-            session,
-            range_start=range_start,
-            range_end=range_end,
+        total_tokens = await session.scalar(
+            select(func.coalesce(func.sum(LLMCostComponent.total_tokens), 0)).where(
+                LLMCostComponent.created_at >= range_start,
+                LLMCostComponent.created_at < range_end,
+            )
         )
 
         return UsageMetricsAggregate(
@@ -133,7 +144,7 @@ class AdminUsageRepository:
             assistant_responses=int(row[2] or 0),
             failed_responses=int(row[3] or 0),
             blocked_responses=int(row[4] or 0),
-            total_tokens=total_tokens,
+            total_tokens=int(total_tokens or 0),
             estimated_cost_usd=Decimal(estimated_cost_usd or 0),
             average_latency_ms=row[5],
         )
@@ -167,7 +178,7 @@ class AdminUsageRepository:
         )
 
         rows = (await session.execute(statement)).all()
-        token_totals = await _list_daily_pipeline_tokens(
+        token_totals = await _list_daily_component_tokens(
             session,
             range_start=range_start,
             range_end=range_end,
@@ -254,31 +265,86 @@ class AdminUsageRepository:
             for row in rows
         ]
 
+    async def list_user_overviews(
+        self,
+        session: AsyncSession,
+        *,
+        range_start: datetime,
+        range_end: datetime,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[UserOverviewAggregate]:
+        last_activity = func.max(Message.created_at).label("last_activity")
+        total_messages_sent = func.coalesce(
+            func.sum(case((Message.role == MessageRole.USER.value, 1), else_=0)),
+            0,
+        ).label("total_messages_sent")
+        blocked_requests = func.coalesce(
+            func.sum(
+                case(
+                    (
+                        (Message.role == MessageRole.ASSISTANT.value)
+                        & (Message.status == MessageStatus.BLOCKED.value),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("blocked_requests")
 
-async def _get_total_pipeline_tokens(
-    session: AsyncSession,
-    *,
-    range_start: datetime,
-    range_end: datetime,
-) -> int:
-    component_tokens = await session.scalar(
-        select(func.coalesce(func.sum(LLMCostComponent.total_tokens), 0)).where(
-            LLMCostComponent.created_at >= range_start,
-            LLMCostComponent.created_at < range_end,
+        activity = (
+            select(
+                Message.user_id.label("user_id"),
+                total_messages_sent,
+                blocked_requests,
+                last_activity,
+            )
+            .where(
+                Message.created_at >= range_start,
+                Message.created_at < range_end,
+            )
+            .group_by(Message.user_id)
+            .subquery()
         )
-    )
-    legacy_tokens = await session.scalar(
-        select(func.coalesce(func.sum(Message.total_tokens), 0)).where(
-            Message.role == MessageRole.ASSISTANT.value,
-            Message.created_at >= range_start,
-            Message.created_at < range_end,
-            ~_message_has_cost_components(),
+
+        statement = (
+            select(
+                UserAccount.first_name,
+                UserAccount.last_name,
+                UserAccount.role.label("access_level"),
+                activity.c.total_messages_sent,
+                activity.c.blocked_requests,
+                activity.c.last_activity,
+            )
+            .select_from(UserAccount)
+            .outerjoin(activity, activity.c.user_id == UserAccount.id)
+            .where(UserAccount.deleted_at.is_(None))
+            .order_by(
+                activity.c.last_activity.desc().nulls_last(),
+                UserAccount.first_name.asc().nulls_last(),
+                UserAccount.last_name.asc().nulls_last(),
+                UserAccount.clerk_id.asc(),
+                UserAccount.id.asc(),
+            )
+            .offset(offset)
+            .limit(limit)
         )
-    )
-    return int(component_tokens or 0) + int(legacy_tokens or 0)
+
+        rows = (await session.execute(statement)).all()
+        return [
+            UserOverviewAggregate(
+                display_name=f"{row.first_name} {row.last_name}",
+                access_level=row.access_level,
+                total_messages_sent=int(row.total_messages_sent or 0),
+                blocked_requests=int(row.blocked_requests or 0),
+                last_activity=row.last_activity,
+            )
+            for row in rows
+        ]
 
 
-async def _list_daily_pipeline_tokens(
+async def _list_daily_component_tokens(
     session: AsyncSession,
     *,
     range_start: datetime,
@@ -298,34 +364,10 @@ async def _list_daily_pipeline_tokens(
     )
     component_rows = (await session.execute(component_statement)).all()
 
-    legacy_date = _utc_date(Message.created_at)
-    legacy_statement = (
-        select(
-            legacy_date.label("usage_date"),
-            func.coalesce(func.sum(Message.total_tokens), 0),
-        )
-        .where(
-            Message.role == MessageRole.ASSISTANT.value,
-            Message.created_at >= range_start,
-            Message.created_at < range_end,
-            ~_message_has_cost_components(),
-        )
-        .group_by(legacy_date)
-    )
-    legacy_rows = (await session.execute(legacy_statement)).all()
-
     totals: dict[date, int] = {}
-    for row in [*component_rows, *legacy_rows]:
+    for row in component_rows:
         totals[row[0]] = totals.get(row[0], 0) + int(row[1] or 0)
     return totals
-
-
-def _message_has_cost_components():
-    return (
-        select(LLMCostComponent.id)
-        .where(LLMCostComponent.assistant_message_id == Message.id)
-        .exists()
-    )
 
 
 def _utc_date(column):

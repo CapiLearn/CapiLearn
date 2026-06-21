@@ -25,11 +25,12 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=list)
     clerk_secret_key: str | None = None
     clerk_jwt_key: str | None = None
+    clerk_webhook_signing_secret: str | None = None
     clerk_authorized_parties: list[str] = Field(default_factory=list)
     auth_mode: Literal["clerk", "test"] = "clerk"
     test_auth_clerk_id: str = "user_local_dev"
-    test_auth_email: str | None = None
-    test_auth_display_name: str | None = None
+    test_auth_first_name: str | None = "Local"
+    test_auth_last_name: str | None = "Dev"
     test_auth_role: Literal["student", "instructor", "admin"] = "student"
 
     @field_validator("log_level")
