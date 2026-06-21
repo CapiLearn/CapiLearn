@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
 import "../styles/InstructorDashboard.css";
+import LogoutButton from "../components/LogoutButton";
 
 const summaryStats = [
   {
@@ -115,9 +115,7 @@ function InstructorDashboard() {
           ))}
         </nav>
 
-        <Link className="instructor-logout-link" to="/">
-          Log out
-        </Link>
+        <LogoutButton className="instructor-logout-link" />
 
         <div className="instructor-profile-card">
           <div className="instructor-avatar">O</div>

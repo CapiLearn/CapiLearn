@@ -4,6 +4,7 @@ import MarkdownMessage from "../components/MarkdownMessage";
 import { useAuth } from "@clerk/react";
 import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 import capiBooksIcon from "../assets/capi_books.png";
+import LogoutButton from "../components/LogoutButton";
 
 import {
   createConversation,
@@ -412,10 +413,7 @@ function LearningWorkspace() {
           </section>
         </div>
 
-        <Link className="workspace-logout-link" to="/">
-          Log out
-        </Link>
-
+        <LogoutButton className="workspace-logout-link" />
         <div className="student-profile">
           <div className="student-avatar">J</div>
           <div>
