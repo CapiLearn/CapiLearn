@@ -9,19 +9,22 @@ from sqlalchemy.orm import Session
 from backend.admin.repository import (
     AdminUsageRepository,
     DailyUsageAggregate,
-    UserOverviewAggregate,
 )
 from backend.auth.models import UserAccount
-from backend.chat.models import Conversation, Message
 from backend.chat.schemas import MessageRole, MessageStatus
+from backend.tests.usage.fixtures import (
+    SyncSession,
+    create_usage_tables,
+    usage_conversation,
+    usage_message,
+)
+from backend.usage.repository import UserActivityAggregate
 
 
 @pytest.mark.asyncio
 async def test_user_overview_repository_aggregates_contract_rows() -> None:
     engine = create_engine("sqlite:///:memory:")
-    UserAccount.__table__.create(engine)
-    Conversation.__table__.create(engine)
-    Message.__table__.create(engine)
+    create_usage_tables(engine)
     repository = AdminUsageRepository()
 
     with Session(engine, expire_on_commit=False) as sync_session:
@@ -66,15 +69,15 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
         )
         sync_session.flush()
 
-        admin_conversation = _conversation(admin_user)
-        student_conversation = _conversation(student_user)
-        disabled_conversation = _conversation(disabled_user)
+        admin_conversation = usage_conversation(admin_user)
+        student_conversation = usage_conversation(student_user)
+        disabled_conversation = usage_conversation(disabled_user)
         sync_session.add_all([admin_conversation, student_conversation, disabled_conversation])
         sync_session.flush()
 
         sync_session.add_all(
             [
-                _message(
+                usage_message(
                     conversation=admin_conversation,
                     user=admin_user,
                     sequence=1,
@@ -82,7 +85,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
                     status=MessageStatus.COMPLETED,
                     created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
                 ),
-                _message(
+                usage_message(
                     conversation=admin_conversation,
                     user=admin_user,
                     sequence=2,
@@ -90,7 +93,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
                     status=MessageStatus.BLOCKED,
                     created_at=datetime(2026, 5, 1, 13, tzinfo=UTC),
                 ),
-                _message(
+                usage_message(
                     conversation=student_conversation,
                     user=student_user,
                     sequence=1,
@@ -98,7 +101,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
                     status=MessageStatus.COMPLETED,
                     created_at=datetime(2026, 4, 30, 23, 59, tzinfo=UTC),
                 ),
-                _message(
+                usage_message(
                     conversation=student_conversation,
                     user=student_user,
                     sequence=2,
@@ -106,7 +109,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
                     status=MessageStatus.COMPLETED,
                     created_at=datetime(2026, 5, 1, 9, tzinfo=UTC),
                 ),
-                _message(
+                usage_message(
                     conversation=student_conversation,
                     user=student_user,
                     sequence=3,
@@ -114,7 +117,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
                     status=MessageStatus.BLOCKED,
                     created_at=datetime(2026, 5, 1, 10, tzinfo=UTC),
                 ),
-                _message(
+                usage_message(
                     conversation=student_conversation,
                     user=student_user,
                     sequence=4,
@@ -122,7 +125,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
                     status=MessageStatus.BLOCKED,
                     created_at=datetime(2026, 5, 1, 11, tzinfo=UTC),
                 ),
-                _message(
+                usage_message(
                     conversation=student_conversation,
                     user=student_user,
                     sequence=5,
@@ -130,7 +133,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
                     status=MessageStatus.BLOCKED,
                     created_at=datetime(2026, 5, 2, tzinfo=UTC),
                 ),
-                _message(
+                usage_message(
                     conversation=disabled_conversation,
                     user=disabled_user,
                     sequence=1,
@@ -143,12 +146,12 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
         sync_session.commit()
 
         rows = await repository.list_user_overviews(
-            SyncExecuteSession(sync_session),
+            SyncSession(sync_session),
             range_start=datetime(2026, 5, 1, tzinfo=UTC),
             range_end=datetime(2026, 5, 2, tzinfo=UTC),
         )
         paged_rows = await repository.list_user_overviews(
-            SyncExecuteSession(sync_session),
+            SyncSession(sync_session),
             range_start=datetime(2026, 5, 1, tzinfo=UTC),
             range_end=datetime(2026, 5, 2, tzinfo=UTC),
             limit=2,
@@ -156,28 +159,28 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
         )
 
     assert rows == [
-        UserOverviewAggregate(
+        UserActivityAggregate(
             display_name="Admin User",
             access_level="admin",
             total_messages_sent=1,
             blocked_requests=1,
             last_activity=datetime(2026, 5, 1, 13),
         ),
-        UserOverviewAggregate(
+        UserActivityAggregate(
             display_name="Student User",
             access_level="student",
             total_messages_sent=2,
             blocked_requests=1,
             last_activity=datetime(2026, 5, 1, 11),
         ),
-        UserOverviewAggregate(
+        UserActivityAggregate(
             display_name="Alpha User",
             access_level="instructor",
             total_messages_sent=0,
             blocked_requests=0,
             last_activity=None,
         ),
-        UserOverviewAggregate(
+        UserActivityAggregate(
             display_name="Zeta User",
             access_level="student",
             total_messages_sent=0,
@@ -191,9 +194,7 @@ async def test_user_overview_repository_aggregates_contract_rows() -> None:
 @pytest.mark.asyncio
 async def test_user_overview_repository_sorts_by_name_parts() -> None:
     engine = create_engine("sqlite:///:memory:")
-    UserAccount.__table__.create(engine)
-    Conversation.__table__.create(engine)
-    Message.__table__.create(engine)
+    create_usage_tables(engine)
     repository = AdminUsageRepository()
 
     with Session(engine, expire_on_commit=False) as sync_session:
@@ -229,7 +230,7 @@ async def test_user_overview_repository_sorts_by_name_parts() -> None:
         sync_session.commit()
 
         rows = await repository.list_user_overviews(
-            SyncExecuteSession(sync_session),
+            SyncSession(sync_session),
             range_start=datetime(2026, 5, 1, tzinfo=UTC),
             range_end=datetime(2026, 5, 2, tzinfo=UTC),
         )
@@ -333,43 +334,6 @@ async def test_daily_usage_uses_component_tokens_and_zeroes_nulls() -> None:
         ),
     ]
     assert len(session.execute_statements) == 2
-
-
-class SyncExecuteSession:
-    def __init__(self, session: Session) -> None:
-        self._session = session
-
-    async def execute(self, statement):
-        return self._session.execute(statement)
-
-
-def _conversation(user: UserAccount) -> Conversation:
-    return Conversation(
-        id=uuid4(),
-        user_id=user.id,
-        model_profile_key="test-profile",
-    )
-
-
-def _message(
-    *,
-    conversation: Conversation,
-    user: UserAccount,
-    sequence: int,
-    role: MessageRole,
-    status: MessageStatus,
-    created_at: datetime,
-) -> Message:
-    return Message(
-        id=uuid4(),
-        conversation_id=conversation.id,
-        user_id=user.id,
-        sequence=sequence,
-        role=role.value,
-        status=status.value,
-        content="test",
-        created_at=created_at,
-    )
 
 
 class SequencedSession:

@@ -6,10 +6,10 @@ import pytest
 from backend.admin.repository import (
     DailyUsageAggregate,
     UsageMetricsAggregate,
-    UserOverviewAggregate,
 )
 from backend.admin.service import AdminUsageService
 from backend.core.exceptions import ApiError
+from backend.usage.repository import UserActivityAggregate
 
 
 @pytest.mark.asyncio
@@ -126,7 +126,7 @@ async def test_usage_summary_returns_null_latency_when_no_latency_data_exists() 
 @pytest.mark.asyncio
 async def test_list_user_overviews_maps_rows_and_forwards_range_limit_offset() -> None:
     last_activity = datetime(2026, 5, 2, 16, 30, tzinfo=UTC)
-    aggregate = UserOverviewAggregate(
+    aggregate = UserActivityAggregate(
         display_name="Student Demo",
         access_level="student",
         total_messages_sent=3,
@@ -228,7 +228,7 @@ class CapturingUsageRepository:
         *,
         metrics: UsageMetricsAggregate | None = None,
         daily_usage: list[DailyUsageAggregate] | None = None,
-        user_overviews: list[UserOverviewAggregate] | None = None,
+        user_overviews: list[UserActivityAggregate] | None = None,
     ) -> None:
         self.metrics = metrics or UsageMetricsAggregate(
             total_users=0,

@@ -5,9 +5,9 @@ from decimal import Decimal
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.models import UserAccount
 from backend.chat.models import Conversation, LLMCostComponent, Message
 from backend.chat.schemas import MessageRole, MessageStatus
+from backend.usage.repository import UserActivityAggregate, list_admin_user_activity
 
 
 @dataclass(frozen=True)
@@ -29,15 +29,6 @@ class DailyUsageAggregate:
     user_queries: int
     assistant_responses: int
     total_tokens: int
-
-
-@dataclass(frozen=True)
-class UserOverviewAggregate:
-    display_name: str
-    access_level: str
-    total_messages_sent: int
-    blocked_requests: int
-    last_activity: datetime | None
 
 
 class AdminUsageRepository:
@@ -186,75 +177,14 @@ class AdminUsageRepository:
         range_end: datetime,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[UserOverviewAggregate]:
-        last_activity = func.max(Message.created_at).label("last_activity")
-        total_messages_sent = func.coalesce(
-            func.sum(case((Message.role == MessageRole.USER.value, 1), else_=0)),
-            0,
-        ).label("total_messages_sent")
-        blocked_requests = func.coalesce(
-            func.sum(
-                case(
-                    (
-                        (Message.role == MessageRole.ASSISTANT.value)
-                        & (Message.status == MessageStatus.BLOCKED.value),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ),
-            0,
-        ).label("blocked_requests")
-
-        activity = (
-            select(
-                Message.user_id.label("user_id"),
-                total_messages_sent,
-                blocked_requests,
-                last_activity,
-            )
-            .where(
-                Message.created_at >= range_start,
-                Message.created_at < range_end,
-            )
-            .group_by(Message.user_id)
-            .subquery()
+    ) -> list[UserActivityAggregate]:
+        return await list_admin_user_activity(
+            session,
+            range_start=range_start,
+            range_end=range_end,
+            limit=limit,
+            offset=offset,
         )
-
-        statement = (
-            select(
-                UserAccount.first_name,
-                UserAccount.last_name,
-                UserAccount.role.label("access_level"),
-                activity.c.total_messages_sent,
-                activity.c.blocked_requests,
-                activity.c.last_activity,
-            )
-            .select_from(UserAccount)
-            .outerjoin(activity, activity.c.user_id == UserAccount.id)
-            .where(UserAccount.deleted_at.is_(None))
-            .order_by(
-                activity.c.last_activity.desc().nulls_last(),
-                UserAccount.first_name.asc().nulls_last(),
-                UserAccount.last_name.asc().nulls_last(),
-                UserAccount.clerk_id.asc(),
-                UserAccount.id.asc(),
-            )
-            .offset(offset)
-            .limit(limit)
-        )
-
-        rows = (await session.execute(statement)).all()
-        return [
-            UserOverviewAggregate(
-                display_name=f"{row.first_name} {row.last_name}",
-                access_level=row.access_level,
-                total_messages_sent=int(row.total_messages_sent or 0),
-                blocked_requests=int(row.blocked_requests or 0),
-                last_activity=row.last_activity,
-            )
-            for row in rows
-        ]
 
 
 async def _list_daily_component_tokens(
