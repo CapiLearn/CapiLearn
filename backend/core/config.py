@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     app_name: str = "CapiLearn API"
     environment: str = "local"
     api_prefix: str = "/api"
+    api_docs_enabled: bool = False
     log_level: str = "INFO"
     log_format: Literal["json", "plain"] = "json"
     request_id_header: str = "X-Request-Id"
