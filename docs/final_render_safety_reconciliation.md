@@ -52,6 +52,7 @@ intentionally overridden for a specific verification or debugging window.
       validated beta settings above.
 - [ ] Backend env includes the final/default RAG config above.
 - [ ] Backend env includes valid `DATABASE_URL` and required LLM/OpenAI secrets.
+- [ ] Backend env sets `API_DOCS_ENABLED=false` for production.
 - [ ] Frontend env sets `VITE_API_BASE_URL` to the deployed backend URL.
 - [ ] No Chroma or local `sentence-transformers` env values are configured for
       the Render deployment.
