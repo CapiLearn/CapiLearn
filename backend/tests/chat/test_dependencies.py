@@ -100,6 +100,7 @@ async def test_bind_chat_rate_limit_user_stores_user_on_request_state() -> None:
     user = CurrentUser(
         id=uuid4(),
         clerk_id="user_chat_rate_limit",
+        display_name="Rate Limited User",
         role=UserRole.STUDENT,
     )
     request = SimpleNamespace(state=SimpleNamespace())

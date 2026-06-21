@@ -35,6 +35,7 @@ def _current_user() -> CurrentUser:
     return CurrentUser(
         id=uuid4(),
         clerk_id=f"user_{uuid4().hex}",
+        display_name="Test User",
         role=UserRole.STUDENT,
     )
 

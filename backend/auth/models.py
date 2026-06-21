@@ -18,12 +18,17 @@ class UserAccount(Base):
             "role IN ('student', 'instructor', 'admin')",
             name="role",
         ),
+        CheckConstraint("length(trim(first_name)) > 0", name="first_name_not_blank"),
+        CheckConstraint("length(trim(last_name)) > 0", name="last_name_not_blank"),
         Index("user_account_clerk_id_idx", "clerk_id", unique=True),
         Index("user_account_role_idx", "role"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     clerk_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    clerk_profile_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     role: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
