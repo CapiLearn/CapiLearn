@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from backend.auth.dependencies import CurrentUserDep
+from backend.auth.dependencies import StudentUserDep
 from backend.auth.schemas import CurrentUser
 from backend.chat.service import ChatService
 from backend.core.database import DbSession
@@ -40,7 +40,7 @@ LLMServiceDep = Annotated[LLMService, Depends(get_llm_service)]
 
 async def bind_chat_rate_limit_user(
     request: Request,
-    current_user: CurrentUserDep,
+    current_user: StudentUserDep,
 ) -> CurrentUser:
     request.state.current_user = current_user
     return current_user
@@ -51,12 +51,12 @@ ChatRateLimitUserDep = Annotated[CurrentUser, Depends(bind_chat_rate_limit_user)
 
 def get_chat_service(
     session: DbSession,
-    current_user: CurrentUserDep,
+    current_user: StudentUserDep,
     llm_service: LLMServiceDep,
 ) -> ChatService:
     return ChatService(
         session=session,
-        current_user=current_user,
+        user_id=current_user.id,
         llm_service=llm_service,
     )
 

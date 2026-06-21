@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.schemas import CurrentUser
 from backend.chat.models import Conversation, Message, utc_now
 from backend.chat.repository import ChatRepository
 from backend.chat.schemas import (
@@ -49,13 +48,13 @@ class ChatService:
         self,
         *,
         session: AsyncSession,
-        current_user: CurrentUser,
+        user_id: UUID,
         llm_service: LLMService,
         repository: ChatRepository | None = None,
         trace_sink: LLMTraceSink | None = None,
     ) -> None:
         self._session = session
-        self._current_user = current_user
+        self._user_id = user_id
         self._llm_service = llm_service
         self._repository = repository or ChatRepository()
         self._trace_sink = trace_sink or NoopLLMTraceSink()
@@ -63,7 +62,7 @@ class ChatService:
     async def list_conversations(self) -> ConversationListResponse:
         conversations = await self._repository.list_conversations(
             self._session,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         return ConversationListResponse(
             conversations=[
@@ -76,7 +75,7 @@ class ChatService:
         messages = await self._repository.list_messages(
             self._session,
             conversation_id=conversation.id,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         return MessageListResponse(
             messages=[self._message_response(message) for message in messages],
@@ -94,7 +93,7 @@ class ChatService:
         title = _title_from_content(content)
         conversation = await self._repository.create_conversation(
             self._session,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
             title=title,
         )
         return await self._create_message(conversation=conversation, content=content, history=[])
@@ -108,7 +107,7 @@ class ChatService:
         existing_messages = await self._repository.list_messages(
             self._session,
             conversation_id=conversation.id,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         history = _history_from_messages(existing_messages)
         return await self._create_message(
@@ -130,7 +129,7 @@ class ChatService:
             user_message = await self._repository.create_message(
                 self._session,
                 conversation=conversation,
-                user_id=self._current_user.id,
+                user_id=self._user_id,
                 role=MessageRole.USER,
                 status=MessageStatus.COMPLETED,
                 content=content,
@@ -138,7 +137,7 @@ class ChatService:
             assistant_message = await self._repository.create_message(
                 self._session,
                 conversation=conversation,
-                user_id=self._current_user.id,
+                user_id=self._user_id,
                 role=MessageRole.ASSISTANT,
                 status=MessageStatus.PENDING,
                 content="",
@@ -155,7 +154,7 @@ class ChatService:
             ) from exc
 
         event_fields = _chat_event_fields(
-            current_user=self._current_user,
+            user_id=self._user_id,
             conversation=conversation,
             user_message=user_message,
             assistant_message=assistant_message,
@@ -165,7 +164,7 @@ class ChatService:
         log_event(logger, "chat.turn.started", **event_fields)
 
         request = LLMRequest(
-            user_id=self._current_user.id,
+            user_id=self._user_id,
             conversation_id=conversation.id,
             user_message_id=user_message.id,
             assistant_message_id=assistant_message.id,
@@ -253,7 +252,7 @@ class ChatService:
         conversation = await self._repository.get_conversation(
             self._session,
             conversation_id=conversation_id,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         if conversation is None:
             raise ApiError(
@@ -441,7 +440,7 @@ def _original_llm_exception(exc: Exception) -> Exception:
 
 def _chat_event_fields(
     *,
-    current_user: CurrentUser,
+    user_id: UUID,
     conversation: Conversation,
     user_message: Message,
     assistant_message: Message,
@@ -449,7 +448,7 @@ def _chat_event_fields(
 ) -> dict:
     return {
         "request_id": request_id,
-        "user_id": str(current_user.id),
+        "user_id": str(user_id),
         "conversation_id": str(conversation.id),
         "user_message_id": str(user_message.id),
         "assistant_message_id": str(assistant_message.id),
