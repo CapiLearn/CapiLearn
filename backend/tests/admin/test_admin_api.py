@@ -13,8 +13,6 @@ from backend.admin.schemas import (
     AdminUsageSummaryResponse,
     AdminUserOverview,
     AdminUserOverviewResponse,
-    CostComponentResponse,
-    CostComponentsResponse,
     HealthStatus,
     UsageMetrics,
     UsageRange,
@@ -49,7 +47,7 @@ def test_admin_openapi_exposes_usage_summary_route() -> None:
     assert "/api/admin/health" in schema["paths"]
     assert "/api/admin/usage/summary" in schema["paths"]
     assert "/api/admin/users/overview" in schema["paths"]
-    assert "/api/admin/usage/cost-components" in schema["paths"]
+    assert "/api/admin/usage/cost-components" not in schema["paths"]
     assert schema["paths"]["/api/admin/health"]["get"]["operationId"] == "getAdminHealth"
     assert (
         schema["paths"]["/api/admin/usage/summary"]["get"]["operationId"] == "getAdminUsageSummary"
@@ -57,10 +55,6 @@ def test_admin_openapi_exposes_usage_summary_route() -> None:
     assert (
         schema["paths"]["/api/admin/users/overview"]["get"]["operationId"]
         == "listAdminUserOverviews"
-    )
-    assert (
-        schema["paths"]["/api/admin/usage/cost-components"]["get"]["operationId"]
-        == "listAdminUsageCostComponents"
     )
 
 
@@ -76,7 +70,6 @@ def _authorize(role: UserRole = UserRole.ADMIN) -> None:
     ("path", "service_dependency"),
     [
         ("/api/admin/usage/summary", get_admin_usage_service),
-        ("/api/admin/usage/cost-components", get_admin_usage_service),
         ("/api/admin/users/overview", get_admin_usage_service),
         ("/api/admin/health", get_admin_health_service),
     ],
@@ -206,38 +199,16 @@ async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cost_components_endpoint_returns_granular_rows() -> None:
+async def test_cost_components_endpoint_is_not_available() -> None:
     _authorize(UserRole.ADMIN)
-    service = FakeAdminUsageService()
-    conversation_id = uuid4()
-    assistant_message_id = uuid4()
-    app.dependency_overrides[get_admin_usage_service] = lambda: service
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        response = await client.get(
-            "/api/admin/usage/cost-components?fromDate=2026-05-01&toDate=2026-05-04"
-            f"&conversationId={conversation_id}&assistantMessageId={assistant_message_id}"
-            "&componentType=repair_generation&limit=25&offset=50",
-        )
+        response = await client.get("/api/admin/usage/cost-components")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["range"] == {
-        "fromDate": "2026-05-01",
-        "toDate": "2026-05-04",
-    }
-    assert payload["costComponents"][0]["componentType"] == "repair_generation"
-    assert payload["costComponents"][0]["estimatedCostUsd"] == "0.001000000000"
-    assert service.from_date == "2026-05-01"
-    assert service.to_date == "2026-05-04"
-    assert service.conversation_id == conversation_id
-    assert service.assistant_message_id == assistant_message_id
-    assert service.component_type == "repair_generation"
-    assert service.limit == 25
-    assert service.offset == 50
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -272,8 +243,6 @@ async def test_user_overviews_endpoint_returns_camel_case_rows_and_forwards_para
 @pytest.mark.parametrize(
     ("path", "query"),
     [
-        ("/api/admin/usage/cost-components", "limit=501"),
-        ("/api/admin/usage/cost-components", "offset=-1"),
         ("/api/admin/users/overview", "limit=501"),
         ("/api/admin/users/overview", "offset=-1"),
     ],
@@ -616,9 +585,6 @@ class FakeAdminUsageService:
     def __init__(self) -> None:
         self.from_date = None
         self.to_date = None
-        self.conversation_id = None
-        self.assistant_message_id = None
-        self.component_type = None
         self.limit = None
         self.offset = None
 
@@ -645,56 +611,6 @@ class FakeAdminUsageService:
                 average_latency_ms=1830,
             ),
             daily_usage=[],
-        )
-
-    async def list_cost_components(
-        self,
-        *,
-        from_date: str | None,
-        to_date: str | None,
-        conversation_id=None,
-        assistant_message_id=None,
-        component_type: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> CostComponentsResponse:
-        self.from_date = from_date
-        self.to_date = to_date
-        self.conversation_id = conversation_id
-        self.assistant_message_id = assistant_message_id
-        self.component_type = component_type
-        self.limit = limit
-        self.offset = offset
-        return CostComponentsResponse(
-            range=UsageRange(
-                from_date=from_date or "2026-05-01",
-                to_date=to_date or "2026-05-04",
-            ),
-            cost_components=[
-                CostComponentResponse(
-                    id=uuid4(),
-                    user_id=uuid4(),
-                    conversation_id=conversation_id or uuid4(),
-                    user_message_id=uuid4(),
-                    assistant_message_id=assistant_message_id or uuid4(),
-                    component_order=1,
-                    component_type=component_type or "main_generation",
-                    attempt_index=1,
-                    provider="openai",
-                    configured_model="openai/gpt-4o-mini",
-                    response_model="gpt-4o-mini",
-                    finish_reason="stop",
-                    status="completed",
-                    prompt_tokens=4,
-                    completion_tokens=5,
-                    total_tokens=9,
-                    estimated_cost_usd="0.001000000000",
-                    latency_ms=120,
-                    error_type=None,
-                    metadata={},
-                    created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
-                )
-            ],
         )
 
     async def list_user_overviews(

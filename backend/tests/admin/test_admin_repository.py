@@ -17,25 +17,6 @@ from backend.chat.schemas import MessageRole, MessageStatus
 
 
 @pytest.mark.asyncio
-async def test_cost_component_repository_applies_limit_and_offset() -> None:
-    session = CapturingScalarSession()
-    repository = AdminUsageRepository()
-
-    rows = await repository.list_cost_components(
-        session,
-        range_start=datetime(2026, 5, 1, tzinfo=UTC),
-        range_end=datetime(2026, 5, 2, tzinfo=UTC),
-        limit=25,
-        offset=50,
-    )
-
-    assert rows == []
-    assert session.statement is not None
-    assert session.statement._limit_clause.value == 25
-    assert session.statement._offset_clause.value == 50
-
-
-@pytest.mark.asyncio
 async def test_user_overview_repository_aggregates_contract_rows() -> None:
     engine = create_engine("sqlite:///:memory:")
     UserAccount.__table__.create(engine)
@@ -389,20 +370,6 @@ def _message(
         content="test",
         created_at=created_at,
     )
-
-
-class CapturingScalarSession:
-    def __init__(self) -> None:
-        self.statement = None
-
-    async def scalars(self, statement):
-        self.statement = statement
-        return EmptyScalarResult()
-
-
-class EmptyScalarResult:
-    def all(self):
-        return []
 
 
 class SequencedSession:
