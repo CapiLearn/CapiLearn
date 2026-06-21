@@ -198,22 +198,6 @@ async def test_calendar_rejects_invalid_date_range() -> None:
     assert exc_info.value.code == "invalid_date_range"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("role", [UserRole.INSTRUCTOR, UserRole.ADMIN])
-async def test_activity_requires_student_role(role: UserRole) -> None:
-    service = StudentActivityService(
-        session=FakeSession(),
-        current_user=_current_user(role=role),
-        repository=FakeActivityRepository(),
-    )
-
-    with pytest.raises(ApiError) as exc_info:
-        await service.record_login()
-
-    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-    assert exc_info.value.code == "student_required"
-
-
 def _current_user(role: UserRole = UserRole.STUDENT) -> CurrentUser:
     return CurrentUser(
         id=uuid4(),

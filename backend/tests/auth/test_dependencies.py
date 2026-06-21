@@ -13,7 +13,8 @@ from backend.auth.dependencies import (
     get_current_principal,
     get_current_user,
     require_admin,
-    require_instructor_or_admin,
+    require_instructor,
+    require_student_user,
 )
 from backend.auth.dependencies import TestRequestVerifier as AuthTestRequestVerifier
 from backend.auth.repository import UserAccountRepository
@@ -304,13 +305,43 @@ async def test_admin_role_dependency_accepts_admin_principal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_role_dependency_accepts_instructor_or_admin_principal() -> None:
+async def test_instructor_role_dependency_accepts_instructor_principal() -> None:
     principal = AuthPrincipal(clerk_id="user_instructor", role=UserRole.INSTRUCTOR)
 
-    resolved = await require_instructor_or_admin(principal)
+    resolved = await require_instructor(principal)
 
     assert resolved is principal
-    assert list(signature(require_instructor_or_admin).parameters) == ["principal"]
+    assert list(signature(require_instructor).parameters) == ["principal"]
+
+
+def test_student_user_dependency_accepts_student_current_user() -> None:
+    current_user = CurrentUser(
+        id=uuid4(),
+        clerk_id="user_student",
+        display_name="Student User",
+        role=UserRole.STUDENT,
+    )
+
+    resolved = require_student_user(current_user)
+
+    assert resolved is current_user
+    assert list(signature(require_student_user).parameters) == ["current_user"]
+
+
+@pytest.mark.parametrize("role", [UserRole.INSTRUCTOR, UserRole.ADMIN])
+def test_student_user_dependency_rejects_non_student_current_user(role: UserRole) -> None:
+    current_user = CurrentUser(
+        id=uuid4(),
+        clerk_id=f"user_{role.value}",
+        display_name="Non Student User",
+        role=role,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        require_student_user(current_user)
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    assert exc_info.value.code == "student_required"
 
 
 @pytest.mark.asyncio
@@ -323,9 +354,20 @@ async def test_admin_role_dependency_rejects_missing_principal_without_bootstrap
 
 
 @pytest.mark.asyncio
-async def test_instructor_or_admin_dependency_rejects_missing_principal_without_bootstrap() -> None:
+async def test_instructor_role_dependency_rejects_missing_principal_without_bootstrap() -> None:
     with pytest.raises(ApiError) as exc_info:
-        await require_instructor_or_admin(None)
+        await require_instructor(None)
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    assert exc_info.value.code == "forbidden"
+
+
+@pytest.mark.asyncio
+async def test_instructor_role_dependency_rejects_admin_principal() -> None:
+    principal = AuthPrincipal(clerk_id="user_admin", role=UserRole.ADMIN)
+
+    with pytest.raises(ApiError) as exc_info:
+        await require_instructor(principal)
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert exc_info.value.code == "forbidden"

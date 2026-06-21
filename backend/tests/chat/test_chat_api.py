@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.dependencies import (
-    CurrentUserDep,
+    StudentUserDep,
     get_current_user,
 )
 from backend.auth.schemas import CurrentUser, UserRole
@@ -97,7 +97,7 @@ def _current_user(role: UserRole = UserRole.STUDENT) -> CurrentUser:
 
 
 def _override_chat_service(service: "FakeChatService") -> None:
-    async def override(_: CurrentUserDep) -> FakeChatService:
+    async def override(_: StudentUserDep) -> FakeChatService:
         return service
 
     app.dependency_overrides[get_chat_service] = override
@@ -436,13 +436,9 @@ async def test_delete_conversation_returns_empty_204_response() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "role",
-    [UserRole.STUDENT, UserRole.INSTRUCTOR, UserRole.ADMIN],
-)
-async def test_chat_routes_accept_authenticated_roles(role: UserRole) -> None:
-    _authorize(role)
-    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
+async def test_chat_routes_accept_student_role() -> None:
+    _authorize(UserRole.STUDENT)
+    _override_chat_service(FakeChatService())
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -451,6 +447,26 @@ async def test_chat_routes_accept_authenticated_roles(role: UserRole) -> None:
         response = await client.get("/api/conversations")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [UserRole.INSTRUCTOR, UserRole.ADMIN])
+async def test_chat_routes_reject_non_student_roles(role: UserRole) -> None:
+    _authorize(role)
+    _override_chat_service(FakeChatService())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/conversations")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "student_required",
+        "message": "Student access is required.",
+        "details": None,
+    }
 
 
 class FakeChatService:

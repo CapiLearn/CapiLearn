@@ -162,6 +162,19 @@ async def get_current_user(
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 
+def require_student_user(current_user: CurrentUserDep) -> CurrentUser:
+    if current_user.role != UserRole.STUDENT:
+        raise ApiError(
+            code="student_required",
+            message="Student access is required.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    return current_user
+
+
+StudentUserDep = Annotated[CurrentUser, Depends(require_student_user)]
+
+
 async def get_bootstrap_current_user(
     session: DbSession,
     auth_claims: ClerkAuthClaimsDep,
@@ -206,7 +219,7 @@ def require_role(*roles: UserRole) -> Callable[[AuthPrincipal], AuthPrincipal]:
 
 
 require_admin = require_role(UserRole.ADMIN)
-require_instructor_or_admin = require_role(UserRole.INSTRUCTOR, UserRole.ADMIN)
+require_instructor = require_role(UserRole.INSTRUCTOR)
 
 
 def _raise_role_error(allowed_roles: set[UserRole]) -> None:
