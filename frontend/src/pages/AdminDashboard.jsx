@@ -5,6 +5,7 @@ import {
   getAdminUsageSummary,
 } from "../services/adminService";
 import "../styles/AdminDashboard.css";
+import { useAuth } from "@clerk/react";
 
 const adminNavItems = [
   { id: "overview", label: "System Overview", status: "available" },
@@ -118,6 +119,7 @@ function AdminDashboard() {
     metricsDateRange.fromDate &&
     metricsDateRange.toDate &&
     metricsDateRange.fromDate > metricsDateRange.toDate;
+  const { getToken } = useAuth();  
 
   useEffect(() => {
     async function loadUsageSummary() {
@@ -135,7 +137,7 @@ function AdminDashboard() {
           toDate: addUtcCalendarDay(metricsDateRange.toDate),
         };
 
-        const data = await getAdminUsageSummary(apiDateRange);
+        const data = await getAdminUsageSummary(getToken, apiDateRange);
 
         setUsageSummary(data);
       } catch (error) {
@@ -148,7 +150,7 @@ function AdminDashboard() {
     }
 
     loadUsageSummary();
-  }, [metricsDateRange, isMetricsDateRangeInvalid]);
+  }, [getToken, metricsDateRange, isMetricsDateRangeInvalid]);
 
   useEffect(() => {
     async function loadSystemHealth() {
@@ -156,7 +158,7 @@ function AdminDashboard() {
         setIsLoadingSystemHealth(true);
         setSystemHealthErrorMessage("");
 
-        const data = await getAdminSystemHealth();
+        const data = await getAdminSystemHealth(getToken);
 
         setSystemHealth(data);
       } catch (error) {
@@ -169,7 +171,7 @@ function AdminDashboard() {
     }
 
     loadSystemHealth();
-  }, []);
+  }, [getToken]);
 
   const metrics = usageSummary?.metrics;
   const healthChecks = systemHealth?.checks || [];
