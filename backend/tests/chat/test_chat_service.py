@@ -70,7 +70,7 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -152,7 +152,7 @@ async def test_create_message_uses_completed_history() -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -309,7 +309,7 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -372,7 +372,7 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -446,7 +446,7 @@ async def test_blocked_input_returns_blocked_assistant_message(caplog) -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -483,7 +483,7 @@ async def test_blocked_output_returns_blocked_assistant_message() -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -504,7 +504,7 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog)
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FailingLLMService(),
         repository=repository,
     )
@@ -530,7 +530,7 @@ async def test_llm_service_error_persists_failed_cost_components() -> None:
     llm_service = FailingCostedLLMService()
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -551,7 +551,7 @@ async def test_default_trace_sink_is_explicit_noop() -> None:
     user = _current_user()
     service = ChatService(
         session=FakeSession(),
-        current_user=user,
+        user_id=user.id,
         llm_service=FakeLLMService(LLMResult(content="ok")),
         repository=FakeChatRepository(user_id=user.id),
     )
@@ -573,7 +573,7 @@ async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> No
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FakeLLMService(
             LLMResult(
                 content="Cells are small units.",
@@ -600,7 +600,7 @@ async def test_trace_sink_failure_does_not_block_blocked_message() -> None:
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FakeLLMService(
             LLMResult(
                 content="Input blocked.",
@@ -630,7 +630,7 @@ async def test_trace_sink_failure_preserves_llm_unavailable_error() -> None:
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FailingLLMService(),
         repository=repository,
         trace_sink=BestEffortLLMTraceSink(FailingTraceSink()),
@@ -657,7 +657,7 @@ async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=ConflictingChatRepository(user_id=user.id),
     )
@@ -813,7 +813,7 @@ def _new_conversation_service(llm_result: LLMResult):
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FakeLLMService(llm_result),
         repository=repository,
     )
@@ -850,7 +850,7 @@ def _service_with_existing_message(
     llm_service = FakeLLMService(llm_result or LLMResult(content="unused"))
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )

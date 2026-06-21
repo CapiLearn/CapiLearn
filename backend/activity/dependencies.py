@@ -11,7 +11,7 @@ def get_student_activity_service(
     session: DbSession,
     current_user: StudentUserDep,
 ) -> StudentActivityService:
-    return StudentActivityService(session=session, current_user=current_user)
+    return StudentActivityService(session=session, user_id=current_user.id)
 
 
 StudentActivityServiceDep = Annotated[

@@ -388,7 +388,7 @@ async def test_non_send_chat_endpoints_are_not_limited_by_message_limiter() -> N
 @pytest.mark.asyncio
 async def test_conversation_and_message_reads_are_frontend_safe() -> None:
     _authorize()
-    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
+    _override_chat_service(FakeChatService())
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -422,7 +422,7 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
 async def test_delete_conversation_returns_empty_204_response() -> None:
     _authorize()
     service = FakeChatService()
-    app.dependency_overrides[get_chat_service] = lambda: service
+    _override_chat_service(service)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

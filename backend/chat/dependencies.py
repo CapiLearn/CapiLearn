@@ -56,7 +56,7 @@ def get_chat_service(
 ) -> ChatService:
     return ChatService(
         session=session,
-        current_user=current_user,
+        user_id=current_user.id,
         llm_service=llm_service,
     )
 

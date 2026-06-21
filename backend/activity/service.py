@@ -1,5 +1,6 @@
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import status
@@ -11,7 +12,6 @@ from backend.activity.schemas import (
     ActivityCalendarResponse,
     LoginActivityResponse,
 )
-from backend.auth.schemas import CurrentUser
 from backend.core.exceptions import ApiError
 
 EASTERN_TIME = ZoneInfo("America/New_York")
@@ -22,12 +22,12 @@ class StudentActivityService:
         self,
         *,
         session: AsyncSession,
-        current_user: CurrentUser,
+        user_id: UUID,
         repository: StudentDailyActivityRepository | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._session = session
-        self._current_user = current_user
+        self._user_id = user_id
         self._repository = repository or StudentDailyActivityRepository()
         self._clock = clock or _utc_now
 
@@ -36,7 +36,7 @@ class StudentActivityService:
         activity_date = eastern_activity_date(seen_at)
         await self._repository.record_login(
             self._session,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
             activity_date=activity_date,
             seen_at=seen_at,
         )
@@ -67,7 +67,7 @@ class StudentActivityService:
 
         days = await self._repository.list_between(
             self._session,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
             from_date=from_date,
             to_date=to_date,
         )
@@ -88,7 +88,7 @@ class StudentActivityService:
     async def _current_streak(self, *, current_date: date) -> int:
         dates = await self._repository.list_dates_through(
             self._session,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
             through_date=current_date,
         )
         return current_streak(dates, current_date=current_date)

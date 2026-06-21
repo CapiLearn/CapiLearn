@@ -35,7 +35,7 @@ async def test_record_login_creates_activity_for_eastern_date() -> None:
     session = FakeSession()
     service = StudentActivityService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         repository=repository,
         clock=lambda: datetime(2026, 6, 14, 3, 30, tzinfo=UTC),
     )
@@ -56,7 +56,7 @@ async def test_record_login_rejects_naive_clock_timestamp() -> None:
     session = FakeSession()
     service = StudentActivityService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         repository=repository,
         clock=lambda: datetime(2026, 6, 14, 3, 30),
     )
@@ -79,7 +79,7 @@ async def test_record_login_updates_existing_eastern_day() -> None:
     )
     service = StudentActivityService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         repository=repository,
         clock=clock,
     )
@@ -100,7 +100,7 @@ async def test_current_streak_counts_from_yesterday_before_today_login() -> None
     repository.seed(date(2026, 6, 10), date(2026, 6, 11), date(2026, 6, 12))
     service = StudentActivityService(
         session=FakeSession(),
-        current_user=user,
+        user_id=user.id,
         repository=repository,
         clock=lambda: datetime(2026, 6, 13, 15, tzinfo=UTC),
     )
@@ -125,7 +125,7 @@ async def test_current_streak_stops_at_gap() -> None:
     repository.seed(date(2026, 6, 10), date(2026, 6, 12))
     service = StudentActivityService(
         session=FakeSession(),
-        current_user=user,
+        user_id=user.id,
         repository=repository,
         clock=lambda: datetime(2026, 6, 13, 15, tzinfo=UTC),
     )
@@ -146,7 +146,7 @@ async def test_calendar_ignores_records_for_other_users() -> None:
     repository.seed(date(2026, 6, 11), user_id=uuid4())
     service = StudentActivityService(
         session=FakeSession(),
-        current_user=user,
+        user_id=user.id,
         repository=repository,
         clock=lambda: datetime(2026, 6, 13, 15, tzinfo=UTC),
     )
@@ -168,7 +168,7 @@ async def test_activity_fake_allows_same_day_records_for_different_users() -> No
     repository.seed(date(2026, 6, 10), user_id=other_user_id)
     service = StudentActivityService(
         session=FakeSession(),
-        current_user=user,
+        user_id=user.id,
         repository=repository,
         clock=lambda: datetime(2026, 6, 10, 15, tzinfo=UTC),
     )
@@ -182,9 +182,10 @@ async def test_activity_fake_allows_same_day_records_for_different_users() -> No
 
 @pytest.mark.asyncio
 async def test_calendar_rejects_invalid_date_range() -> None:
+    user = _current_user()
     service = StudentActivityService(
         session=FakeSession(),
-        current_user=_current_user(),
+        user_id=user.id,
         repository=FakeActivityRepository(),
     )
 
