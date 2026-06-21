@@ -25,7 +25,31 @@ body {
 
   display: flex;
   flex-direction: column;
+  position: relative;
+  overflow: hidden;
   min-height: 100vh;
+}
+
+.instructor-sidebar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 200px; /* sits above logout button */
+  transform: translateX(-50%);
+  width: 230px;
+  height: 230px;
+  background-image: url("../assets/capi_instructor_watermark.webp");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.instructor-sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .instructor-brand {
@@ -42,13 +66,10 @@ body {
 .instructor-brand-icon {
   width: 34px;
   height: 34px;
+  flex: 0 0 34px;
   border-radius: 8px;
-  background: #557c38;
-  color: #fff7e3;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  object-fit: contain;
+  display: block;
 }
 
 .instructor-nav {
@@ -125,27 +146,6 @@ body {
   gap: 24px;
 
   margin-bottom: 30px;
-}
-
-.instructor-main::after {
-  content: "";
-  position: fixed;
-  right: 32px;
-  bottom: 24px;
-  width: 300px;
-  height: 300px;
-  background-image: url("../assets/capi-instructor.svg");
-  background-repeat: no-repeat;
-  background-size: contain;
-  background-position: center;
-  opacity: 0.045;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.instructor-main > * {
-  position: relative;
-  z-index: 1;
 }
 
 .instructor-kicker {
