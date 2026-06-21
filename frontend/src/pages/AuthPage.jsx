@@ -2,6 +2,7 @@ import { SignIn, SignUp } from "@clerk/react";
 import capiMascot from "../assets/capi-instructor.svg";
 import "../styles/AuthPage.css";
 import pomMascot from "../assets/pom.svg";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 
 const clerkAppearance = {
   elements: {
@@ -18,7 +19,12 @@ function AuthPage({ mode, title, description }) {
   return (
     <main className="auth-page">
       <section className="auth-hero-panel">
-        <div className="auth-brand-mark">♧</div>
+        <img
+          src={capiCoffeeIcon}
+          alt=""
+          className="auth-brand-mark"
+          aria-hidden="true"
+        />
         <p className="auth-kicker">CapiLearn</p>
         <h1>{title}</h1>
         <p>{description}</p>
