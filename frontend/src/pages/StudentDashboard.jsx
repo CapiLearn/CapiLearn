@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import "../styles/StudentDashboard.css";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 
 const statCards = [
   {
@@ -65,7 +66,12 @@ function StudentDashboard() {
     <main className="student-dashboard-page">
       <aside className="student-dashboard-sidebar">
         <div className="dashboard-brand">
-          <div className="dashboard-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="dashboard-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
