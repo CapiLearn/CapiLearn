@@ -30,6 +30,7 @@ class DailyUsageAggregate:
     assistant_responses: int
     total_tokens: int
 
+
 class AdminUsageRepository:
     async def get_usage_metrics(
         self,

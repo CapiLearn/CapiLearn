@@ -335,6 +335,7 @@ async def test_daily_usage_uses_component_tokens_and_zeroes_nulls() -> None:
     ]
     assert len(session.execute_statements) == 2
 
+
 class SequencedSession:
     def __init__(
         self,
