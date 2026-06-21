@@ -1,11 +1,12 @@
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.activity.dates import as_utc as _as_utc
+from backend.activity.dates import eastern_activity_date
 from backend.activity.repository import StudentDailyActivityRepository
 from backend.activity.schemas import (
     ActivityCalendarDay,
@@ -13,8 +14,6 @@ from backend.activity.schemas import (
     LoginActivityResponse,
 )
 from backend.core.exceptions import ApiError
-
-EASTERN_TIME = ZoneInfo("America/New_York")
 
 
 class StudentActivityService:
@@ -94,10 +93,6 @@ class StudentActivityService:
         return current_streak(dates, current_date=current_date)
 
 
-def eastern_activity_date(value: datetime) -> date:
-    return _as_utc(value).astimezone(EASTERN_TIME).date()
-
-
 def current_streak(activity_dates: Sequence[date], *, current_date: date) -> int:
     activity_date_set = set(activity_dates)
     streak_date = (
@@ -108,12 +103,6 @@ def current_streak(activity_dates: Sequence[date], *, current_date: date) -> int
         streak += 1
         streak_date -= timedelta(days=1)
     return streak
-
-
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("Activity timestamps must be timezone-aware.")
-    return value.astimezone(UTC)
 
 
 def _utc_now() -> datetime:

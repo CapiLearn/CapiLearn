@@ -1,7 +1,5 @@
-import re
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,18 +14,10 @@ from backend.admin.schemas import (
     UsageRange,
     format_cost,
 )
-from backend.core.exceptions import ApiError
+from backend.core.date_ranges import DateWindow, resolve_date_window
 
-DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATE_RANGE_ERROR = "Usage summary ranges must use UTC calendar dates and span at least one day."
 MAX_USAGE_RANGE_DAYS = 366
-
-
-@dataclass(frozen=True)
-class ResolvedUsageWindow:
-    usage_range: UsageRange
-    range_start: datetime
-    range_end: datetime
 
 
 class AdminUsageService:
@@ -63,8 +53,8 @@ class AdminUsageService:
 
         return AdminUsageSummaryResponse(
             range=UsageRange(
-                from_date=usage_window.usage_range.from_date,
-                to_date=usage_window.usage_range.to_date,
+                from_date=usage_window.from_date,
+                to_date=usage_window.to_date,
             ),
             metrics=UsageMetrics(
                 total_users=metrics.total_users,
@@ -78,8 +68,8 @@ class AdminUsageService:
                 average_latency_ms=_rounded_latency(metrics.average_latency_ms),
             ),
             daily_usage=_fill_daily_usage(
-                from_date=usage_window.usage_range.from_date,
-                to_date=usage_window.usage_range.to_date,
+                from_date=usage_window.from_date,
+                to_date=usage_window.to_date,
                 aggregates=daily_usage,
             ),
         )
@@ -113,62 +103,16 @@ class AdminUsageService:
             ],
         )
 
-    def _resolve_window(self, *, from_date: str | None, to_date: str | None) -> ResolvedUsageWindow:
-        usage_range = self._resolve_range(from_date=from_date, to_date=to_date)
-        return ResolvedUsageWindow(
-            usage_range=usage_range,
-            range_start=datetime.combine(usage_range.from_date, time.min, tzinfo=UTC),
-            range_end=datetime.combine(usage_range.to_date, time.min, tzinfo=UTC),
+    def _resolve_window(self, *, from_date: str | None, to_date: str | None) -> DateWindow:
+        return resolve_date_window(
+            from_date,
+            to_date,
+            clock=self._clock,
+            timezone=UTC,
+            max_days=MAX_USAGE_RANGE_DAYS,
+            invalid_message=DATE_RANGE_ERROR,
+            too_large_message=f"Usage summary ranges cannot exceed {MAX_USAGE_RANGE_DAYS} days.",
         )
-
-    def _resolve_range(self, *, from_date: str | None, to_date: str | None) -> UsageRange:
-        resolved_to_date = (
-            _parse_date(to_date, from_date=from_date, to_date=to_date)
-            if to_date is not None
-            else self._clock().astimezone(UTC).date() + timedelta(days=1)
-        )
-        resolved_from_date = (
-            _parse_date(from_date, from_date=from_date, to_date=to_date)
-            if from_date is not None
-            else resolved_to_date - timedelta(days=7)
-        )
-
-        if resolved_to_date <= resolved_from_date:
-            raise _invalid_date_range(from_date=from_date, to_date=to_date)
-
-        if (resolved_to_date - resolved_from_date).days > MAX_USAGE_RANGE_DAYS:
-            raise ApiError(
-                code="date_range_too_large",
-                message=f"Usage summary ranges cannot exceed {MAX_USAGE_RANGE_DAYS} days.",
-                details={
-                    "fromDate": from_date,
-                    "toDate": to_date,
-                    "maxDays": MAX_USAGE_RANGE_DAYS,
-                },
-            )
-
-        return UsageRange(from_date=resolved_from_date, to_date=resolved_to_date)
-
-
-def _parse_date(value: str, *, from_date: str | None, to_date: str | None) -> date:
-    if not DATE_PATTERN.fullmatch(value):
-        raise _invalid_date_range(from_date=from_date, to_date=to_date)
-
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise _invalid_date_range(from_date=from_date, to_date=to_date) from exc
-
-
-def _invalid_date_range(*, from_date: str | None, to_date: str | None) -> ApiError:
-    return ApiError(
-        code="invalid_date_range",
-        message=DATE_RANGE_ERROR,
-        details={
-            "fromDate": from_date,
-            "toDate": to_date,
-        },
-    )
 
 
 def _rounded_latency(value: Decimal | float | None) -> int | None:
