@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=list)
     clerk_secret_key: str | None = None
     clerk_jwt_key: str | None = None
+    clerk_webhook_signing_secret: str | None = None
     clerk_authorized_parties: list[str] = Field(default_factory=list)
     auth_mode: Literal["clerk", "test"] = "clerk"
     test_auth_clerk_id: str = "user_local_dev"
