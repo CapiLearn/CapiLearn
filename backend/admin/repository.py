@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from uuid import UUID
 
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,31 +29,6 @@ class DailyUsageAggregate:
     user_queries: int
     assistant_responses: int
     total_tokens: int
-
-
-@dataclass(frozen=True)
-class CostComponentAggregate:
-    id: UUID
-    user_id: UUID
-    conversation_id: UUID
-    user_message_id: UUID
-    assistant_message_id: UUID
-    component_order: int
-    component_type: str
-    attempt_index: int
-    provider: str | None
-    configured_model: str | None
-    response_model: str | None
-    finish_reason: str | None
-    status: str
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
-    estimated_cost_usd: Decimal | None
-    latency_ms: int | None
-    error_type: str | None
-    metadata: dict
-    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -202,67 +176,6 @@ class AdminUsageRepository:
                 total_tokens=token_totals.get(usage_day, 0),
             )
             for usage_day in sorted(set(message_counts) | set(token_totals))
-        ]
-
-    async def list_cost_components(
-        self,
-        session: AsyncSession,
-        *,
-        range_start: datetime,
-        range_end: datetime,
-        conversation_id: UUID | None = None,
-        assistant_message_id: UUID | None = None,
-        component_type: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[CostComponentAggregate]:
-        statement = select(LLMCostComponent).where(
-            LLMCostComponent.created_at >= range_start,
-            LLMCostComponent.created_at < range_end,
-        )
-        if conversation_id is not None:
-            statement = statement.where(LLMCostComponent.conversation_id == conversation_id)
-        if assistant_message_id is not None:
-            statement = statement.where(
-                LLMCostComponent.assistant_message_id == assistant_message_id
-            )
-        if component_type is not None:
-            statement = statement.where(LLMCostComponent.component_type == component_type)
-        statement = (
-            statement.order_by(
-                LLMCostComponent.created_at.asc(),
-                LLMCostComponent.component_order.asc(),
-            )
-            .offset(offset)
-            .limit(limit)
-        )
-
-        rows = (await session.scalars(statement)).all()
-        return [
-            CostComponentAggregate(
-                id=row.id,
-                user_id=row.user_id,
-                conversation_id=row.conversation_id,
-                user_message_id=row.user_message_id,
-                assistant_message_id=row.assistant_message_id,
-                component_order=row.component_order,
-                component_type=row.component_type,
-                attempt_index=row.attempt_index,
-                provider=row.provider,
-                configured_model=row.configured_model,
-                response_model=row.response_model,
-                finish_reason=row.finish_reason,
-                status=row.status,
-                prompt_tokens=row.prompt_tokens,
-                completion_tokens=row.completion_tokens,
-                total_tokens=row.total_tokens,
-                estimated_cost_usd=row.estimated_cost_usd,
-                latency_ms=row.latency_ms,
-                error_type=row.error_type,
-                metadata=row.extra_metadata or {},
-                created_at=row.created_at,
-            )
-            for row in rows
         ]
 
     async def list_user_overviews(

@@ -1,11 +1,9 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 
 from backend.admin.repository import (
-    CostComponentAggregate,
     DailyUsageAggregate,
     UsageMetricsAggregate,
     UserOverviewAggregate,
@@ -126,57 +124,6 @@ async def test_usage_summary_returns_null_latency_when_no_latency_data_exists() 
 
 
 @pytest.mark.asyncio
-async def test_list_cost_components_maps_granular_cost_rows() -> None:
-    component = CostComponentAggregate(
-        id=uuid4(),
-        user_id=uuid4(),
-        conversation_id=uuid4(),
-        user_message_id=uuid4(),
-        assistant_message_id=uuid4(),
-        component_order=2,
-        component_type="output_guardrail",
-        attempt_index=1,
-        provider="openai",
-        configured_model="openai/gpt-4o-mini",
-        response_model="gpt-4o-mini-2024-07-18",
-        finish_reason="stop",
-        status="completed",
-        prompt_tokens=10,
-        completion_tokens=2,
-        total_tokens=12,
-        estimated_cost_usd=Decimal("0.000000123456"),
-        latency_ms=44,
-        error_type=None,
-        metadata={"checkType": "output"},
-        created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
-    )
-    repository = CapturingUsageRepository(cost_components=[component])
-    service = AdminUsageService(
-        session=object(),
-        repository=repository,
-        clock=lambda: datetime(2026, 5, 19, 12, tzinfo=UTC),
-    )
-
-    response = await service.list_cost_components(
-        from_date="2026-05-01",
-        to_date="2026-05-02",
-        conversation_id=component.conversation_id,
-        assistant_message_id=component.assistant_message_id,
-        component_type="output_guardrail",
-        limit=25,
-        offset=50,
-    )
-
-    assert repository.conversation_id == component.conversation_id
-    assert repository.assistant_message_id == component.assistant_message_id
-    assert repository.component_type == "output_guardrail"
-    assert repository.limit == 25
-    assert repository.offset == 50
-    assert response.cost_components[0].estimated_cost_usd == "0.000000123456"
-    assert response.cost_components[0].component_type == "output_guardrail"
-
-
-@pytest.mark.asyncio
 async def test_list_user_overviews_maps_rows_and_forwards_range_limit_offset() -> None:
     last_activity = datetime(2026, 5, 2, 16, 30, tzinfo=UTC)
     aggregate = UserOverviewAggregate(
@@ -281,7 +228,6 @@ class CapturingUsageRepository:
         *,
         metrics: UsageMetricsAggregate | None = None,
         daily_usage: list[DailyUsageAggregate] | None = None,
-        cost_components: list[CostComponentAggregate] | None = None,
         user_overviews: list[UserOverviewAggregate] | None = None,
     ) -> None:
         self.metrics = metrics or UsageMetricsAggregate(
@@ -296,13 +242,9 @@ class CapturingUsageRepository:
             average_latency_ms=None,
         )
         self.daily_usage = daily_usage or []
-        self.cost_components = cost_components or []
         self.user_overviews = user_overviews or []
         self.range_start = None
         self.range_end = None
-        self.conversation_id = None
-        self.assistant_message_id = None
-        self.component_type = None
         self.limit = None
         self.offset = None
 
@@ -315,27 +257,6 @@ class CapturingUsageRepository:
         self.range_start = range_start
         self.range_end = range_end
         return self.daily_usage
-
-    async def list_cost_components(
-        self,
-        session,
-        *,
-        range_start,
-        range_end,
-        conversation_id=None,
-        assistant_message_id=None,
-        component_type=None,
-        limit=100,
-        offset=0,
-    ):
-        self.range_start = range_start
-        self.range_end = range_end
-        self.conversation_id = conversation_id
-        self.assistant_message_id = assistant_message_id
-        self.component_type = component_type
-        self.limit = limit
-        self.offset = offset
-        return self.cost_components
 
     async def list_user_overviews(
         self,
