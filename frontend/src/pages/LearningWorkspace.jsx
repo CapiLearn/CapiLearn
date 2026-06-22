@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+// import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
 import { useAuth } from "@clerk/react";
 import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
@@ -430,11 +430,13 @@ function LearningWorkspace() {
             <h1>What would you like to learn today?</h1>
           </div>
 
+          {/* Student dashboard has not been implemented yet.
           <div className="workspace-header-actions">
             <Link className="workspace-dashboard-link" to="/student-dashboard">
               Dashboard
             </Link>
           </div>
+          */}
         </header>
 
         <section className="welcome-card">

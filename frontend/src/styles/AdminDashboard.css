@@ -521,6 +521,20 @@ body {
   padding: 16px;
 }
 
+.usage-detail-item p {
+  margin: 0 0 12px;
+  color: #2b1d15;
+  font-size: 15px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.usage-detail-item span {
+  color: #867a69;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .ingestion-item p {
   margin: 0 0 8px;
   color: #867a69;

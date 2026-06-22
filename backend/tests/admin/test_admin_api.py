@@ -564,14 +564,16 @@ async def test_admin_health_returns_camel_case_response() -> None:
         "checkedAt": "2026-06-09T12:00:00Z",
         "checks": [
             {
-                "name": "database",
+                "id": "database",
+                "name": "Database",
                 "status": "ok",
                 "latencyMs": 8,
                 "message": "Database connectivity check succeeded.",
                 "details": {"backend": "postgres"},
             },
             {
-                "name": "llmProviderMetadata",
+                "id": "llm-provider",
+                "name": "LLM Provider",
                 "status": "degraded",
                 "latencyMs": None,
                 "message": "Provider metadata returned no available models.",
@@ -645,14 +647,16 @@ class FakeAdminHealthService:
             checked_at=datetime(2026, 6, 9, 12, tzinfo=UTC),
             checks=[
                 AdminHealthCheck(
-                    name="database",
+                    id="database",
+                    name="Database",
                     status=HealthStatus.OK,
                     latency_ms=8,
                     message="Database connectivity check succeeded.",
                     details={"backend": "postgres"},
                 ),
                 AdminHealthCheck(
-                    name="llmProviderMetadata",
+                    id="llm-provider",
+                    name="LLM Provider",
                     status=HealthStatus.DEGRADED,
                     message="Provider metadata returned no available models.",
                     details={"returnedModelCount": 0},

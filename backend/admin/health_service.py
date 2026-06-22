@@ -144,9 +144,10 @@ class AdminHealthService:
 
     def _check_backend(self) -> AdminHealthCheck:
         return AdminHealthCheck(
-            name="backend",
+            id="backend",
+            name="Backend",
             status=HealthStatus.OK,
-            message="Backend process is responding.",
+            message="Backend process is healthy",
         )
 
     async def _check_database(self) -> AdminHealthCheck:
@@ -155,30 +156,34 @@ class AdminHealthService:
             value = await self._session.scalar(text("SELECT 1"))
         except Exception:
             return AdminHealthCheck(
-                name="database",
+                id="database",
+                name="Database",
                 status=HealthStatus.UNHEALTHY,
                 latency_ms=elapsed_ms(started_at),
-                message="Database connectivity check failed.",
+                message="Database check failed.",
             )
 
         if value != 1:
             return AdminHealthCheck(
-                name="database",
+                id="database",
+                name="Database",
                 status=HealthStatus.UNHEALTHY,
                 latency_ms=elapsed_ms(started_at),
-                message="Database connectivity check returned an unexpected result.",
+                message="Database check returned an unexpected result.",
             )
         return AdminHealthCheck(
-            name="database",
+            id="database",
+            name="Database",
             status=HealthStatus.OK,
             latency_ms=elapsed_ms(started_at),
-            message="Database connectivity check succeeded.",
+            message="Database connected",
         )
 
     async def _check_rag(self) -> AdminHealthCheck:
         if self._rag_config.backend == RagBackend.CHROMA:
             return AdminHealthCheck(
-                name="rag",
+                id="rag",
+                name="RAG",
                 status=HealthStatus.NOT_CHECKED,
                 message="Chroma RAG backend does not expose a cheap admin health probe.",
                 details={
@@ -206,7 +211,8 @@ class AdminHealthService:
             )
         except Exception:
             return AdminHealthCheck(
-                name="rag",
+                id="rag",
+                name="RAG",
                 status=HealthStatus.UNHEALTHY,
                 latency_ms=elapsed_ms(started_at),
                 message="RAG storage health check failed.",
@@ -228,7 +234,8 @@ class AdminHealthService:
             else "RAG storage counts are available."
         )
         return AdminHealthCheck(
-            name="rag",
+            id="rag",
+            name="RAG",
             status=status,
             latency_ms=elapsed_ms(started_at),
             message=message,
@@ -255,9 +262,10 @@ class AdminHealthService:
 
     async def _check_llm_provider_metadata(self) -> AdminHealthCheck:
         return await self._build_provider_metadata_check(
-            name="llmProviderMetadata",
+            id="llm-provider",
+            name="LLM Provider",
             model=self._llm_config.model,
-            ok_message="Configured LLM provider returned model metadata.",
+            ok_message="LLM provider metadata",
             unresolved_message=(
                 "Configured LLM provider could not be resolved; provider liveness "
                 "could not be confirmed."
@@ -281,14 +289,16 @@ class AdminHealthService:
         }
         if not self._guardrails_need_provider_metadata():
             return AdminHealthCheck(
-                name="guardrails",
+                id="guardrails",
+                name="Guardrails",
                 status=HealthStatus.OK,
-                message="Guardrails configuration does not require a live judge model check.",
+                message="Regex mode does not require a judge model",
                 details=details,
             )
 
         check = await self._build_provider_metadata_check(
-            name="guardrails",
+            id="guardrails",
+            name="Guardrails",
             model=self._llm_config.guardrails_judge_model,
             ok_message="Guardrail judge provider returned model metadata.",
             unresolved_message=(
@@ -319,6 +329,7 @@ class AdminHealthService:
     async def _build_provider_metadata_check(
         self,
         *,
+        id: str,
         name: str,
         model: str,
         ok_message: str,
@@ -331,6 +342,7 @@ class AdminHealthService:
             provider = _provider_for_model(model)
         except Exception:
             return AdminHealthCheck(
+                id=id,
                 name=name,
                 status=HealthStatus.DEGRADED,
                 latency_ms=elapsed_ms(started_at),
@@ -352,6 +364,7 @@ class AdminHealthService:
             models = await self._get_provider_models(provider)
         except Exception:
             return AdminHealthCheck(
+                id=id,
                 name=name,
                 status=HealthStatus.DEGRADED,
                 latency_ms=elapsed_ms(started_at),
@@ -368,6 +381,7 @@ class AdminHealthService:
         }
         if not models:
             return AdminHealthCheck(
+                id=id,
                 name=name,
                 status=HealthStatus.DEGRADED,
                 latency_ms=elapsed_ms(started_at),
@@ -378,6 +392,7 @@ class AdminHealthService:
                 },
             )
         return AdminHealthCheck(
+            id=id,
             name=name,
             status=HealthStatus.OK,
             latency_ms=elapsed_ms(started_at),

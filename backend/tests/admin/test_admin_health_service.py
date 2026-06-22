@@ -41,6 +41,7 @@ async def test_admin_health_reports_database_success() -> None:
     response = await service.get_health()
 
     database_check = _check(response.checks, "database")
+    assert database_check.name == "Database"
     assert database_check.status == HealthStatus.OK
     assert database_check.latency_ms is not None
 
@@ -67,7 +68,9 @@ async def test_admin_health_response_is_cached_for_short_ttl() -> None:
     second_response = await service.get_health()
 
     assert first_response.checked_at == second_response.checked_at
-    assert second_response.checks[0].message == "Backend process is responding."
+    assert second_response.checks[0].id == "backend"
+    assert second_response.checks[0].name == "Backend"
+    assert second_response.checks[0].message == "Backend process is healthy"
     assert len(session.scalar_statements) == 9
     assert provider.requested_providers == ["openai"]
 
@@ -136,6 +139,7 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
     response = await service.get_health()
 
     rag_check = _check(response.checks, "rag")
+    assert rag_check.name == "RAG"
     assert rag_check.status == HealthStatus.DEGRADED
     assert rag_check.details["documents"] == 2
     assert rag_check.details["chunks"] == 5
@@ -265,6 +269,8 @@ async def test_guardrails_regex_or_off_is_ok_without_provider_metadata_call() ->
 
     check = await service._check_guardrails()
 
+    assert check.id == "guardrails"
+    assert check.name == "Guardrails"
     assert check.status == HealthStatus.OK
     assert provider.calls == 0
 
@@ -287,6 +293,8 @@ async def test_guardrails_policy_uses_provider_metadata_without_completion_call(
 
     check = await service._check_guardrails()
 
+    assert check.id == "guardrails"
+    assert check.name == "Guardrails"
     assert check.status == HealthStatus.OK
     assert check.details["configuredModel"] == "openai/gpt-4o-mini"
     assert check.details["provider"] == "openai"
@@ -306,6 +314,8 @@ async def test_llm_provider_metadata_empty_model_list_is_degraded() -> None:
 
     check = await service._check_llm_provider_metadata()
 
+    assert check.id == "llm-provider"
+    assert check.name == "LLM Provider"
     assert check.status == HealthStatus.DEGRADED
     assert check.details["returnedModelCount"] == 0
     assert check.details["providerAvailable"] is False
@@ -323,6 +333,8 @@ async def test_llm_provider_metadata_does_not_require_exact_configured_model() -
 
     check = await service._check_llm_provider_metadata()
 
+    assert check.id == "llm-provider"
+    assert check.name == "LLM Provider"
     assert check.status == HealthStatus.OK
     assert check.details == {
         "configuredModel": "openai/gpt-4o-mini",
@@ -375,7 +387,7 @@ async def test_provider_metadata_result_is_cached_within_request_for_same_provid
 
     response = await service.get_health()
 
-    assert _check(response.checks, "llmProviderMetadata").status == HealthStatus.OK
+    assert _check(response.checks, "llm-provider").status == HealthStatus.OK
     assert _check(response.checks, "guardrails").status == HealthStatus.OK
     assert provider.requested_providers == ["openai"]
 
@@ -404,7 +416,7 @@ async def test_provider_metadata_checks_main_and_guardrail_judge_providers_separ
 
     response = await service.get_health()
 
-    assert _check(response.checks, "llmProviderMetadata").details["provider"] == "openai"
+    assert _check(response.checks, "llm-provider").details["provider"] == "openai"
     assert _check(response.checks, "guardrails").details["provider"] == "gemini"
     assert provider.requested_providers == ["openai", "gemini"]
 
@@ -435,8 +447,8 @@ def test_aggregate_status_precedence() -> None:
     assert (
         _aggregate_status(
             [
-                AdminHealthCheck(name="backend", status=HealthStatus.OK),
-                AdminHealthCheck(name="rag", status=HealthStatus.DEGRADED),
+                AdminHealthCheck(id="backend", name="Backend", status=HealthStatus.OK),
+                AdminHealthCheck(id="rag", name="RAG", status=HealthStatus.DEGRADED),
             ]
         )
         == HealthStatus.DEGRADED
@@ -444,23 +456,27 @@ def test_aggregate_status_precedence() -> None:
     assert (
         _aggregate_status(
             [
-                AdminHealthCheck(name="backend", status=HealthStatus.OK),
-                AdminHealthCheck(name="database", status=HealthStatus.UNHEALTHY),
+                AdminHealthCheck(id="backend", name="Backend", status=HealthStatus.OK),
+                AdminHealthCheck(
+                    id="database",
+                    name="Database",
+                    status=HealthStatus.UNHEALTHY,
+                ),
             ]
         )
         == HealthStatus.UNHEALTHY
     )
     assert (
-        _aggregate_status([AdminHealthCheck(name="rag", status=HealthStatus.NOT_CHECKED)])
+        _aggregate_status([AdminHealthCheck(id="rag", name="RAG", status=HealthStatus.NOT_CHECKED)])
         == HealthStatus.NOT_CHECKED
     )
 
 
-def _check(checks: list[AdminHealthCheck], name: str) -> AdminHealthCheck:
+def _check(checks: list[AdminHealthCheck], id: str) -> AdminHealthCheck:
     for check in checks:
-        if check.name == name:
+        if check.id == id:
             return check
-    raise AssertionError(f"Missing health check: {name}")
+    raise AssertionError(f"Missing health check: {id}")
 
 
 def _compiled_sql(statement) -> str:
@@ -527,5 +543,5 @@ class CountingHealthResponseLoader:
         return AdminHealthResponse(
             status=HealthStatus.OK,
             checked_at=datetime(2026, 6, 9, 12, tzinfo=UTC),
-            checks=[AdminHealthCheck(name="backend", status=HealthStatus.OK)],
+            checks=[AdminHealthCheck(id="backend", name="Backend", status=HealthStatus.OK)],
         )

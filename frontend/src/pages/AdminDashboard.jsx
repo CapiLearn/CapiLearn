@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+// import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   getAdminSystemHealth,
@@ -10,12 +10,17 @@ import LogoutButton from "../components/LogoutButton";
 
 const adminNavItems = [
   { id: "overview", label: "System Overview", status: "available" },
+  /*
+   * These admin sections have not been implemented yet.
   { id: "users", label: "Users", status: "coming-soon" },
   { id: "ingestion", label: "Ingestion", status: "coming-soon" },
   { id: "guardrails", label: "Guardrails", status: "coming-soon" },
   { id: "logs", label: "Logs", status: "coming-soon" },
+   */
 ];
 
+/*
+ * Recent events have not been implemented yet.
 const recentEvents = [
   {
     event: "Postgres health check passed",
@@ -38,6 +43,7 @@ const recentEvents = [
     type: "Safety",
   },
 ];
+ */
 
 function addUtcCalendarDay(dateString) {
   const date = new Date(`${dateString}T00:00:00.000Z`);
@@ -108,6 +114,17 @@ function formatDetailLabel(label) {
     .replace(/^./, (character) => character.toUpperCase());
 }
 
+const hiddenHealthDetailKeys = new Set([
+  // Hide backend RAG index metadata from the admin health cards.
+  "indexVersion",
+]);
+
+function getVisibleDetailEntries(details) {
+  return Object.entries(details || {}).filter(
+    ([key]) => !hiddenHealthDetailKeys.has(key)
+  );
+}
+
 function AdminDashboard() {
   const [usageSummary, setUsageSummary] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);
@@ -175,7 +192,10 @@ function AdminDashboard() {
   }, [getToken]);
 
   const metrics = usageSummary?.metrics;
-  const healthChecks = systemHealth?.checks || [];
+  const healthChecks = (systemHealth?.checks || []).map((check) => ({
+    ...check,
+    detailEntries: getVisibleDetailEntries(check.details),
+  }));
 
   const usageStats = [
     {
@@ -278,16 +298,18 @@ function AdminDashboard() {
         <header className="admin-header">
           <div>
             <p className="admin-kicker">Administrator Dashboard</p>
-            <h1>System operations</h1>
+            <h1>System Operations</h1>
             <p>
               Monitor service health, ingestion status, safety checks, and
               platform readiness.
             </p>
           </div>
 
+          {/* Instructor view has not been implemented yet.
           <Link className="admin-secondary-link" to="/instructor-dashboard">
             Instructor view
           </Link>
+          */}
         </header>
 
         {isLoadingUsage && (
@@ -314,7 +336,7 @@ function AdminDashboard() {
             <div className="admin-panel-header">
               <div>
                 <p className="admin-panel-label">Service Health</p>
-                <h2>Core system checks</h2>
+                <h2>Core System Checks</h2>
               </div>
 
               <span
@@ -368,17 +390,16 @@ function AdminDashboard() {
                       <p className="service-latency">Latency: {check.latencyMs} ms</p>
                     )}
 
-                    {check.details &&
-                      Object.keys(check.details).length > 0 && (
-                        <dl className="service-details-list">
-                          {Object.entries(check.details).map(([key, value]) => (
-                            <div className="service-detail-item" key={key}>
-                              <dt>{formatDetailLabel(key)}</dt>
-                              <dd>{formatDetailValue(value)}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      )}
+                    {check.detailEntries.length > 0 && (
+                      <dl className="service-details-list">
+                        {check.detailEntries.map(([key, value]) => (
+                          <div className="service-detail-item" key={key}>
+                            <dt>{formatDetailLabel(key)}</dt>
+                            <dd>{formatDetailValue(value)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
                   </div>
                 </div>
               ))}
@@ -388,7 +409,7 @@ function AdminDashboard() {
           <aside className="admin-side-stack">
             <article className="admin-panel">
               <p className="admin-panel-label">Usage Details</p>
-              <h2>Response and cost metrics</h2>
+              <h2>Response and Cost Metrics</h2>
 
               <div className="metrics-date-controls">
                 <label>
@@ -441,6 +462,7 @@ function AdminDashboard() {
           </aside>
         </section>
 
+        {/* Recent events have not been implemented yet.
         <section className="admin-panel events-panel">
           <div className="admin-panel-header">
             <div>
@@ -474,6 +496,7 @@ function AdminDashboard() {
             </table>
           </div>
         </section>
+        */}
       </section>
     </main>
   );
