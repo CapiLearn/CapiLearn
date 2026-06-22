@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+// import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   getAdminSystemHealth,
@@ -10,10 +10,13 @@ import LogoutButton from "../components/LogoutButton";
 
 const adminNavItems = [
   { id: "overview", label: "System Overview", status: "available" },
+  /*
+   * These admin sections have not been implemented yet.
   { id: "users", label: "Users", status: "coming-soon" },
   { id: "ingestion", label: "Ingestion", status: "coming-soon" },
   { id: "guardrails", label: "Guardrails", status: "coming-soon" },
   { id: "logs", label: "Logs", status: "coming-soon" },
+   */
 ];
 
 const recentEvents = [
@@ -285,9 +288,11 @@ function AdminDashboard() {
             </p>
           </div>
 
+          {/* Instructor view has not been implemented yet.
           <Link className="admin-secondary-link" to="/instructor-dashboard">
             Instructor view
           </Link>
+          */}
         </header>
 
         {isLoadingUsage && (
