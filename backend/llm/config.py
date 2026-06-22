@@ -36,7 +36,6 @@ class LLMSettings(BaseSettings):
     guardrails_judge_model: str = "openai/gpt-4o-mini"
     guardrails_judge_temperature: float = 0
     guardrails_fail_open_on_judge_error: bool = True
-    rag_index_version: str | None = Field(default=None)
 
     @field_validator("input_guardrail_mode", "output_guardrail_mode", mode="before")
     @classmethod
