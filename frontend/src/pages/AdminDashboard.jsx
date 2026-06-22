@@ -6,6 +6,7 @@ import {
 } from "../services/adminService";
 import "../styles/AdminDashboard.css";
 import { useAuth } from "@clerk/react";
+import LogoutButton from "../components/LogoutButton";
 
 const adminNavItems = [
   { id: "overview", label: "System Overview", status: "available" },
@@ -262,9 +263,7 @@ function AdminDashboard() {
           ))}
         </nav>
 
-        <Link className="admin-logout-link" to="/">
-          Log out
-        </Link>
+        <LogoutButton className="admin-logout-link" />
 
         <div className="admin-profile-card">
           <div className="admin-avatar">A</div>
