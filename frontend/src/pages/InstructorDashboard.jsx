@@ -1,4 +1,5 @@
 import "../styles/InstructorDashboard.css";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 import LogoutButton from "../components/LogoutButton";
 
 const summaryStats = [
@@ -98,7 +99,12 @@ function InstructorDashboard() {
     <main className="instructor-page">
       <aside className="instructor-sidebar">
         <div className="instructor-brand">
-          <div className="instructor-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="instructor-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
