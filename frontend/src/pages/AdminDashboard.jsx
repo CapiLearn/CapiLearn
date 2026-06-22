@@ -298,7 +298,7 @@ function AdminDashboard() {
         <header className="admin-header">
           <div>
             <p className="admin-kicker">Administrator Dashboard</p>
-            <h1>System operations</h1>
+            <h1>System Operations</h1>
             <p>
               Monitor service health, ingestion status, safety checks, and
               platform readiness.
@@ -409,7 +409,7 @@ function AdminDashboard() {
           <aside className="admin-side-stack">
             <article className="admin-panel">
               <p className="admin-panel-label">Usage Details</p>
-              <h2>Response and cost metrics</h2>
+              <h2>Response and Cost Metrics</h2>
 
               <div className="metrics-date-controls">
                 <label>
