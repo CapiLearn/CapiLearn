@@ -114,6 +114,17 @@ function formatDetailLabel(label) {
     .replace(/^./, (character) => character.toUpperCase());
 }
 
+const hiddenHealthDetailKeys = new Set([
+  // Hide backend RAG index metadata from the admin health cards.
+  "indexVersion",
+]);
+
+function getVisibleDetailEntries(details) {
+  return Object.entries(details || {}).filter(
+    ([key]) => !hiddenHealthDetailKeys.has(key)
+  );
+}
+
 function AdminDashboard() {
   const [usageSummary, setUsageSummary] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);
@@ -181,7 +192,10 @@ function AdminDashboard() {
   }, [getToken]);
 
   const metrics = usageSummary?.metrics;
-  const healthChecks = systemHealth?.checks || [];
+  const healthChecks = (systemHealth?.checks || []).map((check) => ({
+    ...check,
+    detailEntries: getVisibleDetailEntries(check.details),
+  }));
 
   const usageStats = [
     {
@@ -376,17 +390,16 @@ function AdminDashboard() {
                       <p className="service-latency">Latency: {check.latencyMs} ms</p>
                     )}
 
-                    {check.details &&
-                      Object.keys(check.details).length > 0 && (
-                        <dl className="service-details-list">
-                          {Object.entries(check.details).map(([key, value]) => (
-                            <div className="service-detail-item" key={key}>
-                              <dt>{formatDetailLabel(key)}</dt>
-                              <dd>{formatDetailValue(value)}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      )}
+                    {check.detailEntries.length > 0 && (
+                      <dl className="service-details-list">
+                        {check.detailEntries.map(([key, value]) => (
+                          <div className="service-detail-item" key={key}>
+                            <dt>{formatDetailLabel(key)}</dt>
+                            <dd>{formatDetailValue(value)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
                   </div>
                 </div>
               ))}
