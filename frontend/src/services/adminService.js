@@ -40,7 +40,7 @@ const mockAdminSystemHealth = {
   checks: [
     {
       id: "backend",
-      name: "FastAPI Backend",
+      name: "Backend",
       status: "healthy",
       message: "API is running.",
       details: {
@@ -50,7 +50,7 @@ const mockAdminSystemHealth = {
     },
     {
       id: "database",
-      name: "Postgres + pgvector",
+      name: "Database",
       status: "healthy",
       message: "Database accepts connections and pgvector is available.",
       details: {
@@ -60,7 +60,7 @@ const mockAdminSystemHealth = {
     },
     {
       id: "rag",
-      name: "RAG Index",
+      name: "RAG",
       status: "warning",
       message: "6 documents failed processing.",
       details: {
@@ -71,8 +71,8 @@ const mockAdminSystemHealth = {
       },
     },
     {
-      id: "llm",
-      name: "LLM Gateway",
+      id: "llm-provider",
+      name: "LLM Provider",
       status: "healthy",
       message: "Provider configuration is available.",
       details: {
@@ -165,7 +165,7 @@ function normalizeSystemHealthResponse(data) {
     overallStatus: mapHealthStatus(data.status),
     checkedAt: data.checkedAt,
     checks: (data.checks || []).map((check) => ({
-      id: createHealthCheckId(check.name),
+      id: check.id || createHealthCheckId(check.name),
       name: check.name,
       status: mapHealthStatus(check.status),
       message: check.message,

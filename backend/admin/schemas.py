@@ -67,6 +67,7 @@ class HealthStatus(StrEnum):
 
 
 class AdminHealthCheck(AdminBaseModel):
+    id: str
     name: str
     status: HealthStatus
     latency_ms: int | None = None

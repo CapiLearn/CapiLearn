@@ -322,7 +322,7 @@ function AdminDashboard() {
             <div className="admin-panel-header">
               <div>
                 <p className="admin-panel-label">Service Health</p>
-                <h2>Core system checks</h2>
+                <h2>Core System Checks</h2>
               </div>
 
               <span
