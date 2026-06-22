@@ -51,15 +51,20 @@ async def test_get_llm_service_configures_pgvector_trace_sink_best_effort(
     monkeypatch.setattr(
         chat_dependencies_module,
         "rag_settings",
-        RagSettings(backend=RagBackend.PGVECTOR, write_retrieval_logs=True),
+        RagSettings(
+            backend=RagBackend.PGVECTOR,
+            write_retrieval_logs=True,
+            index_version="fso-2026-06",
+        ),
     )
     monkeypatch.setattr(
         chat_dependencies_module,
         "PostgresRagTraceSink",
-        FailingPostgresRagTraceSink,
+        FakePostgresRagTraceSink,
     )
     retriever = FakeRetrievalProvider()
 
+    FakePostgresRagTraceSink.instances = []
     service = get_llm_service(retriever)
     service._provider = FakeProvider()
     service._input_guardrails = AllowGuardrails()
@@ -76,12 +81,15 @@ async def test_get_llm_service_configures_pgvector_trace_sink_best_effort(
     )
 
     assert result.content == "State is stored data."
+    assert [sink.rag_index_version for sink in FakePostgresRagTraceSink.instances] == [
+        "fso-2026-06"
+    ]
     failed_events = [
         record for record in caplog.records if getattr(record, "event", None) == "trace_sink.failed"
     ]
     assert failed_events
     assert failed_events[-1].trace_operation == "record_retrieval"
-    assert failed_events[-1].sink_type == "FailingPostgresRagTraceSink"
+    assert failed_events[-1].sink_type == "FakePostgresRagTraceSink"
 
 
 def test_dependency_selector_can_build_pgvector_provider(monkeypatch) -> None:
@@ -134,9 +142,12 @@ class AllowGuardrails:
         return GuardrailResult()
 
 
-class FailingPostgresRagTraceSink:
+class FakePostgresRagTraceSink:
+    instances = []
+
     def __init__(self, *, rag_index_version=None) -> None:
         self.rag_index_version = rag_index_version
+        type(self).instances.append(self)
 
     async def record_retrieval(self, record):
         raise RuntimeError("database unavailable")

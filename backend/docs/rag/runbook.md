@@ -293,6 +293,7 @@ RAG_TOP_K=5
 RAG_CANDIDATE_POOL_MULTIPLIER=3
 RAG_MAX_CANDIDATES=50
 RAG_WRITE_RETRIEVAL_LOGS=true
+# Canonical RAG index label used by admin health, retrieval logs, and conversations.
 # RAG_INDEX_VERSION=full-stack-open-2026-06
 ```
 

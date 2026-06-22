@@ -29,6 +29,7 @@ from backend.core.observability import (
     new_request_id,
     timer_start,
 )
+from backend.llm.config import llm_settings
 from backend.llm.prompts import build_user_message_content
 from backend.llm.schemas import (
     ChatMessage,
@@ -37,6 +38,7 @@ from backend.llm.schemas import (
     LLMResult,
 )
 from backend.llm.service import LLMService, LLMServiceError
+from backend.rag.config import rag_settings
 from backend.rag.schemas import RetrievedChunk
 
 RECENT_RETRIEVED_CONTEXT_TURNS = 3
@@ -95,6 +97,10 @@ class ChatService:
             self._session,
             user_id=self._user_id,
             title=title,
+            model_profile_key=llm_settings.model_profile_key,
+            model_profile_version=llm_settings.model_profile_version,
+            guardrails_config_id=llm_settings.guardrails_config_id,
+            rag_index_version=rag_settings.index_version,
         )
         return await self._create_message(conversation=conversation, content=content, history=[])
 
