@@ -19,6 +19,8 @@ const adminNavItems = [
    */
 ];
 
+/*
+ * Recent events have not been implemented yet.
 const recentEvents = [
   {
     event: "Postgres health check passed",
@@ -41,6 +43,7 @@ const recentEvents = [
     type: "Safety",
   },
 ];
+ */
 
 function addUtcCalendarDay(dateString) {
   const date = new Date(`${dateString}T00:00:00.000Z`);
@@ -446,6 +449,7 @@ function AdminDashboard() {
           </aside>
         </section>
 
+        {/* Recent events have not been implemented yet.
         <section className="admin-panel events-panel">
           <div className="admin-panel-header">
             <div>
@@ -479,6 +483,7 @@ function AdminDashboard() {
             </table>
           </div>
         </section>
+        */}
       </section>
     </main>
   );
