@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.admin.health_service import (
     AdminHealthResponseCache,
@@ -28,7 +29,7 @@ def clear_shared_health_cache():
 @pytest.mark.asyncio
 async def test_admin_health_reports_database_success() -> None:
     service = AdminHealthService(
-        session=ScalarSession([1]),
+        session=ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None]),
         provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
@@ -157,9 +158,29 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
 
 
 @pytest.mark.asyncio
-async def test_pgvector_rag_none_count_scalar_is_unhealthy() -> None:
+async def test_pgvector_rag_none_count_scalar_raises_invariant_error() -> None:
     service = AdminHealthService(
         session=ScalarSession([2, None]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
+        llm_config=LLMSettings(
+            model="openai/gpt-4o-mini",
+            guardrails_enabled=False,
+        ),
+        rag_config=RagSettings(
+            backend=RagBackend.PGVECTOR,
+            model_name=DEFAULT_RAG_MODEL_NAME,
+            index_version="v1",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="COUNT query returned no scalar value"):
+        await service._check_rag()
+
+
+@pytest.mark.asyncio
+async def test_pgvector_rag_sqlalchemy_failure_is_unhealthy() -> None:
+    service = AdminHealthService(
+        session=FailingScalarSession(),
         provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
@@ -372,7 +393,7 @@ async def test_llm_provider_metadata_failure_is_degraded() -> None:
 async def test_provider_metadata_result_is_cached_within_request_for_same_provider() -> None:
     provider = StaticModelProvider({"openai": ["gpt-4o-mini"]})
     service = AdminHealthService(
-        session=ScalarSession([1]),
+        session=ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None]),
         provider_metadata_provider=provider,
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
@@ -401,7 +422,7 @@ async def test_provider_metadata_checks_main_and_guardrail_judge_providers_separ
         }
     )
     service = AdminHealthService(
-        session=ScalarSession([1]),
+        session=ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None]),
         provider_metadata_provider=provider,
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
@@ -502,7 +523,7 @@ class ScalarSession:
 
 class FailingScalarSession:
     async def scalar(self, statement):
-        raise RuntimeError("database unavailable")
+        raise SQLAlchemyError("database unavailable")
 
 
 class StaticModelProvider:
