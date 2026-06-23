@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.chat.models import Conversation, LLMCostComponent, Message, utc_now
 from backend.chat.schemas import ConversationStatus, MessageRole, MessageStatus
-from backend.llm.config import llm_settings
 from backend.llm.schemas import LLMCostComponent as LLMCostComponentRecord
 
 
@@ -46,14 +45,18 @@ class ChatRepository:
         *,
         user_id: UUID,
         title: str | None,
+        model_profile_key: str,
+        model_profile_version: str | None,
+        guardrails_config_id: str | None,
+        rag_index_version: str | None,
     ) -> Conversation:
         conversation = Conversation(
             user_id=user_id,
             title=title,
-            model_profile_key=llm_settings.model_profile_key,
-            model_profile_version=llm_settings.model_profile_version,
-            guardrails_config_id=llm_settings.guardrails_config_id,
-            rag_index_version=llm_settings.rag_index_version,
+            model_profile_key=model_profile_key,
+            model_profile_version=model_profile_version,
+            guardrails_config_id=guardrails_config_id,
+            rag_index_version=rag_index_version,
         )
         session.add(conversation)
         await session.flush()

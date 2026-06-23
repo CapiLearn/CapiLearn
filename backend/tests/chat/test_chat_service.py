@@ -696,8 +696,25 @@ class FakeChatRepository:
         self.messages = messages or []
         self.cost_components = []
 
-    async def create_conversation(self, session, *, user_id, title):
-        conversation = _conversation(user_id=user_id, title=title)
+    async def create_conversation(
+        self,
+        session,
+        *,
+        user_id,
+        title,
+        model_profile_key,
+        model_profile_version,
+        guardrails_config_id,
+        rag_index_version,
+    ):
+        conversation = _conversation(
+            user_id=user_id,
+            title=title,
+            model_profile_key=model_profile_key,
+            model_profile_version=model_profile_version,
+            guardrails_config_id=guardrails_config_id,
+            rag_index_version=rag_index_version,
+        )
         self.conversations.append(conversation)
         return conversation
 
@@ -865,6 +882,10 @@ def _conversation(
     *,
     user_id,
     title: str | None = "Existing title",
+    model_profile_key: str = "model",
+    model_profile_version: str | None = None,
+    guardrails_config_id: str | None = None,
+    rag_index_version: str | None = None,
 ) -> Conversation:
     now = datetime.now(UTC)
     return Conversation(
@@ -872,7 +893,10 @@ def _conversation(
         user_id=user_id,
         title=title,
         status=ConversationStatus.ACTIVE.value,
-        model_profile_key="model",
+        model_profile_key=model_profile_key,
+        model_profile_version=model_profile_version,
+        guardrails_config_id=guardrails_config_id,
+        rag_index_version=rag_index_version,
         created_at=now,
         updated_at=now,
     )
