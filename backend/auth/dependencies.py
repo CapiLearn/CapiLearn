@@ -106,10 +106,6 @@ AuthRequestVerifierDep = Annotated[
 ]
 
 
-def get_clerk_request_verifier(settings: SettingsDep) -> AuthRequestVerifier:
-    return get_auth_request_verifier(settings)
-
-
 def get_user_repository() -> UserAccountRepository:
     return UserAccountRepository()
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from backend.auth.dependencies import BootstrapCurrentUserDep
-from backend.auth.schemas import CurrentUserResponse
+from backend.auth.schemas import CurrentUser
 
 router = APIRouter(tags=["auth"])
 
@@ -11,5 +11,5 @@ router = APIRouter(tags=["auth"])
     operation_id="getCurrentUser",
     summary="Bootstrap current user",
 )
-async def get_me(current_user: BootstrapCurrentUserDep) -> CurrentUserResponse:
-    return CurrentUserResponse.model_validate(current_user)
+async def get_me(current_user: BootstrapCurrentUserDep) -> CurrentUser:
+    return current_user
