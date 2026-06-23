@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.auth.schemas import CurrentUser, UserRole
 from backend.chat.models import Conversation, Message
+from backend.chat.repository import MessageSequenceConflictError
 from backend.chat.schemas import (
     ConversationStatus,
     MessageRole,
@@ -655,6 +656,38 @@ async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
     assert llm_service.requests == []
 
 
+@pytest.mark.asyncio
+async def test_unrelated_message_integrity_error_rolls_back_and_reraises() -> None:
+    user = _current_user()
+    session = FakeSession()
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+        )
+    )
+    integrity_error = IntegrityError(
+        statement="INSERT INTO message",
+        params={},
+        orig=Exception("message user id conflict"),
+    )
+    service = ChatService(
+        session=session,
+        user_id=user.id,
+        llm_service=llm_service,
+        repository=ConflictingChatRepository(
+            user_id=user.id,
+            exc=integrity_error,
+        ),
+    )
+
+    with pytest.raises(IntegrityError):
+        await service.create_conversation_message("Explain cells.")
+
+    assert session.rollback_count == 1
+    assert llm_service.requests == []
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.commit_count = 0
@@ -744,6 +777,10 @@ class FakeChatRepository:
 
 
 class ConflictingChatRepository(FakeChatRepository):
+    def __init__(self, *, user_id, exc: Exception | None = None) -> None:
+        super().__init__(user_id=user_id)
+        self.exc = exc or MessageSequenceConflictError()
+
     async def create_message(
         self,
         session,
@@ -754,11 +791,7 @@ class ConflictingChatRepository(FakeChatRepository):
         status,
         content,
     ):
-        raise IntegrityError(
-            statement="INSERT INTO message",
-            params={},
-            orig=Exception("message sequence conflict"),
-        )
+        raise self.exc
 
 
 class FakeLLMService:

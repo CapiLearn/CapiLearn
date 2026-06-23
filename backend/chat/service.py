@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.chat.models import Conversation, Message, utc_now
-from backend.chat.repository import ChatRepository
+from backend.chat.repository import ChatRepository, MessageSequenceConflictError
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
@@ -151,13 +151,16 @@ class ChatService:
             _set_correlation_metadata(user_message, request_id=request_id)
             _set_correlation_metadata(assistant_message, request_id=request_id)
             await self._session.commit()
-        except IntegrityError as exc:
+        except MessageSequenceConflictError as exc:
             await self._session.rollback()
             raise ApiError(
                 code="message_sequence_conflict",
                 message="Message ordering conflict. Please retry your request.",
                 status_code=status.HTTP_409_CONFLICT,
             ) from exc
+        except IntegrityError:
+            await self._session.rollback()
+            raise
 
         event_fields = _chat_event_fields(
             user_id=self._user_id,

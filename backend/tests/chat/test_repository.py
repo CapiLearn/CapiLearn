@@ -1,9 +1,11 @@
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
-from backend.chat.models import LLMCostComponent
-from backend.chat.repository import ChatRepository
+from backend.chat.models import Conversation, LLMCostComponent
+from backend.chat.repository import ChatRepository, MessageSequenceConflictError
+from backend.chat.schemas import MessageRole, MessageStatus
 from backend.llm.schemas import LLMCostComponent as LLMCostComponentRecord
 
 
@@ -59,6 +61,48 @@ async def test_create_llm_cost_components_persists_assistant_message_id() -> Non
 
 
 @pytest.mark.asyncio
+async def test_create_message_maps_sequence_conflict_to_domain_error() -> None:
+    user_id = uuid4()
+    session = FakeSession(
+        flush_error=_integrity_error("message_conversation_sequence_key"),
+    )
+    repository = ChatRepository()
+
+    with pytest.raises(MessageSequenceConflictError):
+        await repository.create_message(
+            session,
+            conversation=_conversation(user_id=user_id),
+            user_id=user_id,
+            role=MessageRole.USER,
+            status=MessageStatus.COMPLETED,
+            content="Explain cells.",
+        )
+
+    assert session.flushes == 1
+
+
+@pytest.mark.asyncio
+async def test_create_message_reraises_unrelated_integrity_error() -> None:
+    user_id = uuid4()
+    integrity_error = _integrity_error("message_user_id_fkey")
+    session = FakeSession(flush_error=integrity_error)
+    repository = ChatRepository()
+
+    with pytest.raises(IntegrityError) as exc_info:
+        await repository.create_message(
+            session,
+            conversation=_conversation(user_id=user_id),
+            user_id=user_id,
+            role=MessageRole.USER,
+            status=MessageStatus.COMPLETED,
+            content="Explain cells.",
+        )
+
+    assert exc_info.value is integrity_error
+    assert session.flushes == 1
+
+
+@pytest.mark.asyncio
 async def test_create_llm_cost_components_rejects_missing_assistant_id() -> None:
     session = FakeSession()
     repository = ChatRepository()
@@ -104,12 +148,53 @@ async def test_create_llm_cost_components_rejects_missing_assistant_id() -> None
 
 
 class FakeSession:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        scalar_result: int | None = None,
+        flush_error: IntegrityError | None = None,
+    ) -> None:
         self.added = []
         self.flushes = 0
+        self.scalar_result = scalar_result
+        self.flush_error = flush_error
 
     def add(self, instance) -> None:
         self.added.append(instance)
 
+    async def scalar(self, statement):
+        return self.scalar_result
+
     async def flush(self) -> None:
         self.flushes += 1
+        if self.flush_error is not None:
+            raise self.flush_error
+
+
+def _conversation(*, user_id) -> Conversation:
+    return Conversation(
+        id=uuid4(),
+        user_id=user_id,
+        title="Explain cells.",
+        model_profile_key="default_tutor",
+    )
+
+
+def _integrity_error(constraint_name: str) -> IntegrityError:
+    return IntegrityError(
+        statement="INSERT INTO message",
+        params={},
+        orig=FakeAsyncpgIntegrityWrapper(FakeAsyncpgUniqueViolation(constraint_name)),
+    )
+
+
+class FakeAsyncpgIntegrityWrapper(Exception):
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.__cause__ = cause
+
+
+class FakeAsyncpgUniqueViolation(Exception):
+    def __init__(self, constraint_name: str) -> None:
+        super().__init__(constraint_name)
+        self.constraint_name = constraint_name

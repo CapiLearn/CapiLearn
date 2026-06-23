@@ -1,11 +1,18 @@
 from uuid import UUID
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.chat.models import Conversation, LLMCostComponent, Message, utc_now
 from backend.chat.schemas import ConversationStatus, MessageRole, MessageStatus
 from backend.llm.schemas import LLMCostComponent as LLMCostComponentRecord
+
+MESSAGE_SEQUENCE_CONSTRAINT = "message_conversation_sequence_key"
+
+
+class MessageSequenceConflictError(Exception):
+    pass
 
 
 class ChatRepository:
@@ -96,7 +103,12 @@ class ChatRepository:
         )
         conversation.updated_at = utc_now()
         session.add(message)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            if _is_message_sequence_conflict(exc):
+                raise MessageSequenceConflictError from exc
+            raise
         return message
 
     async def create_llm_cost_components(
@@ -139,3 +151,31 @@ class ChatRepository:
         )
         current = await session.scalar(statement)
         return (current or 0) + 1
+
+
+def _is_message_sequence_conflict(exc: IntegrityError) -> bool:
+    return _integrity_constraint_name(exc) == MESSAGE_SEQUENCE_CONSTRAINT
+
+
+def _integrity_constraint_name(exc: IntegrityError) -> str | None:
+    error = exc.orig
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        constraint_name = _constraint_name_from_error(error)
+        if constraint_name:
+            return constraint_name
+        error = getattr(error, "__cause__", None) or getattr(error, "__context__", None)
+    return None
+
+
+def _constraint_name_from_error(error: BaseException) -> str | None:
+    constraint_name = getattr(error, "constraint_name", None)
+    if constraint_name:
+        return constraint_name
+
+    diag = getattr(error, "diag", None)
+    if diag is None:
+        return None
+
+    return getattr(diag, "constraint_name", None)
