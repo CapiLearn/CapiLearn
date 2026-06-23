@@ -7,6 +7,7 @@ import {
 import "../styles/AdminDashboard.css";
 import { useAuth } from "@clerk/react";
 import LogoutButton from "../components/LogoutButton";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 
 const adminNavItems = [
   { id: "overview", label: "System Overview", status: "available" },
@@ -262,7 +263,12 @@ function AdminDashboard() {
     <main className="admin-page">
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <div className="admin-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="admin-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 

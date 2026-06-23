@@ -1,7 +1,5 @@
 import { SignIn, SignUp } from "@clerk/react";
-import capiMascot from "../assets/capi-instructor.svg";
 import "../styles/AuthPage.css";
-import pomMascot from "../assets/pom.svg";
 import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 
 const clerkAppearance = {
@@ -28,11 +26,6 @@ function AuthPage({ mode, title, description }) {
         <p className="auth-kicker">CapiLearn</p>
         <h1>{title}</h1>
         <p>{description}</p>
-
-          <div className="auth-mascot-showcase" aria-hidden="true">
-            <img src={capiMascot} alt="" className="auth-mascot auth-mascot-capi" />
-            <img src={pomMascot} alt="" className="auth-mascot auth-mascot-pom" />
-          </div>
       </section>
 
       <section className="auth-card-shell">
