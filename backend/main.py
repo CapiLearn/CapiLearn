@@ -7,7 +7,7 @@ from backend.admin.router import router as admin_router
 from backend.auth.router import router as auth_router
 from backend.chat.router import router as chat_router
 from backend.core.config import Settings, settings
-from backend.core.exceptions import register_exception_handlers
+from backend.core.exceptions import ApiError, api_error_handler
 from backend.core.observability import RequestIdMiddleware, configure_logging
 from backend.core.rate_limiting import limiter, rate_limit_exceeded_handler
 from backend.instructor.router import router as instructor_router
@@ -26,7 +26,7 @@ def create_app(config: Settings | None = None) -> FastAPI:
         redoc_url=redoc_url,
         openapi_url=openapi_url,
     )
-    register_exception_handlers(app)
+    app.add_exception_handler(ApiError, api_error_handler)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
     app.add_middleware(RequestIdMiddleware)

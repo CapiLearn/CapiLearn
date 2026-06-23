@@ -1,11 +1,13 @@
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
 from litellm import get_llm_provider, get_valid_models
 from sqlalchemy import and_, func, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.admin.schemas import AdminHealthCheck, AdminHealthResponse, HealthStatus
@@ -26,6 +28,12 @@ ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
 
 class ProviderMetadataProvider(Protocol):
     async def get_models(self, provider: str) -> list[str]: ...
+
+
+@dataclass(frozen=True)
+class ProviderMetadataCacheEntry:
+    models: tuple[str, ...]
+    expires_at: float
 
 
 class AdminHealthResponseCache:
@@ -67,32 +75,39 @@ class CachedLiteLLMProviderMetadataProvider:
     ) -> None:
         self._ttl_seconds = ttl_seconds
         self._model_loader = model_loader or _load_valid_models
-        self._models_by_provider: dict[str, list[str]] = {}
-        self._expires_at_by_provider: dict[str, float] = {}
+        self._cache_by_provider: dict[str, ProviderMetadataCacheEntry] = {}
         self._lock = asyncio.Lock()
 
     async def get_models(self, provider: str) -> list[str]:
         now = time.monotonic()
-        if provider in self._models_by_provider and now < self._expires_at_by_provider.get(
-            provider, 0.0
-        ):
-            return list(self._models_by_provider[provider])
+        cached_models = self._cached_models(provider, now=now)
+        if cached_models is not None:
+            return cached_models
 
         async with self._lock:
             now = time.monotonic()
-            if provider in self._models_by_provider and now < self._expires_at_by_provider.get(
-                provider, 0.0
-            ):
-                return list(self._models_by_provider[provider])
+            cached_models = self._cached_models(provider, now=now)
+            if cached_models is not None:
+                return cached_models
 
             models = await asyncio.to_thread(self._model_loader, provider)
-            self._models_by_provider[provider] = list(models)
-            self._expires_at_by_provider[provider] = time.monotonic() + self._ttl_seconds
-            return list(self._models_by_provider[provider])
+            cached_entry = ProviderMetadataCacheEntry(
+                models=tuple(models),
+                expires_at=time.monotonic() + self._ttl_seconds,
+            )
+            self._cache_by_provider[provider] = cached_entry
+            return list(cached_entry.models)
+
+    def _cached_models(self, provider: str, *, now: float) -> list[str] | None:
+        cached_entry = self._cache_by_provider.get(provider)
+        if cached_entry is None:
+            return None
+        if now >= cached_entry.expires_at:
+            return None
+        return list(cached_entry.models)
 
     def clear(self) -> None:
-        self._models_by_provider.clear()
-        self._expires_at_by_provider.clear()
+        self._cache_by_provider.clear()
 
 
 def _load_valid_models(provider: str) -> list[str]:
@@ -209,7 +224,7 @@ class AdminHealthService:
             latest_retrieval_log_created_at = await self._session.scalar(
                 select(func.max(RagRetrievalLog.created_at))
             )
-        except Exception:
+        except SQLAlchemyError:
             return AdminHealthCheck(
                 id="rag",
                 name="RAG",
