@@ -17,7 +17,6 @@ body {
 }
 
 /* Sidebar */
-
 .admin-sidebar {
   background: #fbf8e8;
   border-right: 1px solid #e0d8bd;
@@ -26,6 +25,30 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-sidebar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 120px;
+  transform: translateX(-50%);
+  width: 230px;
+  height: 230px;
+  background-image: url("../assets/capi_admin_watermark.webp");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.admin-sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .admin-brand {
