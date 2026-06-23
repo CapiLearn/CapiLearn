@@ -78,24 +78,19 @@ class AuthUserService:
     ) -> tuple[UserAccount, bool]:
         profile = profile_from_clerk_payload(claims.claims)
         try:
-            user = await self._repository.create(
+            user, created = await self._repository.create_or_get_by_clerk_id(
                 session,
                 clerk_id=claims.clerk_id,
                 role=initial_role,
                 first_name=profile.first_name,
                 last_name=profile.last_name,
             )
-            await session.commit()
+            if created:
+                await session.commit()
         except IntegrityError:
             await session.rollback()
-            existing_user = await self._repository.get_by_clerk_id(
-                session,
-                clerk_id=claims.clerk_id,
-            )
-            if existing_user is None:
-                raise
-            return existing_user, False
-        return user, True
+            raise
+        return user, created
 
     async def _repair_unwebhooked_profile_from_claims(
         self,
@@ -213,11 +208,4 @@ def _principal_from_model(user: UserAccount) -> AuthPrincipal:
 
 
 def _role_from_model(user: UserAccount) -> UserRole:
-    try:
-        return UserRole(user.role)
-    except ValueError as exc:
-        raise ApiError(
-            code="forbidden",
-            message="This user account has an invalid role.",
-            status_code=status.HTTP_403_FORBIDDEN,
-        ) from exc
+    return UserRole(user.role)

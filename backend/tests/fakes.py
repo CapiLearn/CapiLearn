@@ -41,7 +41,7 @@ class FakeUserRepository(UserAccountRepository):
             )
         return self.user
 
-    async def create(
+    async def create_or_get_by_clerk_id(
         self,
         session,
         *,
@@ -49,10 +49,19 @@ class FakeUserRepository(UserAccountRepository):
         role: UserRole = UserRole.STUDENT,
         first_name: str,
         last_name: str,
-    ) -> UserAccount:
-        self.calls.append(("create", clerk_id, role))
+    ) -> tuple[UserAccount, bool]:
+        self.calls.append(("create_or_get_by_clerk_id", clerk_id, role))
         if self.create_error is not None:
             raise self.create_error
+
+        if self.user is not None:
+            if self.user.clerk_id != clerk_id:
+                raise AssertionError(
+                    "FakeUserRepository stored user clerk_id "
+                    f"{self.user.clerk_id!r} does not match create-or-get clerk_id {clerk_id!r}"
+                )
+            return self.user, False
+
         self.user = UserAccount(
             id=uuid4(),
             clerk_id=clerk_id,
@@ -60,7 +69,7 @@ class FakeUserRepository(UserAccountRepository):
             first_name=first_name,
             last_name=last_name,
         )
-        return self.user
+        return self.user, True
 
     async def update_profile_projection(
         self,

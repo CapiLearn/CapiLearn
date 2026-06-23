@@ -18,7 +18,7 @@ class UserAccountRepository:
         statement = select(UserAccount).where(UserAccount.clerk_id == clerk_id)
         return await session.scalar(statement)
 
-    async def create(
+    async def create_or_get_by_clerk_id(
         self,
         session: AsyncSession,
         *,
@@ -26,16 +26,30 @@ class UserAccountRepository:
         role: UserRole = UserRole.STUDENT,
         first_name: str,
         last_name: str,
-    ) -> UserAccount:
-        user = UserAccount(
-            clerk_id=clerk_id,
-            role=role.value,
-            first_name=first_name,
-            last_name=last_name,
+    ) -> tuple[UserAccount, bool]:
+        statement = (
+            insert(UserAccount)
+            .values(
+                clerk_id=clerk_id,
+                role=role.value,
+                first_name=first_name,
+                last_name=last_name,
+            )
+            .on_conflict_do_nothing(index_elements=[UserAccount.clerk_id])
+            .returning(UserAccount)
+            .execution_options(populate_existing=True)
         )
-        session.add(user)
-        await session.flush()
-        return user
+        result = await session.execute(statement)
+        user = result.scalar_one_or_none()
+        if user is not None:
+            return user, True
+
+        existing_user = await self.get_by_clerk_id(session, clerk_id=clerk_id)
+        if existing_user is None:
+            raise RuntimeError(
+                "Expected existing user_account after clerk_id conflict, but none was found."
+            )
+        return existing_user, False
 
     async def update_profile_projection(
         self,

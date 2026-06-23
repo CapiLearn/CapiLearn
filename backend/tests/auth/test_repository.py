@@ -9,23 +9,80 @@ from backend.auth.schemas import UserRole
 
 
 @pytest.mark.asyncio
-async def test_create_persists_clerk_name_projection() -> None:
-    session = FakeSession()
+async def test_create_or_get_by_clerk_id_inserts_with_conflict_do_nothing() -> None:
+    result_user = UserAccount(
+        clerk_id="user_123",
+        first_name="New",
+        last_name="User",
+        role=UserRole.ADMIN.value,
+    )
+    session = StatementCaptureSession(result_user=result_user)
 
-    user = await UserAccountRepository().create(
+    user, created = await UserAccountRepository().create_or_get_by_clerk_id(
         session,
         clerk_id="user_123",
-        role=UserRole.INSTRUCTOR,
-        first_name="Person",
-        last_name="OneTwoThree",
+        role=UserRole.ADMIN,
+        first_name="New",
+        last_name="User",
     )
 
-    assert user.clerk_id == "user_123"
-    assert user.first_name == "Person"
-    assert user.last_name == "OneTwoThree"
-    assert user.role == UserRole.INSTRUCTOR.value
-    assert session.added == [user]
-    assert session.flushes == 1
+    assert user is result_user
+    assert created is True
+    assert session.added == []
+    assert session.flushes == 0
+    assert session.scalar_statements == []
+
+    sql = _compiled_sql(session.statements[0])
+    assert "INSERT INTO user_account" in sql
+    assert "ON CONFLICT (clerk_id) DO NOTHING" in sql
+    assert "RETURNING user_account.id" in sql
+    assert " DO UPDATE SET " not in sql
+    params = _compiled_params(session.statements[0])
+    assert params["clerk_id"] == "user_123"
+    assert params["role"] == UserRole.ADMIN.value
+    assert params["first_name"] == "New"
+    assert params["last_name"] == "User"
+
+
+@pytest.mark.asyncio
+async def test_create_or_get_by_clerk_id_returns_existing_user_after_conflict() -> None:
+    existing_user = UserAccount(
+        clerk_id="user_123",
+        first_name="Existing",
+        last_name="User",
+        role=UserRole.STUDENT.value,
+    )
+    session = StatementCaptureSession(result_user=None, user=existing_user)
+
+    user, created = await UserAccountRepository().create_or_get_by_clerk_id(
+        session,
+        clerk_id="user_123",
+        role=UserRole.ADMIN,
+        first_name="New",
+        last_name="User",
+    )
+
+    assert user is existing_user
+    assert created is False
+    assert len(session.statements) == 1
+    assert len(session.scalar_statements) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_or_get_by_clerk_id_requires_existing_user_after_conflict() -> None:
+    session = StatementCaptureSession(result_user=None)
+
+    with pytest.raises(RuntimeError, match="Expected existing user_account"):
+        await UserAccountRepository().create_or_get_by_clerk_id(
+            session,
+            clerk_id="user_missing",
+            role=UserRole.STUDENT,
+            first_name="Missing",
+            last_name="User",
+        )
+
+    assert len(session.statements) == 1
+    assert len(session.scalar_statements) == 1
 
 
 @pytest.mark.asyncio
@@ -259,6 +316,7 @@ class FakeSession:
         self.user = user
         self.added = []
         self.flushes = 0
+        self.scalar_statements = []
 
     def add(self, user: UserAccount) -> None:
         self.added.append(user)
@@ -268,12 +326,18 @@ class FakeSession:
         self.flushes += 1
 
     async def scalar(self, statement) -> UserAccount | None:
+        self.scalar_statements.append(statement)
         return self.user
 
 
 class StatementCaptureSession(FakeSession):
-    def __init__(self, *, result_user: UserAccount) -> None:
-        super().__init__(user=result_user)
+    def __init__(
+        self,
+        *,
+        result_user: UserAccount | None,
+        user: UserAccount | None = None,
+    ) -> None:
+        super().__init__(user=result_user if user is None else user)
         self.statements = []
         self._result_user = result_user
 
@@ -283,10 +347,15 @@ class StatementCaptureSession(FakeSession):
 
 
 class ScalarResult:
-    def __init__(self, value: UserAccount) -> None:
+    def __init__(self, value: UserAccount | None) -> None:
         self._value = value
 
     def scalar_one(self) -> UserAccount:
+        if self._value is None:
+            raise AssertionError("Expected test result value.")
+        return self._value
+
+    def scalar_one_or_none(self) -> UserAccount | None:
         return self._value
 
 
