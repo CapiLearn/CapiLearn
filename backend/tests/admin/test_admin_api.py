@@ -682,17 +682,6 @@ class EmptyUsageRepository:
     async def list_daily_usage(self, session, *, range_start, range_end):
         return []
 
-    async def list_user_overviews(
-        self,
-        session,
-        *,
-        range_start,
-        range_end,
-        limit=100,
-        offset=0,
-    ):
-        return []
-
 
 class FakeVerifier:
     def __init__(self, claims: ClerkAuthClaims) -> None:

@@ -80,7 +80,14 @@ class AdminUsageRepository:
             Message.created_at >= range_start,
             Message.created_at < range_end,
         )
-        row = (await session.execute(message_statement)).one()
+        (
+            total_users,
+            user_queries,
+            assistant_responses,
+            failed_responses,
+            blocked_responses,
+            average_latency_ms,
+        ) = (await session.execute(message_statement)).one()
 
         conversation_statement = select(func.count(Conversation.id)).where(
             Conversation.created_at >= range_start,
@@ -103,15 +110,15 @@ class AdminUsageRepository:
         )
 
         return UsageMetricsAggregate(
-            total_users=int(row[0] or 0),
-            total_conversations=int(total_conversations or 0),
-            user_queries=int(row[1] or 0),
-            assistant_responses=int(row[2] or 0),
-            failed_responses=int(row[3] or 0),
-            blocked_responses=int(row[4] or 0),
-            total_tokens=int(total_tokens or 0),
-            estimated_cost_usd=Decimal(estimated_cost_usd or 0),
-            average_latency_ms=row[5],
+            total_users=int(total_users),
+            total_conversations=int(total_conversations),
+            user_queries=int(user_queries),
+            assistant_responses=int(assistant_responses),
+            failed_responses=int(failed_responses),
+            blocked_responses=int(blocked_responses),
+            total_tokens=int(total_tokens),
+            estimated_cost_usd=Decimal(estimated_cost_usd),
+            average_latency_ms=average_latency_ms,
         )
 
     async def list_daily_usage(
@@ -149,11 +156,11 @@ class AdminUsageRepository:
             range_end=range_end,
         )
         message_counts = {
-            row[0]: {
-                "user_queries": int(row[1] or 0),
-                "assistant_responses": int(row[2] or 0),
+            usage_day: {
+                "user_queries": int(user_queries),
+                "assistant_responses": int(assistant_responses),
             }
-            for row in rows
+            for usage_day, user_queries, assistant_responses in rows
         }
 
         return [
@@ -208,8 +215,8 @@ async def _list_daily_component_tokens(
     component_rows = (await session.execute(component_statement)).all()
 
     totals: dict[date, int] = {}
-    for row in component_rows:
-        totals[row[0]] = totals.get(row[0], 0) + int(row[1] or 0)
+    for usage_day, total_tokens in component_rows:
+        totals[usage_day] = totals.get(usage_day, 0) + int(total_tokens)
     return totals
 
 

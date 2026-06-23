@@ -1,246 +1,12 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 
 from backend.admin.repository import (
     AdminUsageRepository,
     DailyUsageAggregate,
 )
-from backend.auth.models import UserAccount
-from backend.chat.schemas import MessageRole, MessageStatus
-from backend.tests.usage.fixtures import (
-    SyncSession,
-    create_usage_tables,
-    usage_conversation,
-    usage_message,
-)
-from backend.usage.repository import UserActivityAggregate
-
-
-@pytest.mark.asyncio
-async def test_user_overview_repository_aggregates_contract_rows() -> None:
-    engine = create_engine("sqlite:///:memory:")
-    create_usage_tables(engine)
-    repository = AdminUsageRepository()
-
-    with Session(engine, expire_on_commit=False) as sync_session:
-        admin_user = UserAccount(
-            id=uuid4(),
-            clerk_id="user_admin",
-            first_name="Admin",
-            last_name="User",
-            role="admin",
-        )
-        student_user = UserAccount(
-            id=uuid4(),
-            clerk_id="user_student",
-            first_name="Student",
-            last_name="User",
-            role="student",
-        )
-        inactive_alpha = UserAccount(
-            id=uuid4(),
-            clerk_id="user_alpha",
-            first_name="Alpha",
-            last_name="User",
-            role="instructor",
-        )
-        inactive_zeta = UserAccount(
-            id=uuid4(),
-            clerk_id="user_zeta",
-            first_name="Zeta",
-            last_name="User",
-            role="student",
-        )
-        disabled_user = UserAccount(
-            id=uuid4(),
-            clerk_id="user_disabled",
-            first_name="Disabled",
-            last_name="User",
-            role="student",
-            deleted_at=datetime(2026, 5, 1, tzinfo=UTC),
-        )
-        sync_session.add_all(
-            [admin_user, student_user, inactive_alpha, inactive_zeta, disabled_user]
-        )
-        sync_session.flush()
-
-        admin_conversation = usage_conversation(admin_user)
-        student_conversation = usage_conversation(student_user)
-        disabled_conversation = usage_conversation(disabled_user)
-        sync_session.add_all([admin_conversation, student_conversation, disabled_conversation])
-        sync_session.flush()
-
-        sync_session.add_all(
-            [
-                usage_message(
-                    conversation=admin_conversation,
-                    user=admin_user,
-                    sequence=1,
-                    role=MessageRole.USER,
-                    status=MessageStatus.COMPLETED,
-                    created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
-                ),
-                usage_message(
-                    conversation=admin_conversation,
-                    user=admin_user,
-                    sequence=2,
-                    role=MessageRole.ASSISTANT,
-                    status=MessageStatus.BLOCKED,
-                    created_at=datetime(2026, 5, 1, 13, tzinfo=UTC),
-                ),
-                usage_message(
-                    conversation=student_conversation,
-                    user=student_user,
-                    sequence=1,
-                    role=MessageRole.USER,
-                    status=MessageStatus.COMPLETED,
-                    created_at=datetime(2026, 4, 30, 23, 59, tzinfo=UTC),
-                ),
-                usage_message(
-                    conversation=student_conversation,
-                    user=student_user,
-                    sequence=2,
-                    role=MessageRole.USER,
-                    status=MessageStatus.COMPLETED,
-                    created_at=datetime(2026, 5, 1, 9, tzinfo=UTC),
-                ),
-                usage_message(
-                    conversation=student_conversation,
-                    user=student_user,
-                    sequence=3,
-                    role=MessageRole.ASSISTANT,
-                    status=MessageStatus.BLOCKED,
-                    created_at=datetime(2026, 5, 1, 10, tzinfo=UTC),
-                ),
-                usage_message(
-                    conversation=student_conversation,
-                    user=student_user,
-                    sequence=4,
-                    role=MessageRole.USER,
-                    status=MessageStatus.BLOCKED,
-                    created_at=datetime(2026, 5, 1, 11, tzinfo=UTC),
-                ),
-                usage_message(
-                    conversation=student_conversation,
-                    user=student_user,
-                    sequence=5,
-                    role=MessageRole.ASSISTANT,
-                    status=MessageStatus.BLOCKED,
-                    created_at=datetime(2026, 5, 2, tzinfo=UTC),
-                ),
-                usage_message(
-                    conversation=disabled_conversation,
-                    user=disabled_user,
-                    sequence=1,
-                    role=MessageRole.ASSISTANT,
-                    status=MessageStatus.BLOCKED,
-                    created_at=datetime(2026, 5, 1, 15, tzinfo=UTC),
-                ),
-            ]
-        )
-        sync_session.commit()
-
-        rows = await repository.list_user_overviews(
-            SyncSession(sync_session),
-            range_start=datetime(2026, 5, 1, tzinfo=UTC),
-            range_end=datetime(2026, 5, 2, tzinfo=UTC),
-        )
-        paged_rows = await repository.list_user_overviews(
-            SyncSession(sync_session),
-            range_start=datetime(2026, 5, 1, tzinfo=UTC),
-            range_end=datetime(2026, 5, 2, tzinfo=UTC),
-            limit=2,
-            offset=1,
-        )
-
-    assert rows == [
-        UserActivityAggregate(
-            display_name="Admin User",
-            access_level="admin",
-            total_messages_sent=1,
-            blocked_requests=1,
-            last_activity=datetime(2026, 5, 1, 13),
-        ),
-        UserActivityAggregate(
-            display_name="Student User",
-            access_level="student",
-            total_messages_sent=2,
-            blocked_requests=1,
-            last_activity=datetime(2026, 5, 1, 11),
-        ),
-        UserActivityAggregate(
-            display_name="Alpha User",
-            access_level="instructor",
-            total_messages_sent=0,
-            blocked_requests=0,
-            last_activity=None,
-        ),
-        UserActivityAggregate(
-            display_name="Zeta User",
-            access_level="student",
-            total_messages_sent=0,
-            blocked_requests=0,
-            last_activity=None,
-        ),
-    ]
-    assert [row.display_name for row in paged_rows] == ["Student User", "Alpha User"]
-
-
-@pytest.mark.asyncio
-async def test_user_overview_repository_sorts_by_name_parts() -> None:
-    engine = create_engine("sqlite:///:memory:")
-    create_usage_tables(engine)
-    repository = AdminUsageRepository()
-
-    with Session(engine, expire_on_commit=False) as sync_session:
-        gamma_user = UserAccount(
-            id=uuid4(),
-            clerk_id="user_4",
-            first_name="Gamma",
-            last_name="User",
-            role="student",
-        )
-        alpha_user = UserAccount(
-            id=uuid4(),
-            clerk_id="user_2",
-            first_name="Alpha",
-            last_name="User",
-            role="student",
-        )
-        delta_user = UserAccount(
-            id=uuid4(),
-            clerk_id="user_3",
-            first_name="Delta",
-            last_name="User",
-            role="student",
-        )
-        beta_user = UserAccount(
-            id=uuid4(),
-            clerk_id="user_1",
-            first_name="Beta",
-            last_name="User",
-            role="student",
-        )
-        sync_session.add_all([beta_user, gamma_user, delta_user, alpha_user])
-        sync_session.commit()
-
-        rows = await repository.list_user_overviews(
-            SyncSession(sync_session),
-            range_start=datetime(2026, 5, 1, tzinfo=UTC),
-            range_end=datetime(2026, 5, 2, tzinfo=UTC),
-        )
-
-    assert [row.display_name for row in rows] == [
-        "Alpha User",
-        "Beta User",
-        "Delta User",
-        "Gamma User",
-    ]
 
 
 @pytest.mark.asyncio
@@ -285,7 +51,7 @@ async def test_usage_metrics_uses_component_tokens() -> None:
 
 
 @pytest.mark.asyncio
-async def test_daily_usage_uses_component_tokens_and_zeroes_nulls() -> None:
+async def test_daily_usage_uses_component_tokens_and_preserves_sparse_zeros() -> None:
     session = SequencedSession(
         execute_results=[
             [
@@ -295,7 +61,6 @@ async def test_daily_usage_uses_component_tokens_and_zeroes_nulls() -> None:
             [
                 (date(2026, 5, 1), 12),
                 (date(2026, 5, 3), 5),
-                (date(2026, 5, 4), None),
             ],
         ],
     )
@@ -325,12 +90,6 @@ async def test_daily_usage_uses_component_tokens_and_zeroes_nulls() -> None:
             user_queries=0,
             assistant_responses=0,
             total_tokens=5,
-        ),
-        DailyUsageAggregate(
-            date=date(2026, 5, 4),
-            user_queries=0,
-            assistant_responses=0,
-            total_tokens=0,
         ),
     ]
     assert len(session.execute_statements) == 2

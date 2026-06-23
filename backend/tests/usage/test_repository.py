@@ -27,7 +27,9 @@ async def test_list_admin_user_activity_orders_by_recent_activity_and_pages() ->
     with Session(engine, expire_on_commit=False) as sync_session:
         admin = usage_user("user_admin", "Admin", "User", "admin")
         student = usage_user("user_student", "Student", "User", "student")
+        inactive_alpha = usage_user("user_alpha", "Alpha", "User", "instructor")
         instructor = usage_user("user_instructor", "Instructor", "User", "instructor")
+        inactive_zeta = usage_user("user_zeta", "Zeta", "User", "student")
         deleted = usage_user(
             "user_deleted",
             "Deleted",
@@ -35,7 +37,7 @@ async def test_list_admin_user_activity_orders_by_recent_activity_and_pages() ->
             "student",
             deleted_at=datetime(2026, 5, 1, tzinfo=UTC),
         )
-        sync_session.add_all([admin, student, instructor, deleted])
+        sync_session.add_all([admin, student, inactive_alpha, instructor, inactive_zeta, deleted])
         sync_session.flush()
 
         admin_conversation = usage_conversation(admin)
@@ -67,7 +69,7 @@ async def test_list_admin_user_activity_orders_by_recent_activity_and_pages() ->
                     sequence=1,
                     role=MessageRole.USER,
                     status=MessageStatus.COMPLETED,
-                    created_at=datetime(2026, 5, 1, 9, tzinfo=UTC),
+                    created_at=datetime(2026, 4, 30, 23, 59, tzinfo=UTC),
                 ),
                 usage_message(
                     conversation=student_conversation,
@@ -75,7 +77,31 @@ async def test_list_admin_user_activity_orders_by_recent_activity_and_pages() ->
                     sequence=2,
                     role=MessageRole.USER,
                     status=MessageStatus.COMPLETED,
+                    created_at=datetime(2026, 5, 1, 9, tzinfo=UTC),
+                ),
+                usage_message(
+                    conversation=student_conversation,
+                    user=student,
+                    sequence=3,
+                    role=MessageRole.ASSISTANT,
+                    status=MessageStatus.BLOCKED,
+                    created_at=datetime(2026, 5, 1, 10, tzinfo=UTC),
+                ),
+                usage_message(
+                    conversation=student_conversation,
+                    user=student,
+                    sequence=4,
+                    role=MessageRole.USER,
+                    status=MessageStatus.BLOCKED,
                     created_at=datetime(2026, 5, 1, 11, tzinfo=UTC),
+                ),
+                usage_message(
+                    conversation=student_conversation,
+                    user=student,
+                    sequence=5,
+                    role=MessageRole.ASSISTANT,
+                    status=MessageStatus.BLOCKED,
+                    created_at=datetime(2026, 5, 2, tzinfo=UTC),
                 ),
                 usage_message(
                     conversation=deleted_conversation,
@@ -114,8 +140,15 @@ async def test_list_admin_user_activity_orders_by_recent_activity_and_pages() ->
             display_name="Student User",
             access_level="student",
             total_messages_sent=2,
-            blocked_requests=0,
+            blocked_requests=1,
             last_activity=datetime(2026, 5, 1, 11),
+        ),
+        UserActivityAggregate(
+            display_name="Alpha User",
+            access_level="instructor",
+            total_messages_sent=0,
+            blocked_requests=0,
+            last_activity=None,
         ),
         UserActivityAggregate(
             display_name="Instructor User",
@@ -124,8 +157,15 @@ async def test_list_admin_user_activity_orders_by_recent_activity_and_pages() ->
             blocked_requests=0,
             last_activity=None,
         ),
+        UserActivityAggregate(
+            display_name="Zeta User",
+            access_level="student",
+            total_messages_sent=0,
+            blocked_requests=0,
+            last_activity=None,
+        ),
     ]
-    assert [row.display_name for row in paged_rows] == ["Student User", "Instructor User"]
+    assert [row.display_name for row in paged_rows] == ["Student User", "Alpha User"]
 
 
 @pytest.mark.asyncio
