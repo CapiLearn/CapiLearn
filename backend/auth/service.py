@@ -208,4 +208,11 @@ def _principal_from_model(user: UserAccount) -> AuthPrincipal:
 
 
 def _role_from_model(user: UserAccount) -> UserRole:
-    return UserRole(user.role)
+    try:
+        return UserRole(user.role)
+    except ValueError as exc:
+        raise ApiError(
+            code="forbidden",
+            message="This user account has an invalid role.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        ) from exc

@@ -219,11 +219,12 @@ async def test_current_principal_uses_role_without_profile_claims_or_sync() -> N
 @pytest.mark.parametrize(
     "method_name",
     [
+        "get_or_create_current_user",
         "get_existing_current_user",
         "get_current_principal",
     ],
 )
-async def test_read_paths_fail_invalid_persisted_role_as_invariant(
+async def test_auth_paths_convert_invalid_persisted_role_to_api_error(
     method_name: str,
 ) -> None:
     user = UserAccount(
@@ -232,12 +233,13 @@ async def test_read_paths_fail_invalid_persisted_role_as_invariant(
         first_name="Invalid",
         last_name="Role",
         role="owner",
+        clerk_profile_updated_at=datetime(2026, 6, 23, tzinfo=UTC),
     )
     session = FakeSession()
     repository = FakeUserRepository(user=user)
 
     method = getattr(AuthUserService(repository), method_name)
-    with pytest.raises(ValueError):
+    with pytest.raises(ApiError) as exc_info:
         await method(
             session,
             ClerkAuthClaims(
@@ -246,6 +248,10 @@ async def test_read_paths_fail_invalid_persisted_role_as_invariant(
             ),
         )
 
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    assert exc_info.value.code == "forbidden"
+    assert exc_info.value.message == "This user account has an invalid role."
+    assert isinstance(exc_info.value.__cause__, ValueError)
     assert session.commits == 0
     assert repository.calls == [("get_by_clerk_id", "user_invalid_role")]
 
