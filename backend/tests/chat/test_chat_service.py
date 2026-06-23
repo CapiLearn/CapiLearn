@@ -289,24 +289,7 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
     user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
-    llm_service = FakeLLMService(
-        LLMResult(
-            content="Cells are small units.",
-            provider_response=ProviderResponse(content="Cells are small units."),
-            cost_components=[
-                LLMCostComponent(
-                    user_id=user.id,
-                    conversation_id=uuid4(),
-                    user_message_id=uuid4(),
-                    assistant_message_id=uuid4(),
-                    component_order=1,
-                    component_type="main_generation",
-                    status="completed",
-                    estimated_cost_usd="0.001000000000",
-                )
-            ],
-        )
-    )
+    llm_service = CostedLLMService()
     service = ChatService(
         session=session,
         user_id=user.id,
@@ -317,6 +300,7 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
     await service.create_conversation_message("Explain cells.")
 
     assert repository.cost_components == llm_service.result.cost_components
+    assert repository.cost_components[0].assistant_message_id == repository.messages[-1].id
     assert repository.cost_components[0].estimated_cost_usd == Decimal("0.001000000000")
 
 
@@ -784,6 +768,32 @@ class FakeLLMService:
 
     async def complete(self, request):
         self.requests.append(request)
+        return self.result
+
+
+class CostedLLMService:
+    def __init__(self) -> None:
+        self.requests = []
+        self.result = LLMResult(content="")
+
+    async def complete(self, request):
+        self.requests.append(request)
+        self.result = LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+            cost_components=[
+                LLMCostComponent(
+                    user_id=request.user_id,
+                    conversation_id=request.conversation_id,
+                    user_message_id=request.user_message_id,
+                    assistant_message_id=request.assistant_message_id,
+                    component_order=1,
+                    component_type="main_generation",
+                    status="completed",
+                    estimated_cost_usd="0.001000000000",
+                )
+            ],
+        )
         return self.result
 
 

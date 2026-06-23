@@ -106,8 +106,6 @@ class ChatRepository:
         components: list[LLMCostComponentRecord],
     ) -> None:
         for component in components:
-            if component.assistant_message_id is None:
-                continue
             session.add(
                 LLMCostComponent(
                     user_id=component.user_id,

@@ -39,7 +39,7 @@ class LLMRequest(LLMBaseModel):
     user_id: UUID
     conversation_id: UUID
     user_message_id: UUID
-    assistant_message_id: UUID | None = None
+    assistant_message_id: UUID
     content: str
     history: list[ChatMessage] = Field(default_factory=list)
 
@@ -59,7 +59,7 @@ class LLMCostComponent(LLMBaseModel):
     user_id: UUID
     conversation_id: UUID
     user_message_id: UUID
-    assistant_message_id: UUID | None = None
+    assistant_message_id: UUID
     component_order: int
     component_type: str
     attempt_index: int = 1

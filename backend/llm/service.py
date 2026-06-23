@@ -86,9 +86,7 @@ class LLMService:
             user_id=str(request.user_id),
             conversation_id=str(request.conversation_id),
             user_message_id=str(request.user_message_id),
-            assistant_message_id=(
-                str(request.assistant_message_id) if request.assistant_message_id else None
-            ),
+            assistant_message_id=str(request.assistant_message_id),
         )
         with cost_recorder_context(recorder):
             try:

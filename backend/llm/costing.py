@@ -32,7 +32,7 @@ class LLMCostRecorder:
         user_id: str,
         conversation_id: str,
         user_message_id: str,
-        assistant_message_id: str | None,
+        assistant_message_id: str,
     ) -> None:
         self._base_fields = {
             "user_id": user_id,
