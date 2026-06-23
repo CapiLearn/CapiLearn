@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.chat.models import Conversation, Message, utc_now
-from backend.chat.repository import ChatRepository
+from backend.chat.repository import ChatRepository, MessageSequenceConflictError
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
@@ -132,32 +132,24 @@ class ChatService:
         turn_started_at = timer_start()
         request_id = get_request_id() or new_request_id()
         try:
-            user_message = await self._repository.create_message(
+            user_message, assistant_message = await self._repository.create_turn_messages(
                 self._session,
                 conversation=conversation,
                 user_id=self._user_id,
-                role=MessageRole.USER,
-                status=MessageStatus.COMPLETED,
                 content=content,
+                request_id=request_id,
             )
-            assistant_message = await self._repository.create_message(
-                self._session,
-                conversation=conversation,
-                user_id=self._user_id,
-                role=MessageRole.ASSISTANT,
-                status=MessageStatus.PENDING,
-                content="",
-            )
-            _set_correlation_metadata(user_message, request_id=request_id)
-            _set_correlation_metadata(assistant_message, request_id=request_id)
             await self._session.commit()
-        except IntegrityError as exc:
+        except MessageSequenceConflictError as exc:
             await self._session.rollback()
             raise ApiError(
                 code="message_sequence_conflict",
                 message="Message ordering conflict. Please retry your request.",
                 status_code=status.HTTP_409_CONFLICT,
             ) from exc
+        except IntegrityError:
+            await self._session.rollback()
+            raise
 
         event_fields = _chat_event_fields(
             user_id=self._user_id,
@@ -404,12 +396,6 @@ def _required_message_content(message: Message) -> str:
         "Persisted chat message is missing required content "
         f"(message_id={message.id}, role={message.role}, status={message.status})"
     )
-
-
-def _set_correlation_metadata(message: Message, *, request_id: str) -> None:
-    metadata = dict(message.extra_metadata or {})
-    metadata["requestId"] = request_id
-    message.extra_metadata = metadata
 
 
 def _apply_provider_response(message: Message, result: LLMResult) -> None:

@@ -1,11 +1,18 @@
 from uuid import UUID
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.chat.models import Conversation, LLMCostComponent, Message, utc_now
 from backend.chat.schemas import ConversationStatus, MessageRole, MessageStatus
 from backend.llm.schemas import LLMCostComponent as LLMCostComponentRecord
+
+MESSAGE_SEQUENCE_CONSTRAINT = "message_conversation_sequence_key"
+
+
+class MessageSequenceConflictError(Exception):
+    pass
 
 
 class ChatRepository:
@@ -76,28 +83,45 @@ class ChatRepository:
         )
         return list((await session.scalars(statement)).all())
 
-    async def create_message(
+    async def create_turn_messages(
         self,
         session: AsyncSession,
         *,
         conversation: Conversation,
         user_id: UUID,
-        role: MessageRole,
-        status: MessageStatus,
-        content: str | None,
-    ) -> Message:
-        message = Message(
+        content: str,
+        request_id: str,
+    ) -> tuple[Message, Message]:
+        next_sequence = await self._next_sequence(session, conversation_id=conversation.id)
+        metadata = {"requestId": request_id}
+        user_message = Message(
             conversation_id=conversation.id,
             user_id=user_id,
-            sequence=await self._next_sequence(session, conversation_id=conversation.id),
-            role=role.value,
-            status=status.value,
+            sequence=next_sequence,
+            role=MessageRole.USER.value,
+            status=MessageStatus.COMPLETED.value,
             content=content,
+            extra_metadata=dict(metadata),
+        )
+        assistant_message = Message(
+            conversation_id=conversation.id,
+            user_id=user_id,
+            sequence=next_sequence + 1,
+            role=MessageRole.ASSISTANT.value,
+            status=MessageStatus.PENDING.value,
+            content="",
+            extra_metadata=dict(metadata),
         )
         conversation.updated_at = utc_now()
-        session.add(message)
-        await session.flush()
-        return message
+        session.add(user_message)
+        session.add(assistant_message)
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            if _is_message_sequence_conflict(exc):
+                raise MessageSequenceConflictError from exc
+            raise
+        return user_message, assistant_message
 
     async def create_llm_cost_components(
         self,
@@ -105,9 +129,9 @@ class ChatRepository:
         *,
         components: list[LLMCostComponentRecord],
     ) -> None:
+        if any(component.assistant_message_id is None for component in components):
+            raise ValueError("LLM cost component requires assistant_message_id.")
         for component in components:
-            if component.assistant_message_id is None:
-                continue
             session.add(
                 LLMCostComponent(
                     user_id=component.user_id,
@@ -139,3 +163,31 @@ class ChatRepository:
         )
         current = await session.scalar(statement)
         return (current or 0) + 1
+
+
+def _is_message_sequence_conflict(exc: IntegrityError) -> bool:
+    return _integrity_constraint_name(exc) == MESSAGE_SEQUENCE_CONSTRAINT
+
+
+def _integrity_constraint_name(exc: IntegrityError) -> str | None:
+    error = exc.orig
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        constraint_name = _constraint_name_from_error(error)
+        if constraint_name:
+            return constraint_name
+        error = getattr(error, "__cause__", None) or getattr(error, "__context__", None)
+    return None
+
+
+def _constraint_name_from_error(error: BaseException) -> str | None:
+    constraint_name = getattr(error, "constraint_name", None)
+    if constraint_name:
+        return constraint_name
+
+    diag = getattr(error, "diag", None)
+    if diag is None:
+        return None
+
+    return getattr(diag, "constraint_name", None)

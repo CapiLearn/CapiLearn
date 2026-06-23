@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.auth.schemas import CurrentUser, UserRole
 from backend.chat.models import Conversation, Message
+from backend.chat.repository import MessageSequenceConflictError
 from backend.chat.schemas import (
     ConversationStatus,
     MessageRole,
@@ -289,24 +290,7 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
     user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
-    llm_service = FakeLLMService(
-        LLMResult(
-            content="Cells are small units.",
-            provider_response=ProviderResponse(content="Cells are small units."),
-            cost_components=[
-                LLMCostComponent(
-                    user_id=user.id,
-                    conversation_id=uuid4(),
-                    user_message_id=uuid4(),
-                    assistant_message_id=uuid4(),
-                    component_order=1,
-                    component_type="main_generation",
-                    status="completed",
-                    estimated_cost_usd="0.001000000000",
-                )
-            ],
-        )
-    )
+    llm_service = CostedLLMService()
     service = ChatService(
         session=session,
         user_id=user.id,
@@ -317,6 +301,7 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
     await service.create_conversation_message("Explain cells.")
 
     assert repository.cost_components == llm_service.result.cost_components
+    assert repository.cost_components[0].assistant_message_id == repository.messages[-1].id
     assert repository.cost_components[0].estimated_cost_usd == Decimal("0.001000000000")
 
 
@@ -671,6 +656,38 @@ async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
     assert llm_service.requests == []
 
 
+@pytest.mark.asyncio
+async def test_unrelated_message_integrity_error_rolls_back_and_reraises() -> None:
+    user = _current_user()
+    session = FakeSession()
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+        )
+    )
+    integrity_error = IntegrityError(
+        statement="INSERT INTO message",
+        params={},
+        orig=Exception("message user id conflict"),
+    )
+    service = ChatService(
+        session=session,
+        user_id=user.id,
+        llm_service=llm_service,
+        repository=ConflictingChatRepository(
+            user_id=user.id,
+            exc=integrity_error,
+        ),
+    )
+
+    with pytest.raises(IntegrityError):
+        await service.create_conversation_message("Explain cells.")
+
+    assert session.rollback_count == 1
+    assert llm_service.requests == []
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.commit_count = 0
@@ -731,50 +748,58 @@ class FakeChatRepository:
             if message.conversation_id == conversation_id and message.user_id == user_id
         ]
 
-    async def create_message(
+    async def create_turn_messages(
         self,
         session,
         *,
         conversation,
         user_id,
-        role,
-        status,
         content,
+        request_id,
     ):
-        message = _message(
+        next_sequence = (
+            len([item for item in self.messages if item.conversation_id == conversation.id]) + 1
+        )
+        user_message = _message(
             conversation=conversation,
             user_id=user_id,
-            sequence=len(
-                [item for item in self.messages if item.conversation_id == conversation.id]
-            )
-            + 1,
-            role=role,
-            status=status,
+            sequence=next_sequence,
+            role=MessageRole.USER,
+            status=MessageStatus.COMPLETED,
             content=content,
+            extra_metadata={"requestId": request_id},
         )
-        self.messages.append(message)
-        return message
+        assistant_message = _message(
+            conversation=conversation,
+            user_id=user_id,
+            sequence=next_sequence + 1,
+            role=MessageRole.ASSISTANT,
+            status=MessageStatus.PENDING,
+            content="",
+            extra_metadata={"requestId": request_id},
+        )
+        self.messages.extend([user_message, assistant_message])
+        return user_message, assistant_message
 
     async def create_llm_cost_components(self, session, *, components):
         self.cost_components.extend(components)
 
 
 class ConflictingChatRepository(FakeChatRepository):
-    async def create_message(
+    def __init__(self, *, user_id, exc: Exception | None = None) -> None:
+        super().__init__(user_id=user_id)
+        self.exc = exc or MessageSequenceConflictError()
+
+    async def create_turn_messages(
         self,
         session,
         *,
         conversation,
         user_id,
-        role,
-        status,
         content,
+        request_id,
     ):
-        raise IntegrityError(
-            statement="INSERT INTO message",
-            params={},
-            orig=Exception("message sequence conflict"),
-        )
+        raise self.exc
 
 
 class FakeLLMService:
@@ -784,6 +809,32 @@ class FakeLLMService:
 
     async def complete(self, request):
         self.requests.append(request)
+        return self.result
+
+
+class CostedLLMService:
+    def __init__(self) -> None:
+        self.requests = []
+        self.result = LLMResult(content="")
+
+    async def complete(self, request):
+        self.requests.append(request)
+        self.result = LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+            cost_components=[
+                LLMCostComponent(
+                    user_id=request.user_id,
+                    conversation_id=request.conversation_id,
+                    user_message_id=request.user_message_id,
+                    assistant_message_id=request.assistant_message_id,
+                    component_order=1,
+                    component_type="main_generation",
+                    status="completed",
+                    estimated_cost_usd="0.001000000000",
+                )
+            ],
+        )
         return self.result
 
 
@@ -911,6 +962,7 @@ def _message(
     status: MessageStatus,
     content: str | None,
     retrieved_context: list[dict] | None = None,
+    extra_metadata: dict | None = None,
 ) -> Message:
     return Message(
         id=uuid4(),
@@ -921,6 +973,6 @@ def _message(
         status=status.value,
         content=content,
         retrieved_context=retrieved_context or [],
-        extra_metadata={},
+        extra_metadata=extra_metadata or {},
         created_at=datetime.now(UTC),
     )

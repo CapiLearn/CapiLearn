@@ -7,7 +7,7 @@ from backend.llm import costing as llm_costing_module
 from backend.llm import provider as llm_provider_module
 from backend.llm.config import LLMSettings, llm_settings
 from backend.llm.costing import LLMCostRecorder, cost_recorder_context
-from backend.llm.provider import LiteLLMProvider
+from backend.llm.provider import LiteLLMProvider, ProviderResponseError
 from backend.llm.schemas import ChatMessage, ChatRole
 from backend.tests.llm.helpers import (
     _FakeEmptyLiteLLMResponse,
@@ -35,6 +35,55 @@ async def test_litellm_provider_uses_server_configured_model(monkeypatch) -> Non
     assert captured_kwargs["model"] == llm_settings.model
     assert "temperature" not in captured_kwargs
     assert "api_key" not in captured_kwargs
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_rejects_none_message_content(monkeypatch) -> None:
+    async def fake_acompletion(**kwargs):
+        return _FakeLiteLLMResponse(content=None)
+
+    def fake_completion_cost(**kwargs):
+        raise RuntimeError("unknown model")
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_costing_module, "completion_cost", fake_completion_cost)
+
+    request = _request("hello")
+    recorder = LLMCostRecorder(
+        user_id=str(request.user_id),
+        conversation_id=str(request.conversation_id),
+        user_message_id=str(request.user_message_id),
+        assistant_message_id=str(request.assistant_message_id),
+    )
+    provider = LiteLLMProvider()
+
+    with cost_recorder_context(recorder):
+        with pytest.raises(
+            ProviderResponseError,
+            match="no message content",
+        ):
+            await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert len(recorder.components) == 1
+    component = recorder.components[0]
+    assert component.status == "failed"
+    assert component.error_type == "ProviderResponseError"
+    assert component.estimated_cost_usd is None
+    assert component.metadata["costError"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_preserves_empty_message_content(monkeypatch) -> None:
+    async def fake_acompletion(**kwargs):
+        return _FakeLiteLLMResponse(content="")
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+
+    provider = LiteLLMProvider()
+
+    response = await provider.complete([ChatMessage(role=ChatRole.USER, content="hello")])
+
+    assert response.content == ""
 
 
 @pytest.mark.asyncio

@@ -304,12 +304,12 @@ class _FakeLiteLLMUsage:
 
 
 class _FakeLiteLLMMessage:
-    def __init__(self, content: str = "Configured model response.") -> None:
+    def __init__(self, content: str | None = "Configured model response.") -> None:
         self.content = content
 
 
 class _FakeLiteLLMChoice:
-    def __init__(self, content: str = "Configured model response.") -> None:
+    def __init__(self, content: str | None = "Configured model response.") -> None:
         self.message = _FakeLiteLLMMessage(content)
         self.finish_reason = "stop"
 
@@ -317,7 +317,7 @@ class _FakeLiteLLMChoice:
 class _FakeLiteLLMResponse:
     usage = _FakeLiteLLMUsage()
 
-    def __init__(self, content: str = "Configured model response.") -> None:
+    def __init__(self, content: str | None = "Configured model response.") -> None:
         self.choices = [_FakeLiteLLMChoice(content)]
         self.model = "provider/model"
 
