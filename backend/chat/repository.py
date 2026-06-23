@@ -105,6 +105,8 @@ class ChatRepository:
         *,
         components: list[LLMCostComponentRecord],
     ) -> None:
+        if any(component.assistant_message_id is None for component in components):
+            raise ValueError("LLM cost component requires assistant_message_id.")
         for component in components:
             session.add(
                 LLMCostComponent(

@@ -4,8 +4,8 @@ import pytest
 
 from backend.llm import costing as llm_costing_module
 from backend.llm.guardrails import LLMJudgeGuardrailsProvider, NoopGuardrailsProvider
-from backend.llm.provider import LiteLLMProvider
-from backend.llm.service import LLMService, LLMServiceError
+from backend.llm.provider import LiteLLMProvider, ProviderResponseError
+from backend.llm.service import GenerationStage, LLMService, LLMServiceError
 from backend.tests.llm.helpers import (
     AllowGuardrails,
     BlockingInputGuardrails,
@@ -158,6 +158,13 @@ async def test_llm_service_records_repair_flow_cost_components(monkeypatch) -> N
     assert [component.component_order for component in result.cost_components] == [1, 2, 3, 4, 5]
 
 
+def test_generation_stage_defines_component_type() -> None:
+    assert GenerationStage.PRIMARY.value == "primary"
+    assert GenerationStage.PRIMARY.component_type == "main_generation"
+    assert GenerationStage.REPAIR.value == "repair"
+    assert GenerationStage.REPAIR.component_type == "repair_generation"
+
+
 @pytest.mark.asyncio
 async def test_llm_service_error_exposes_failed_cost_components(monkeypatch, caplog) -> None:
     caplog.set_level(logging.ERROR, logger="backend.llm.service")
@@ -186,6 +193,30 @@ async def test_llm_service_error_exposes_failed_cost_components(monkeypatch, cap
     failed_events = _events(caplog.records, "llm.generation.failed")
     assert failed_events[-1].exc_info[0] is RuntimeError
     assert failed_events[-1].exc_info[1] is exc_info.value.original_exception
+
+
+@pytest.mark.asyncio
+async def test_llm_service_wraps_none_provider_message_content(monkeypatch) -> None:
+    async def fake_acompletion(**kwargs):
+        return _FakeLiteLLMResponse(content=None)
+
+    monkeypatch.setattr("backend.llm.provider.acompletion", fake_acompletion)
+    service = LLMService(
+        provider=LiteLLMProvider(),
+        input_guardrails=AllowGuardrails(),
+        output_guardrails=NoopGuardrailsProvider(),
+        retriever=FakeRetriever(),
+    )
+
+    with pytest.raises(LLMServiceError) as exc_info:
+        await service.complete(_request("What is photosynthesis?"))
+
+    assert isinstance(exc_info.value.original_exception, ProviderResponseError)
+    assert len(exc_info.value.cost_components) == 1
+    component = exc_info.value.cost_components[0]
+    assert component.component_type == "main_generation"
+    assert component.status == "failed"
+    assert component.error_type == "ProviderResponseError"
 
 
 @pytest.mark.asyncio

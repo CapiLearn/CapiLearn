@@ -59,9 +59,18 @@ async def test_create_llm_cost_components_persists_assistant_message_id() -> Non
 
 
 @pytest.mark.asyncio
-async def test_create_llm_cost_components_does_not_drop_invalid_missing_assistant_id() -> None:
+async def test_create_llm_cost_components_rejects_missing_assistant_id() -> None:
     session = FakeSession()
     repository = ChatRepository()
+    valid_component = LLMCostComponentRecord(
+        user_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_id=uuid4(),
+        assistant_message_id=uuid4(),
+        component_order=1,
+        component_type="main_generation",
+        status="completed",
+    )
     invalid_component = LLMCostComponentRecord.model_construct(
         user_id=uuid4(),
         conversation_id=uuid4(),
@@ -84,14 +93,14 @@ async def test_create_llm_cost_components_does_not_drop_invalid_missing_assistan
         metadata={},
     )
 
-    await repository.create_llm_cost_components(
-        session,
-        components=[invalid_component],
-    )
+    with pytest.raises(ValueError, match="requires assistant_message_id"):
+        await repository.create_llm_cost_components(
+            session,
+            components=[valid_component, invalid_component],
+        )
 
-    assert len(session.added) == 1
-    assert session.added[0].assistant_message_id is None
-    assert session.flushes == 1
+    assert session.added == []
+    assert session.flushes == 0
 
 
 class FakeSession:

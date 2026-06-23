@@ -124,6 +124,55 @@ async def test_llm_judge_guardrail_parses_allowed_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_judge_guardrail_defaults_missing_optional_metadata() -> None:
+    async def fake_completion(**kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"blocked": false, "confidence": "high"}',
+                    },
+                }
+            ]
+        }
+
+    provider = LLMJudgeGuardrailsProvider(
+        model="openai/gpt-4o-mini",
+        completion=fake_completion,
+    )
+
+    result = await provider.check_input("Can you explain photosynthesis?")
+
+    assert not result.blocked
+    assert result.reason is None
+    assert result.rail == "input_policy"
+    assert "confidence" not in result.metadata
+    assert result.metadata["judgePayloadNormalized"] is True
+    assert result.metadata["judgeMissingFields"] == ["reason", "rail"]
+    assert result.metadata["judgeInvalidFields"] == ["confidence"]
+
+
+@pytest.mark.asyncio
+async def test_llm_judge_guardrail_defaults_blocked_optional_metadata() -> None:
+    async def fake_completion(**kwargs):
+        return {"choices": [{"message": {"content": '{"blocked": true}'}}]}
+
+    provider = LLMJudgeGuardrailsProvider(
+        model="openai/gpt-4o-mini",
+        completion=fake_completion,
+    )
+
+    result = await provider.check_output("The answer is 42.", user_input="Solve this.")
+
+    assert result.blocked
+    assert result.reason == "Message blocked by guardrails."
+    assert result.rail == "output_policy"
+    assert "confidence" not in result.metadata
+    assert result.metadata["judgePayloadNormalized"] is True
+    assert result.metadata["judgeMissingFields"] == ["reason", "rail", "confidence"]
+
+
+@pytest.mark.asyncio
 async def test_llm_judge_guardrail_records_input_cost_component(monkeypatch) -> None:
     async def fake_completion(**kwargs):
         return {
@@ -246,6 +295,65 @@ async def test_llm_judge_guardrail_fails_closed_on_malformed_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_judge_guardrail_fails_closed_when_blocked_is_missing() -> None:
+    async def fake_completion(**kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": ('{"reason": null, "rail": "input_policy", "confidence": 0.1}')
+                    }
+                }
+            ]
+        }
+
+    provider = LLMJudgeGuardrailsProvider(
+        model="openai/gpt-4o-mini",
+        fail_open_on_error=True,
+        completion=fake_completion,
+    )
+
+    result = await provider.check_input("Can you explain photosynthesis?")
+
+    assert result.blocked
+    assert result.rail == "input_policy"
+    assert result.metadata["parseFailedClosed"] is True
+    assert result.metadata["judgeError"] == "ValueError"
+    assert "blocked" in result.metadata["judgeErrorMessage"]
+
+
+@pytest.mark.asyncio
+async def test_llm_judge_guardrail_fails_closed_when_blocked_is_not_bool() -> None:
+    async def fake_completion(**kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"blocked": "false", "reason": null, '
+                            '"rail": "input_policy", "confidence": 0.1}'
+                        )
+                    }
+                }
+            ]
+        }
+
+    provider = LLMJudgeGuardrailsProvider(
+        model="openai/gpt-4o-mini",
+        fail_open_on_error=True,
+        completion=fake_completion,
+    )
+
+    result = await provider.check_input("Can you explain photosynthesis?")
+
+    assert result.blocked
+    assert result.rail == "input_policy"
+    assert result.metadata["parseFailedClosed"] is True
+    assert result.metadata["judgeError"] == "ValueError"
+    assert "blocked" in result.metadata["judgeErrorMessage"]
+
+
+@pytest.mark.asyncio
 async def test_llm_judge_guardrail_fails_closed_on_malformed_response_shape() -> None:
     async def fake_completion(**kwargs):
         return {"choices": []}
@@ -281,6 +389,14 @@ async def test_llm_judge_guardrail_can_fail_open_on_provider_error() -> None:
     assert result.rail is None
     assert result.metadata["failOpen"] is True
     assert result.metadata["judgeError"] == "RuntimeError"
+
+
+def test_composite_guardrails_rejects_empty_provider_list() -> None:
+    with pytest.raises(
+        ValueError,
+        match="CompositeGuardrailsProvider requires at least one provider.",
+    ):
+        CompositeGuardrailsProvider([])
 
 
 @pytest.mark.asyncio

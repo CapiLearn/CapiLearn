@@ -240,7 +240,10 @@ class LLMJudgeGuardrailsProvider:
         content = ""
         try:
             content = _response_content(response)
-            payload = _parse_judge_json(content)
+            payload = _normalize_judge_payload(
+                _parse_judge_json(content),
+                default_rail=default_rail,
+            )
         except Exception as exc:
             return self._judge_parse_error_result(
                 check_type=check_type,
@@ -249,22 +252,25 @@ class LLMJudgeGuardrailsProvider:
                 content=content,
             )
 
-        blocked = bool(payload.get("blocked", False))
-        rail = str(payload.get("rail") or default_rail)
-        reason = payload.get("reason")
+        blocked = payload["blocked"]
+        rail = payload["rail"]
+        reason = payload["reason"]
         if blocked and not reason:
             reason = "Message blocked by guardrails."
-        confidence = _coerce_confidence(payload.get("confidence"))
+        confidence = payload["confidence"]
+        metadata = {
+            "checkType": check_type,
+            "provider": "llm_judge",
+            "model": self._model,
+            **payload["metadata"],
+        }
+        if confidence is not None:
+            metadata["confidence"] = confidence
         return GuardrailResult(
             blocked=blocked,
             reason=str(reason) if reason is not None else None,
             rail=rail,
-            metadata={
-                "checkType": check_type,
-                "provider": "llm_judge",
-                "model": self._model,
-                "confidence": confidence,
-            },
+            metadata=metadata,
         )
 
     def _judge_parse_error_result(
@@ -316,6 +322,8 @@ class LLMJudgeGuardrailsProvider:
 class CompositeGuardrailsProvider:
     def __init__(self, providers: Sequence[GuardrailsProvider]) -> None:
         self.providers = list(providers)
+        if not self.providers:
+            raise ValueError("CompositeGuardrailsProvider requires at least one provider.")
 
     async def check_input(self, content: str) -> GuardrailResult:
         passed_checks = []
@@ -391,6 +399,68 @@ def _parse_judge_json(content: str) -> dict[str, Any]:
     return payload
 
 
+def _normalize_judge_payload(
+    payload: dict[str, Any],
+    *,
+    default_rail: str,
+) -> dict[str, Any]:
+    if "blocked" not in payload:
+        raise ValueError("Guardrail judge JSON missing required field: blocked.")
+
+    blocked = payload["blocked"]
+    if not isinstance(blocked, bool):
+        raise ValueError("Guardrail judge JSON field 'blocked' must be a boolean.")
+
+    missing_fields = []
+    invalid_fields = []
+
+    if "reason" not in payload:
+        missing_fields.append("reason")
+        reason = None
+    else:
+        reason = payload["reason"]
+    if reason is not None and not isinstance(reason, str):
+        invalid_fields.append("reason")
+        reason = None
+
+    if "rail" not in payload:
+        missing_fields.append("rail")
+        rail = default_rail
+    else:
+        rail = payload["rail"]
+    if not isinstance(rail, str) or not rail:
+        invalid_fields.append("rail")
+        rail = default_rail
+
+    if "confidence" not in payload:
+        missing_fields.append("confidence")
+        confidence = None
+    else:
+        confidence = payload["confidence"]
+    if isinstance(confidence, bool) or not isinstance(confidence, int | float):
+        if "confidence" in payload:
+            invalid_fields.append("confidence")
+        confidence = None
+    else:
+        confidence = float(confidence)
+
+    metadata = {}
+    if missing_fields or invalid_fields:
+        metadata["judgePayloadNormalized"] = True
+        if missing_fields:
+            metadata["judgeMissingFields"] = missing_fields
+        if invalid_fields:
+            metadata["judgeInvalidFields"] = invalid_fields
+
+    return {
+        "blocked": blocked,
+        "reason": reason,
+        "rail": rail,
+        "confidence": confidence,
+        "metadata": metadata,
+    }
+
+
 def _loads_json_object(content: str) -> Any:
     try:
         return json.loads(content)
@@ -406,12 +476,3 @@ def _loads_json_object(content: str) -> Any:
             if isinstance(payload, dict):
                 return payload
         raise direct_error
-
-
-def _coerce_confidence(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None

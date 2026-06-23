@@ -5,7 +5,7 @@ import pytest
 
 from backend.llm.prompts import BASE_SYSTEM_PROMPT
 from backend.llm.schemas import ChatRole
-from backend.llm.service import LLMService
+from backend.llm.service import EmptyRetrievalProvider, LLMService
 from backend.rag.schemas import RagRetrievalLogRecord, RetrievedChunk
 from backend.tests.llm.helpers import (
     AllowGuardrails,
@@ -120,6 +120,7 @@ async def test_llm_service_omits_retrieved_context_block_without_chunks(caplog) 
 
     result = await service.complete(_request("What is photosynthesis?"))
 
+    assert isinstance(service._retriever, EmptyRetrievalProvider)
     assert result.retrieved_context == []
     assert provider.messages[-1].role == ChatRole.USER
     assert "<retrieved_context>" not in provider.messages[-1].content
