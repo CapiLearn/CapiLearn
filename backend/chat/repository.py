@@ -83,33 +83,45 @@ class ChatRepository:
         )
         return list((await session.scalars(statement)).all())
 
-    async def create_message(
+    async def create_turn_messages(
         self,
         session: AsyncSession,
         *,
         conversation: Conversation,
         user_id: UUID,
-        role: MessageRole,
-        status: MessageStatus,
-        content: str | None,
-    ) -> Message:
-        message = Message(
+        content: str,
+        request_id: str,
+    ) -> tuple[Message, Message]:
+        next_sequence = await self._next_sequence(session, conversation_id=conversation.id)
+        metadata = {"requestId": request_id}
+        user_message = Message(
             conversation_id=conversation.id,
             user_id=user_id,
-            sequence=await self._next_sequence(session, conversation_id=conversation.id),
-            role=role.value,
-            status=status.value,
+            sequence=next_sequence,
+            role=MessageRole.USER.value,
+            status=MessageStatus.COMPLETED.value,
             content=content,
+            extra_metadata=dict(metadata),
+        )
+        assistant_message = Message(
+            conversation_id=conversation.id,
+            user_id=user_id,
+            sequence=next_sequence + 1,
+            role=MessageRole.ASSISTANT.value,
+            status=MessageStatus.PENDING.value,
+            content="",
+            extra_metadata=dict(metadata),
         )
         conversation.updated_at = utc_now()
-        session.add(message)
+        session.add(user_message)
+        session.add(assistant_message)
         try:
             await session.flush()
         except IntegrityError as exc:
             if _is_message_sequence_conflict(exc):
                 raise MessageSequenceConflictError from exc
             raise
-        return message
+        return user_message, assistant_message
 
     async def create_llm_cost_components(
         self,

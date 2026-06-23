@@ -61,7 +61,42 @@ async def test_create_llm_cost_components_persists_assistant_message_id() -> Non
 
 
 @pytest.mark.asyncio
-async def test_create_message_maps_sequence_conflict_to_domain_error() -> None:
+async def test_create_turn_messages_persists_adjacent_user_and_assistant_messages() -> None:
+    user_id = uuid4()
+    request_id = "req_123"
+    session = FakeSession(scalar_result=4)
+    repository = ChatRepository()
+    conversation = _conversation(user_id=user_id)
+
+    user_message, assistant_message = await repository.create_turn_messages(
+        session,
+        conversation=conversation,
+        user_id=user_id,
+        content="Explain cells.",
+        request_id=request_id,
+    )
+
+    assert session.scalar_count == 1
+    assert session.flushes == 1
+    assert session.added == [user_message, assistant_message]
+    assert user_message.conversation_id == conversation.id
+    assert user_message.user_id == user_id
+    assert user_message.sequence == 5
+    assert user_message.role == MessageRole.USER.value
+    assert user_message.status == MessageStatus.COMPLETED.value
+    assert user_message.content == "Explain cells."
+    assert user_message.extra_metadata == {"requestId": request_id}
+    assert assistant_message.conversation_id == conversation.id
+    assert assistant_message.user_id == user_id
+    assert assistant_message.sequence == 6
+    assert assistant_message.role == MessageRole.ASSISTANT.value
+    assert assistant_message.status == MessageStatus.PENDING.value
+    assert assistant_message.content == ""
+    assert assistant_message.extra_metadata == {"requestId": request_id}
+
+
+@pytest.mark.asyncio
+async def test_create_turn_messages_maps_sequence_conflict_to_domain_error() -> None:
     user_id = uuid4()
     session = FakeSession(
         flush_error=_integrity_error("message_conversation_sequence_key"),
@@ -69,36 +104,36 @@ async def test_create_message_maps_sequence_conflict_to_domain_error() -> None:
     repository = ChatRepository()
 
     with pytest.raises(MessageSequenceConflictError):
-        await repository.create_message(
+        await repository.create_turn_messages(
             session,
             conversation=_conversation(user_id=user_id),
             user_id=user_id,
-            role=MessageRole.USER,
-            status=MessageStatus.COMPLETED,
             content="Explain cells.",
+            request_id="req_123",
         )
 
+    assert session.scalar_count == 1
     assert session.flushes == 1
 
 
 @pytest.mark.asyncio
-async def test_create_message_reraises_unrelated_integrity_error() -> None:
+async def test_create_turn_messages_reraises_unrelated_integrity_error() -> None:
     user_id = uuid4()
     integrity_error = _integrity_error("message_user_id_fkey")
     session = FakeSession(flush_error=integrity_error)
     repository = ChatRepository()
 
     with pytest.raises(IntegrityError) as exc_info:
-        await repository.create_message(
+        await repository.create_turn_messages(
             session,
             conversation=_conversation(user_id=user_id),
             user_id=user_id,
-            role=MessageRole.USER,
-            status=MessageStatus.COMPLETED,
             content="Explain cells.",
+            request_id="req_123",
         )
 
     assert exc_info.value is integrity_error
+    assert session.scalar_count == 1
     assert session.flushes == 1
 
 
@@ -156,6 +191,7 @@ class FakeSession:
     ) -> None:
         self.added = []
         self.flushes = 0
+        self.scalar_count = 0
         self.scalar_result = scalar_result
         self.flush_error = flush_error
 
@@ -163,6 +199,7 @@ class FakeSession:
         self.added.append(instance)
 
     async def scalar(self, statement):
+        self.scalar_count += 1
         return self.scalar_result
 
     async def flush(self) -> None:

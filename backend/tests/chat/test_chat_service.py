@@ -748,29 +748,38 @@ class FakeChatRepository:
             if message.conversation_id == conversation_id and message.user_id == user_id
         ]
 
-    async def create_message(
+    async def create_turn_messages(
         self,
         session,
         *,
         conversation,
         user_id,
-        role,
-        status,
         content,
+        request_id,
     ):
-        message = _message(
+        next_sequence = (
+            len([item for item in self.messages if item.conversation_id == conversation.id]) + 1
+        )
+        user_message = _message(
             conversation=conversation,
             user_id=user_id,
-            sequence=len(
-                [item for item in self.messages if item.conversation_id == conversation.id]
-            )
-            + 1,
-            role=role,
-            status=status,
+            sequence=next_sequence,
+            role=MessageRole.USER,
+            status=MessageStatus.COMPLETED,
             content=content,
+            extra_metadata={"requestId": request_id},
         )
-        self.messages.append(message)
-        return message
+        assistant_message = _message(
+            conversation=conversation,
+            user_id=user_id,
+            sequence=next_sequence + 1,
+            role=MessageRole.ASSISTANT,
+            status=MessageStatus.PENDING,
+            content="",
+            extra_metadata={"requestId": request_id},
+        )
+        self.messages.extend([user_message, assistant_message])
+        return user_message, assistant_message
 
     async def create_llm_cost_components(self, session, *, components):
         self.cost_components.extend(components)
@@ -781,15 +790,14 @@ class ConflictingChatRepository(FakeChatRepository):
         super().__init__(user_id=user_id)
         self.exc = exc or MessageSequenceConflictError()
 
-    async def create_message(
+    async def create_turn_messages(
         self,
         session,
         *,
         conversation,
         user_id,
-        role,
-        status,
         content,
+        request_id,
     ):
         raise self.exc
 
@@ -954,6 +962,7 @@ def _message(
     status: MessageStatus,
     content: str | None,
     retrieved_context: list[dict] | None = None,
+    extra_metadata: dict | None = None,
 ) -> Message:
     return Message(
         id=uuid4(),
@@ -964,6 +973,6 @@ def _message(
         status=status.value,
         content=content,
         retrieved_context=retrieved_context or [],
-        extra_metadata={},
+        extra_metadata=extra_metadata or {},
         created_at=datetime.now(UTC),
     )
