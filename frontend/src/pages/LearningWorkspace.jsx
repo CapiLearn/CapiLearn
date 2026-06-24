@@ -12,6 +12,10 @@ import {
   listConversations,
   listMessages,
 } from "../services/conversationService";
+import {
+  getActivityCalendar,
+  recordLoginActivity,
+} from "../services/activityService";
 
 import "../styles/LearningWorkspace.css";
 
@@ -175,6 +179,21 @@ function formatCalendarTitle(date) {
   });
 }
 
+function toDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getCurrentMonthRange() {
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  return {
+    fromDate: toDateKey(firstDay),
+    toDate: toDateKey(lastDay),
+  };
+}
+
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
   const [chatMessages, setChatMessages] = useState(initialChatMessages);
@@ -189,7 +208,10 @@ function LearningWorkspace() {
   const [messageSearchTerm, setMessageSearchTerm] = useState("");
   const [conversationSearchTerm, setConversationSearchTerm] = useState("");
   const [currentDate, setCurrentDate] = useState(() => new Date());
-  const { getToken } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const [currentStreak, setCurrentStreak] = useState(null);
+  const [activityDays, setActivityDays] = useState([]);
+  const [activityError, setActivityError] = useState("");
 
   useEffect(() => {
     async function loadConversations() {
@@ -216,6 +238,49 @@ function LearningWorkspace() {
 
     return () => clearInterval(timerId);
   }, []);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadActivity() {
+      try {
+        setActivityError("");
+
+        const token = (await getToken()) || "test";
+        const loginActivity = await recordLoginActivity(token);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentStreak(loginActivity.currentStreak);
+
+        const calendarRange = getCurrentMonthRange();
+        const calendarActivity = await getActivityCalendar(token, calendarRange);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentStreak(calendarActivity.currentStreak);
+        setActivityDays(calendarActivity.days || []);
+      } catch (error) {
+        if (isMounted) {
+          setActivityError(error.message || "Unable to load activity.");
+        }
+      }
+    }
+
+    loadActivity();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [getToken, isLoaded, isSignedIn]);
 
   async function handleSendMessage(event) {
     event.preventDefault();
@@ -344,7 +409,24 @@ function LearningWorkspace() {
   );
 
   const calendarTitle = formatCalendarTitle(currentDate);
-  const currentDay = String(currentDate.getDate());
+  const activeDateKeys = useMemo(
+    () => new Set(activityDays.map((activityDay) => activityDay.date)),
+    [activityDays]
+  );
+
+  function getCalendarDateKey(day) {
+    if (!day) {
+      return "";
+    }
+
+    const calendarDate = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      Number(day)
+    );
+
+    return toDateKey(calendarDate);
+  }
 
   return (
     <main className="workspace-page">
@@ -429,14 +511,6 @@ function LearningWorkspace() {
             <p className="workspace-kicker">AI Tutor</p>
             <h1>What would you like to learn today?</h1>
           </div>
-
-          {/* Student dashboard has not been implemented yet.
-          <div className="workspace-header-actions">
-            <Link className="workspace-dashboard-link" to="/student-dashboard">
-              Dashboard
-            </Link>
-          </div>
-          */}
         </header>
 
         <section className="welcome-card">
@@ -543,7 +617,8 @@ function LearningWorkspace() {
       <aside className="study-panel">
         <section className="tracker-card streak-card">
           <p className="card-label">Current streak</p>
-          <h2>5 days</h2>
+          <h2>{currentStreak ?? "—"} days</h2>
+          {activityError && <p className="tracker-error">{activityError}</p>}
           <span>Keep showing up. Small steps count.</span>
         </section>
 
@@ -567,7 +642,7 @@ function LearningWorkspace() {
             {calendarDays.map((day, index) => (
               <div
                 className={`calendar-day ${
-                  day === currentDay ? "active-day" : ""
+                  activeDateKeys.has(getCalendarDateKey(day)) ? "active-day" : ""
                 }`}
                 key={`${day}-${index}`}
               >
