@@ -245,10 +245,121 @@ def test_validate_cited_response_ignores_invalid_and_uncited_markers() -> None:
     assert [citation.citation_id for citation in result.citations] == ["1"]
 
 
-def test_extract_valid_citation_ids_ignores_code_and_markdown_links() -> None:
-    content = "Cite [1]. Ignore `[2]` and ```\n[3]\n```. Also ignore [4](https://example.com)."
+def test_extract_valid_citation_ids_reads_numeric_markers_from_markdown_links() -> None:
+    content = (
+        "[docs]: https://example.com\n"
+        "[8]: https://example.com.\n\n"
+        "Cite [1]. Ignore `[2]`.\n```\n[3]\n```\n"
+        "Also cite [4](https://example.com), [docs [5]](https://example.com), "
+        "[reference [6]][docs], and ignore ![7](image.png)."
+    )
 
-    assert extract_valid_citation_ids(content, {"1", "2", "3", "4"}) == ["1"]
+    assert extract_valid_citation_ids(
+        content,
+        {"1", "2", "3", "4", "5", "6", "7", "8"},
+    ) == ["1", "4"]
+
+
+def test_extract_valid_citation_ids_keeps_adjacent_citation_markers() -> None:
+    assert extract_valid_citation_ids("Use both [1][2].", {"1", "2"}) == ["1", "2"]
+
+
+def test_extract_valid_citation_ids_keeps_numeric_reference_link_label() -> None:
+    content = "Use both [1][2].\n\n[2]: https://example.com"
+
+    assert extract_valid_citation_ids(content, {"1", "2"}) == ["1"]
+
+
+def test_extract_valid_citation_ids_keeps_plain_marker_with_reference_definition() -> None:
+    content = "Cite [1].\n\n[1]: https://example.com"
+
+    assert extract_valid_citation_ids(content, {"1"}) == ["1"]
+
+
+def test_extract_valid_citation_ids_ignores_reference_definition_only() -> None:
+    assert extract_valid_citation_ids("[1]: https://example.com", {"1"}) == []
+
+
+def test_extract_valid_citation_ids_reads_numeric_markers_from_reference_links() -> None:
+    content = (
+        "Cite [1][source], and ignore [source [2]][docs] and [label][3]. "
+        "Cite [4].\n\n"
+        "[source]: https://example.com\n"
+        "[docs]: https://example.com\n"
+        "[3]: https://example.com"
+    )
+
+    assert extract_valid_citation_ids(content, {"1", "2", "3", "4"}) == ["1", "4"]
+
+
+def test_extract_valid_citation_ids_keeps_markdown_link_text_order() -> None:
+    content = "Cite [2](https://example.com). Cite [1]. Then cite [2]."
+
+    assert extract_valid_citation_ids(content, {"1", "2"}) == ["2", "1"]
+
+
+def test_extract_valid_citation_ids_ignores_markers_inside_descriptive_link_label() -> None:
+    content = "Ignore [docs [1] and [2]](https://example.com). Cite [3]."
+
+    assert extract_valid_citation_ids(content, {"1", "2", "3"}) == ["3"]
+
+
+def test_validate_cited_response_filters_citations_at_backend_boundary() -> None:
+    result = validate_cited_response(
+        "Used [1]. Ignored `[2]` and cited [3](https://example.com).",
+        [
+            RetrievedChunk(content="Used context", metadata={"source_path": "used.md"}),
+            RetrievedChunk(content="Code context", metadata={"source_path": "code.md"}),
+            RetrievedChunk(content="Link context", metadata={"source_path": "link.md"}),
+            RetrievedChunk(content="Unused context", metadata={"source_path": "unused.md"}),
+        ],
+    )
+
+    assert result.content == "Used [1]. Ignored `[2]` and cited [3]."
+    assert [citation.citation_id for citation in result.citations] == ["1", "3"]
+    assert [citation.source_path for citation in result.citations] == ["used.md", "link.md"]
+
+
+def test_validate_cited_response_normalizes_numeric_markdown_citation_links() -> None:
+    result = validate_cited_response(
+        (
+            "Inline [1](https://example.com), reference [2][source], shortcut [3].\n\n"
+            "[source]: https://example.com\n"
+            "[3]: https://example.com"
+        ),
+        [
+            RetrievedChunk(content="Inline context", metadata={"source_path": "inline.md"}),
+            RetrievedChunk(content="Reference context", metadata={"source_path": "reference.md"}),
+            RetrievedChunk(content="Shortcut context", metadata={"source_path": "shortcut.md"}),
+        ],
+    )
+
+    assert result.content == (
+        "Inline [1], reference [2], shortcut [3].\n\n[source]: https://example.com\n"
+    )
+    assert [citation.citation_id for citation in result.citations] == ["1", "2", "3"]
+    assert [citation.source_path for citation in result.citations] == [
+        "inline.md",
+        "reference.md",
+        "shortcut.md",
+    ]
+
+
+def test_validate_cited_response_allows_citation_ids_above_default_top_k() -> None:
+    result = validate_cited_response(
+        "Sixth source [6].",
+        [
+            RetrievedChunk(content="First context", metadata={"source_path": "first.md"}),
+            RetrievedChunk(content="Second context", metadata={"source_path": "second.md"}),
+            RetrievedChunk(content="Third context", metadata={"source_path": "third.md"}),
+            RetrievedChunk(content="Fourth context", metadata={"source_path": "fourth.md"}),
+            RetrievedChunk(content="Fifth context", metadata={"source_path": "fifth.md"}),
+            RetrievedChunk(content="Sixth context", metadata={"source_path": "sixth.md"}),
+        ],
+    )
+
+    assert [citation.citation_id for citation in result.citations] == ["6"]
+    assert [citation.source_path for citation in result.citations] == ["sixth.md"]
 
 
 def test_validate_cited_response_normalizes_legacy_citation_links() -> None:

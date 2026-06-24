@@ -1,16 +1,26 @@
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
+
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 from backend.core.citations import CitationRecord
 from backend.rag.schemas import RetrievedChunk
 
 MAX_CITATION_CHUNK_TEXT_LENGTH = 2000
-PLAIN_CITATION_MARKER_PATTERN = re.compile(r"(?<!!)\[(\d+)\](?!\()")
+CITATION_MARKER_PATTERN = re.compile(r"\[([1-9]\d*)\]")
 LEGACY_CITATION_LINK_PATTERN = re.compile(r"\[([^\]\n]+)\]\(citation:([^)]+)\)")
+INLINE_CITATION_LINK_PATTERN = re.compile(r"(?<!!)\[([1-9]\d*)\]\([^)\n]*\)")
+REFERENCE_CITATION_LINK_PATTERN = re.compile(r"(?<!!)\[([1-9]\d*)\]\[([^\]\n]*)\]")
+NUMERIC_REFERENCE_DEFINITION_PATTERN = re.compile(
+    r"(?m)^[ \t]{0,3}\[([1-9]\d*)\]:[^\n]*(?:\n[ \t]+[^\n]*)*(?:\n|$)"
+)
 FENCED_CODE_BLOCK_PATTERN = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_PATTERN = re.compile(r"`[^`\n]*`")
+MARKDOWN_PARSER = MarkdownIt("commonmark")
 
 
 @dataclass(frozen=True)
@@ -69,10 +79,6 @@ def validate_cited_response(content: str, chunks: list[RetrievedChunk]) -> Valid
 
 
 def normalize_legacy_citation_links(content: str, valid_citation_ids: set[str]) -> str:
-    masked_content = _mask_code_spans(content)
-    normalized_parts = []
-    last_index = 0
-
     def replace_link(match: re.Match[str]) -> str:
         label = match.group(1).strip()
         citation_id = unquote(match.group(2)).strip()
@@ -82,33 +88,46 @@ def normalize_legacy_citation_links(content: str, valid_citation_ids: set[str]) 
 
         return f"[{label}]"
 
-    for match in LEGACY_CITATION_LINK_PATTERN.finditer(content):
-        if _is_masked(masked_content, match.start()):
-            continue
+    normalized_content = _sub_outside_code(content, LEGACY_CITATION_LINK_PATTERN, replace_link)
+    normalized_content = _sub_outside_code(
+        normalized_content,
+        INLINE_CITATION_LINK_PATTERN,
+        lambda match: f"[{match.group(1)}]",
+    )
 
-        normalized_parts.append(content[last_index : match.start()])
-        normalized_parts.append(replace_link(match))
-        last_index = match.end()
+    reference_labels = _reference_labels(normalized_content)
 
-    if not normalized_parts:
-        return content
+    def replace_reference_link(match: re.Match[str]) -> str:
+        citation_id = match.group(1)
+        reference_label = match.group(2).strip() or citation_id
+        if _normalize_reference_label(reference_label) in reference_labels:
+            return f"[{citation_id}]"
+        return match.group(0)
 
-    normalized_parts.append(content[last_index:])
-    return "".join(normalized_parts)
+    normalized_content = _sub_outside_code(
+        normalized_content,
+        REFERENCE_CITATION_LINK_PATTERN,
+        replace_reference_link,
+    )
+    return _sub_outside_code(
+        normalized_content,
+        NUMERIC_REFERENCE_DEFINITION_PATTERN,
+        lambda match: "",
+    )
 
 
 def extract_valid_citation_ids(content: str, valid_citation_ids: set[str]) -> list[str]:
-    masked_content = _mask_code_spans(content)
     citation_ids = []
     seen_ids = set()
 
-    for match in PLAIN_CITATION_MARKER_PATTERN.finditer(masked_content):
-        citation_id = match.group(1)
-        if citation_id not in valid_citation_ids or citation_id in seen_ids:
-            continue
+    for text in _iter_citable_markdown_text(content):
+        for match in CITATION_MARKER_PATTERN.finditer(text):
+            citation_id = match.group(1)
+            if citation_id not in valid_citation_ids or citation_id in seen_ids:
+                continue
 
-        citation_ids.append(citation_id)
-        seen_ids.add(citation_id)
+            citation_ids.append(citation_id)
+            seen_ids.add(citation_id)
 
     return citation_ids
 
@@ -164,6 +183,90 @@ def _source_file_name(source_path: str) -> str | None:
 def _mask_code_spans(content: str) -> str:
     masked_content = FENCED_CODE_BLOCK_PATTERN.sub(_same_length_spaces, content)
     return INLINE_CODE_PATTERN.sub(_same_length_spaces, masked_content)
+
+
+def _iter_citable_markdown_text(content: str) -> Iterable[str]:
+    for token in MARKDOWN_PARSER.parse(content):
+        if token.type == "inline" and token.children is not None:
+            yield from _iter_citable_inline_text(token.children)
+
+
+def _iter_citable_inline_text(tokens: Iterable[Token]) -> Iterable[str]:
+    token_list = list(tokens)
+    index = 0
+
+    while index < len(token_list):
+        token = token_list[index]
+        if token.type == "link_open":
+            link_text, link_close_index = _link_text(token_list, index)
+            if link_text.isdecimal():
+                yield f"[{link_text}]"
+            index = link_close_index + 1
+            continue
+        if token.type == "link_close":
+            index += 1
+            continue
+        if token.type in {"code_inline", "image"}:
+            index += 1
+            continue
+        if token.type == "text":
+            yield token.content
+        index += 1
+
+
+def _link_text(tokens: list[Token], link_open_index: int) -> tuple[str, int]:
+    text_parts = []
+    nesting = 0
+    index = link_open_index
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token.type == "link_open":
+            nesting += 1
+        elif token.type == "link_close":
+            nesting -= 1
+            if nesting == 0:
+                return "".join(text_parts), index
+        elif nesting == 1 and token.type == "text":
+            text_parts.append(token.content)
+
+        index += 1
+
+    return "", link_open_index
+
+
+def _sub_outside_code(
+    content: str,
+    pattern: re.Pattern[str],
+    replace: Callable[[re.Match[str]], str],
+) -> str:
+    masked_content = _mask_code_spans(content)
+    normalized_parts = []
+    last_index = 0
+
+    for match in pattern.finditer(content):
+        if _is_masked(masked_content, match.start()):
+            continue
+
+        normalized_parts.append(content[last_index : match.start()])
+        normalized_parts.append(replace(match))
+        last_index = match.end()
+
+    if not normalized_parts:
+        return content
+
+    normalized_parts.append(content[last_index:])
+    return "".join(normalized_parts)
+
+
+def _reference_labels(content: str) -> set[str]:
+    env: dict[str, Any] = {}
+    MARKDOWN_PARSER.parse(content, env)
+    return set(env.get("references", {}))
+
+
+def _normalize_reference_label(label: str) -> str:
+    return " ".join(label.split()).upper()
 
 
 def _same_length_spaces(match: re.Match[str]) -> str:
