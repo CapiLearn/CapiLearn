@@ -1,6 +1,9 @@
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@clerk/react";
 import { Link } from "react-router-dom";
-import "../styles/StudentDashboard.css";
 import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
+import { getActivityCalendar } from "../services/activityService";
+import "../styles/StudentDashboard.css";
 
 const statCards = [
   {
@@ -17,11 +20,6 @@ const statCards = [
     label: "Sessions",
     value: "23",
     helper: "Study sessions completed",
-  },
-  {
-    label: "Current streak",
-    value: "5 days",
-    helper: "Keep the habit going",
   },
 ];
 
@@ -61,7 +59,77 @@ const focusAreas = [
   "Ipsum Lorem",
 ];
 
+function toDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getCurrentMonthRange() {
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  return {
+    fromDate: toDateKey(firstDay),
+    toDate: toDateKey(lastDay),
+  };
+}
+
 function StudentDashboard() {
+
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const [currentStreak, setCurrentStreak] = useState(null);
+  const [activeDaysCount, setActiveDaysCount] = useState(null);
+  const [activityError, setActivityError] = useState("");
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadActivityCalendar() {
+      try {
+        setActivityError("");
+
+        const token = (await getToken()) || "test";
+        const calendarActivity = await getActivityCalendar(
+          token,
+          getCurrentMonthRange()
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentStreak(calendarActivity.currentStreak);
+        setActiveDaysCount((calendarActivity.days || []).length);
+      } catch (error) {
+        if (isMounted) {
+          setActivityError(error.message || "Unable to load activity.");
+        }
+      }
+    }
+
+    loadActivityCalendar();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [getToken, isLoaded, isSignedIn]);
+
+  const dashboardStats = useMemo(
+    () => [
+      ...statCards,
+      {
+        label: "Current streak",
+        value: `${currentStreak ?? "—"} days`,
+        helper: activityError || "Keep the habit going",
+      },
+    ],
+    [activityError, currentStreak]
+  );
+
   return (
     <main className="student-dashboard-page">
       <aside className="student-dashboard-sidebar">
@@ -108,7 +176,7 @@ function StudentDashboard() {
         </header>
 
         <section className="dashboard-stat-grid">
-          {statCards.map((stat) => (
+          {dashboardStats.map((stat) => (
             <article className="dashboard-stat-card" key={stat.label}>
               <p>{stat.label}</p>
               <h2>{stat.value}</h2>
@@ -124,7 +192,7 @@ function StudentDashboard() {
                 <p className="panel-label">Course Progress</p>
                 <h2>Learning modules</h2>
               </div>
-              <span>4 active</span>
+              <span>{activeDaysCount ?? "—"} active this month</span>
             </div>
 
             <div className="module-list">
