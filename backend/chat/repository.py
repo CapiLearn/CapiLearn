@@ -90,10 +90,8 @@ class ChatRepository:
         conversation: Conversation,
         user_id: UUID,
         content: str,
-        request_id: str,
     ) -> tuple[Message, Message]:
         next_sequence = await self._next_sequence(session, conversation_id=conversation.id)
-        metadata = {"requestId": request_id}
         user_message = Message(
             conversation_id=conversation.id,
             user_id=user_id,
@@ -101,7 +99,6 @@ class ChatRepository:
             role=MessageRole.USER.value,
             status=MessageStatus.COMPLETED.value,
             content=content,
-            extra_metadata=dict(metadata),
         )
         assistant_message = Message(
             conversation_id=conversation.id,
@@ -110,7 +107,6 @@ class ChatRepository:
             role=MessageRole.ASSISTANT.value,
             status=MessageStatus.PENDING.value,
             content="",
-            extra_metadata=dict(metadata),
         )
         conversation.updated_at = utc_now()
         session.add(user_message)

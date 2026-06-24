@@ -93,7 +93,6 @@ class LiteLLMProvider:
             completion_tokens=getattr(usage, "completion_tokens", None),
             total_tokens=getattr(usage, "total_tokens", None),
             latency_ms=elapsed_ms(started_at),
-            raw_response=_serialize_response(response),
         )
 
 
@@ -120,11 +119,3 @@ def _message_content(choice: Any) -> str:
             "LLM provider returned a response choice with non-text message content."
         )
     return content
-
-
-def _serialize_response(response: Any) -> dict[str, Any] | None:
-    if hasattr(response, "model_dump"):
-        return response.model_dump(mode="json")
-    if isinstance(response, dict):
-        return response
-    return None

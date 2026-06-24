@@ -52,7 +52,6 @@ class ProviderResponse(LLMBaseModel):
     completion_tokens: int | None = None
     total_tokens: int | None = None
     latency_ms: int | None = None
-    raw_response: dict[str, Any] | None = None
 
 
 class LLMCostComponent(LLMBaseModel):
