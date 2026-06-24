@@ -17,7 +17,6 @@ body {
 }
 
 /* Sidebar */
-
 .admin-sidebar {
   background: #fbf8e8;
   border-right: 1px solid #e0d8bd;
@@ -26,6 +25,30 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-sidebar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 120px;
+  transform: translateX(-50%);
+  width: 230px;
+  height: 230px;
+  background-image: url("../assets/capi_admin_watermark.webp");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.admin-sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .admin-brand {
@@ -42,13 +65,10 @@ body {
 .admin-brand-icon {
   width: 34px;
   height: 34px;
+  flex: 0 0 34px;
   border-radius: 8px;
-  background: #557c38;
-  color: #fff7e3;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  object-fit: contain;
+  display: block;
 }
 
 .admin-nav {
@@ -135,22 +155,6 @@ body {
   overflow: hidden;  
   padding: 34px 42px;
   min-width: 0;
-}
-
-.admin-main::after {
-  content: "";
-  position: fixed;
-  right: 32px;
-  bottom: 24px;
-  width: 300px;
-  height: 300px;
-  background-image: url("../assets/capi-admin.svg");
-  background-repeat: no-repeat;
-  background-size: contain;
-  background-position: center;
-  opacity: 0.045;
-  pointer-events: none;
-  z-index: 0;
 }
 
 .admin-main > * {
