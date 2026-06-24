@@ -21,14 +21,6 @@ class CitationContext:
     content: str
     chunk_text: str
 
-    def record(self) -> CitationRecord:
-        return CitationRecord(
-            citation_id=self.citation_id,
-            source_path=self.source_path,
-            heading=self.heading,
-            chunk_text=self.chunk_text,
-        )
-
 
 @dataclass(frozen=True)
 class ValidatedCitations:
@@ -53,7 +45,15 @@ def build_citation_contexts(chunks: list[RetrievedChunk]) -> list[CitationContex
 
 
 def build_citation_records(chunks: list[RetrievedChunk]) -> list[CitationRecord]:
-    return [context.record() for context in build_citation_contexts(chunks)]
+    return [
+        CitationRecord(
+            citation_id=context.citation_id,
+            source_path=context.source_path,
+            heading=context.heading,
+            chunk_text=context.chunk_text,
+        )
+        for context in build_citation_contexts(chunks)
+    ]
 
 
 def validate_cited_response(content: str, chunks: list[RetrievedChunk]) -> ValidatedCitations:
