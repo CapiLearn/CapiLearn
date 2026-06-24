@@ -31,13 +31,6 @@ class AuthPrincipal(AuthBaseModel):
     role: UserRole
 
 
-class CurrentUserResponse(AuthBaseModel):
-    id: UUID
-    clerk_id: str
-    display_name: str
-    role: UserRole
-
-
 class ClerkAuthClaims(BaseModel):
     clerk_id: str
     claims: dict

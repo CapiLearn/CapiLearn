@@ -30,7 +30,7 @@ async def test_missing_local_user_creates_student_user_from_complete_claims() ->
     assert session.rollbacks == 0
     assert repository.calls == [
         ("get_by_clerk_id", "user_new"),
-        ("create", "user_new", UserRole.STUDENT),
+        ("create_or_get_by_clerk_id", "user_new", UserRole.STUDENT),
     ]
     assert repository.user is not None
     assert repository.user.first_name == "New"
@@ -195,33 +195,6 @@ async def test_existing_current_user_accepts_subject_only_claims_without_profile
 
 
 @pytest.mark.asyncio
-async def test_existing_current_user_rejects_invalid_persisted_role() -> None:
-    user = UserAccount(
-        id=uuid4(),
-        clerk_id="user_invalid_role",
-        first_name="Invalid",
-        last_name="Role",
-        role="owner",
-    )
-    session = FakeSession()
-    repository = FakeUserRepository(user=user)
-
-    with pytest.raises(ApiError) as exc_info:
-        await AuthUserService(repository).get_existing_current_user(
-            session,
-            ClerkAuthClaims(
-                clerk_id="user_invalid_role",
-                claims={"sub": "user_invalid_role"},
-            ),
-        )
-
-    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-    assert exc_info.value.code == "forbidden"
-    assert session.commits == 0
-    assert repository.calls == [("get_by_clerk_id", "user_invalid_role")]
-
-
-@pytest.mark.asyncio
 async def test_current_principal_uses_role_without_profile_claims_or_sync() -> None:
     user = _user(clerk_id="user_existing", role=UserRole.ADMIN)
     session = FakeSession()
@@ -240,6 +213,47 @@ async def test_current_principal_uses_role_without_profile_claims_or_sync() -> N
     assert principal.role == UserRole.ADMIN
     assert session.commits == 0
     assert repository.profile_update_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "get_or_create_current_user",
+        "get_existing_current_user",
+        "get_current_principal",
+    ],
+)
+async def test_auth_paths_convert_invalid_persisted_role_to_api_error(
+    method_name: str,
+) -> None:
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_invalid_role",
+        first_name="Invalid",
+        last_name="Role",
+        role="owner",
+        clerk_profile_updated_at=datetime(2026, 6, 23, tzinfo=UTC),
+    )
+    session = FakeSession()
+    repository = FakeUserRepository(user=user)
+
+    method = getattr(AuthUserService(repository), method_name)
+    with pytest.raises(ApiError) as exc_info:
+        await method(
+            session,
+            ClerkAuthClaims(
+                clerk_id="user_invalid_role",
+                claims={"sub": "user_invalid_role"},
+            ),
+        )
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    assert exc_info.value.code == "forbidden"
+    assert exc_info.value.message == "This user account has an invalid role."
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert session.commits == 0
+    assert repository.calls == [("get_by_clerk_id", "user_invalid_role")]
 
 
 @pytest.mark.asyncio
@@ -284,8 +298,8 @@ async def test_concurrent_first_request_conflict_repairs_existing_user_profile()
     existing_user = _user(clerk_id="user_race", first_name="Old", last_name="Race")
     session = FakeSession()
     repository = FakeUserRepository(
-        lookup_results=[None, existing_user],
-        create_error=_integrity_error(),
+        user=existing_user,
+        lookup_results=[None],
     )
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
@@ -297,12 +311,11 @@ async def test_concurrent_first_request_conflict_repairs_existing_user_profile()
     assert current_user.display_name == "Race User"
     assert existing_user.first_name == "Race"
     assert existing_user.last_name == "User"
-    assert session.rollbacks == 1
+    assert session.rollbacks == 0
     assert session.commits == 1
     assert repository.calls == [
         ("get_by_clerk_id", "user_race"),
-        ("create", "user_race", UserRole.STUDENT),
-        ("get_by_clerk_id", "user_race"),
+        ("create_or_get_by_clerk_id", "user_race", UserRole.STUDENT),
     ]
     assert repository.profile_update_calls == [(existing_user, "Race", "User")]
 
@@ -312,8 +325,8 @@ async def test_concurrent_first_request_conflict_skips_unchanged_profile() -> No
     existing_user = _user(clerk_id="user_race", first_name="Race", last_name="User")
     session = FakeSession()
     repository = FakeUserRepository(
-        lookup_results=[None, existing_user],
-        create_error=_integrity_error(),
+        user=existing_user,
+        lookup_results=[None],
     )
 
     current_user = await AuthUserService(repository).get_or_create_current_user(
@@ -323,12 +336,11 @@ async def test_concurrent_first_request_conflict_skips_unchanged_profile() -> No
 
     assert current_user.id == existing_user.id
     assert current_user.display_name == "Race User"
-    assert session.rollbacks == 1
+    assert session.rollbacks == 0
     assert session.commits == 0
     assert repository.calls == [
         ("get_by_clerk_id", "user_race"),
-        ("create", "user_race", UserRole.STUDENT),
-        ("get_by_clerk_id", "user_race"),
+        ("create_or_get_by_clerk_id", "user_race", UserRole.STUDENT),
     ]
 
 
@@ -356,11 +368,11 @@ async def test_session_claim_repair_does_not_override_webhook_synced_profile() -
 
 
 @pytest.mark.asyncio
-async def test_conflict_without_existing_user_reraises_original_integrity_error() -> None:
+async def test_create_integrity_error_rolls_back_and_reraises_original_error() -> None:
     session = FakeSession()
     integrity_error = _integrity_error()
     repository = FakeUserRepository(
-        lookup_results=[None, None],
+        lookup_results=[None],
         create_error=integrity_error,
     )
 
@@ -373,6 +385,11 @@ async def test_conflict_without_existing_user_reraises_original_integrity_error(
     assert exc_info.value is integrity_error
     assert session.rollbacks == 1
     assert session.commits == 0
+    assert repository.calls == [
+        ("get_by_clerk_id", "user_missing"),
+        ("create_or_get_by_clerk_id", "user_missing", UserRole.STUDENT),
+    ]
+    assert repository.profile_update_calls == []
 
 
 def test_get_or_create_current_user_has_no_role_override_parameter() -> None:
@@ -505,7 +522,7 @@ def _user(
 
 
 def _integrity_error() -> IntegrityError:
-    return IntegrityError("insert user", {}, Exception("duplicate clerk_id"))
+    return IntegrityError("insert user", {}, Exception("invalid user"))
 
 
 class FakeSession:
