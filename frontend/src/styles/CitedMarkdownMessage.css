@@ -1,0 +1,176 @@
+.citation-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  border-top: 1px solid rgba(85, 124, 56, 0.22);
+  padding-top: 8px;
+}
+
+.citation-list-label {
+  color: #5f554b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.citation-list-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.citation-chip-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: baseline;
+}
+
+.citation-chip {
+  border: 1px solid rgba(85, 124, 56, 0.45);
+  border-radius: 6px;
+  background: #eef4d8;
+  color: #3f6427;
+  padding: 1px 5px;
+  font-size: 0.78em;
+  font-weight: 900;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.citation-chip:focus {
+  outline: 2px solid rgba(85, 124, 56, 0.35);
+  outline-offset: 2px;
+}
+
+.citation-hover-card {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: min(420px, 74vw);
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid #d8cfb1;
+  border-radius: 8px;
+  background: #fffdf0;
+  box-shadow: 0 12px 24px rgba(43, 29, 21, 0.14);
+  color: #2b1d15;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.citation-hover-source {
+  color: #5f554b;
+  font-family: Consolas, Monaco, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.citation-hover-heading {
+  color: #3f6427;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.citation-hover-preview {
+  color: #2b1d15;
+}
+
+.citation-hover-preview p,
+.citation-hover-preview ul,
+.citation-hover-preview ol,
+.citation-hover-preview blockquote,
+.citation-hover-preview pre,
+.citation-hover-preview table {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.citation-hover-preview p:last-child,
+.citation-hover-preview ul:last-child,
+.citation-hover-preview ol:last-child,
+.citation-hover-preview blockquote:last-child,
+.citation-hover-preview pre:last-child,
+.citation-hover-preview table:last-child {
+  margin-bottom: 0;
+}
+
+.citation-hover-preview h1,
+.citation-hover-preview h2,
+.citation-hover-preview h3,
+.citation-hover-preview h4,
+.citation-hover-preview h5,
+.citation-hover-preview h6 {
+  margin: 0 0 8px;
+  color: #3f6427;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.citation-hover-preview ul,
+.citation-hover-preview ol {
+  padding-left: 18px;
+}
+
+.citation-hover-preview li {
+  margin-bottom: 4px;
+}
+
+.citation-hover-preview a {
+  color: #3f6427;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.citation-hover-preview code {
+  background: rgba(43, 29, 21, 0.1);
+  border-radius: 5px;
+  padding: 1px 4px;
+  font-family: Consolas, Monaco, "Courier New", monospace;
+  font-size: 0.9em;
+}
+
+.citation-hover-preview pre {
+  overflow-x: auto;
+  background: rgba(43, 29, 21, 0.1);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.citation-hover-preview pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.citation-hover-preview blockquote {
+  border-left: 3px solid rgba(85, 124, 56, 0.42);
+  color: #5f554b;
+  padding-left: 10px;
+}
+
+.citation-hover-preview table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.citation-hover-preview th,
+.citation-hover-preview td {
+  border: 1px solid #d8cfb1;
+  padding: 6px;
+  vertical-align: top;
+}
+
+.citation-chip-wrapper:hover .citation-hover-card,
+.citation-chip-wrapper:focus-within .citation-hover-card {
+  display: flex;
+}

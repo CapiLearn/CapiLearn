@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 // import { Link } from "react-router-dom";
-import MarkdownMessage from "../components/MarkdownMessage";
+import CitedMarkdownMessage from "../components/CitedMarkdownMessage";
 import { useAuth } from "@clerk/react";
 import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 import capiBooksIcon from "../assets/capi_books.png";
@@ -500,8 +500,9 @@ function LearningWorkspace() {
               key={message.id}
             >
               {message.role === "assistant" ? (
-                <MarkdownMessage
+                <CitedMarkdownMessage
                   content={message.content}
+                  citations={message.citations || []}
                   searchTerm={messageSearchTerm}
                 />
               ) : (
