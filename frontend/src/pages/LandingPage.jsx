@@ -6,6 +6,12 @@ import landingBackground from "../assets/capilearn-landing-background-v2.webp";
 const isDemoAdminLoginEnabled =
   import.meta.env.VITE_DEMO_ADMIN_LOGIN_ENABLED === "true";
 
+/**
+ * LandingPage is the public entry point for CapiLearn.
+ *
+ * It introduces the student-facing study workflow and conditionally exposes
+ * the demo admin shortcut only when the frontend build opts into that demo flag.
+ */
 function LandingPage() {
   return (
     <main
@@ -14,7 +20,6 @@ function LandingPage() {
         backgroundImage: `linear-gradient(rgba(246, 243, 228, 0.08), rgba(246, 243, 228, 0.08)), url(${landingBackground})`,
       }}
     >
-
       <section
         className="capilearn-card"
         style={{
@@ -45,17 +50,17 @@ function LandingPage() {
 
             <div className="capilearn-feature-row">
               <div className="capilearn-feature">
-                <span className="capilearn-feature-icon">◔</span>
+                <span className="capilearn-feature-icon">1</span>
                 <span>Keep study momentum visible</span>
               </div>
 
               <div className="capilearn-feature">
-                <span className="capilearn-feature-icon">▣</span>
+                <span className="capilearn-feature-icon">2</span>
                 <span>Ask questions in natural language</span>
               </div>
 
               <div className="capilearn-feature">
-                <span className="capilearn-feature-icon">◎</span>
+                <span className="capilearn-feature-icon">3</span>
                 <span>Work through guided explanations</span>
               </div>
             </div>

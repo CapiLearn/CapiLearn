@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-// import { Link } from "react-router-dom";
 import CitedMarkdownMessage from "../components/CitedMarkdownMessage";
 import { useAuth } from "@clerk/react";
 import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
@@ -21,6 +20,14 @@ import "../styles/LearningWorkspace.css";
 
 const initialChatMessages = [];
 
+/**
+ * LearningWorkspace is the main student chat surface.
+ *
+ * It coordinates authenticated conversation history, course-grounded assistant
+ * responses, citation rendering, message search, and learning-activity
+ * tracking. API request construction stays in the service layer so this page
+ * can stay focused on user workflow and state transitions.
+ */
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -68,6 +75,8 @@ function isMarkdownTableRow(line) {
 function getVisibleMarkdownText(content) {
   const protector = createTextProtector();
 
+  // Search should match what students can read, without counting Markdown
+  // syntax or table divider rows as answer text.
   const protectedContent = content
     .replace(/```[\s\S]*?```/g, (match) => {
       const codeBlockText = match
@@ -314,7 +323,11 @@ function LearningWorkspace() {
       setErrorMessage("");
 
       if (targetConversationId) {
-        const data = await createMessage(targetConversationId, trimmedMessage, getToken);
+        const data = await createMessage(
+          targetConversationId,
+          trimmedMessage,
+          getToken
+        );
 
         if (activeConversationIdRef.current === targetConversationId) {
           setChatMessages((currentMessages) => [
@@ -538,10 +551,10 @@ function LearningWorkspace() {
           />
 
           <div>
-            <h2>Hi, I’m Capi.</h2>
+            <h2>Hi, I'm Capi.</h2>
             <p>
               I can help you review lessons, reason through problems, and find
-              the right course material. I won’t give direct answers, but I’ll
+              the right course material. I won't give direct answers, but I'll
               help you think through the next step.
             </p>
           </div>
@@ -608,7 +621,7 @@ function LearningWorkspace() {
 
           {normalizedSearchTerm && visibleChatMessages.length === 0 && (
             <p className="workspace-empty-search">
-              No messages found for “{messageSearchTerm}”.
+              No messages found for "{messageSearchTerm}".
             </p>
           )}
         </section>
@@ -634,7 +647,7 @@ function LearningWorkspace() {
       <aside className="study-panel">
         <section className="tracker-card streak-card">
           <p className="card-label">Current streak</p>
-          <h2>{currentStreak ?? "—"} days</h2>
+          <h2>{currentStreak ?? "--"} days</h2>
           {activityError && <p className="tracker-error">{activityError}</p>}
           <span>Keep showing up. Small steps count.</span>
         </section>

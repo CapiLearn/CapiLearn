@@ -8,6 +8,12 @@ import AdminDashboard from "./pages/AdminDashboard";
 import AuthPage from "./pages/AuthPage";
 import HomeEntryPage from "./pages/HomeEntryPage";
 
+/**
+ * ProtectedRoute is the local auth boundary for signed-in application pages.
+ *
+ * Clerk owns session state; pages inside this wrapper can request backend API
+ * tokens with useAuth/getToken and rely on the backend for role enforcement.
+ */
 function ProtectedRoute({ children }) {
   const { isLoaded, isSignedIn } = useAuth();
 

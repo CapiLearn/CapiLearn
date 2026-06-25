@@ -1,5 +1,13 @@
 import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
+/**
+ * Admin service reads authenticated operations data for the admin dashboard.
+ *
+ * It normalizes backend health responses into frontend display states while
+ * preserving RAG, database, guardrail, and usage details for launch review.
+ */
+// Disabled by default; retained only as a local UI fallback when backend admin
+// endpoints are intentionally unavailable during manual frontend work.
 const USE_MOCK_ADMIN_API = false;
 
 const mockAdminUsageSummary = {

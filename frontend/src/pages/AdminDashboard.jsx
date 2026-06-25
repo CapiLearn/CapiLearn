@@ -1,4 +1,3 @@
-// import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   getAdminSystemHealth,
@@ -15,6 +14,13 @@ const adminNavItems = [
   { id: "users", label: "Users" },
 ];
 
+/**
+ * AdminDashboard is the reviewer-facing operations view.
+ *
+ * It reads authenticated admin metrics, health checks, and user activity from
+ * backend admin endpoints so deployment reviewers can verify API, database,
+ * RAG, guardrail, and usage signals from one screen.
+ */
 function addUtcCalendarDay(dateString) {
   const date = new Date(`${dateString}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + 1);
@@ -139,7 +145,7 @@ function AdminDashboard() {
     metricsDateRange.fromDate &&
     metricsDateRange.toDate &&
     metricsDateRange.fromDate > metricsDateRange.toDate;
-  const { getToken } = useAuth();  
+  const { getToken } = useAuth();
 
   useEffect(() => {
     async function loadUsageSummary() {
@@ -200,7 +206,9 @@ function AdminDashboard() {
 
     async function loadAdminUsers() {
       if (isMetricsDateRangeInvalid) {
-        setAdminUsersErrorMessage("Start date must be before or equal to end date.");
+        setAdminUsersErrorMessage(
+          "Start date must be before or equal to end date."
+        );
         return;
       }
 
@@ -228,7 +236,12 @@ function AdminDashboard() {
     }
 
     loadAdminUsers();
-  }, [activeAdminSection, getToken, metricsDateRange, isMetricsDateRangeInvalid]);
+  }, [
+    activeAdminSection,
+    getToken,
+    metricsDateRange,
+    isMetricsDateRangeInvalid,
+  ]);
 
   const metrics = usageSummary?.metrics;
   const healthChecks = (systemHealth?.checks || []).map((check) => ({
@@ -349,11 +362,6 @@ function AdminDashboard() {
             </p>
           </div>
 
-          {/* Instructor view has not been implemented yet.
-          <Link className="admin-secondary-link" to="/instructor-dashboard">
-            Instructor view
-          </Link>
-          */}
         </header>
 
         {activeAdminSection === "overview" && (
@@ -613,41 +621,6 @@ function AdminDashboard() {
           </section>
         )}
 
-        {/* Recent events have not been implemented yet.
-        <section className="admin-panel events-panel">
-          <div className="admin-panel-header">
-            <div>
-              <p className="admin-panel-label">Recent Events</p>
-              <h2>Operational activity</h2>
-            </div>
-            <button className="admin-outline-button">View all logs</button>
-          </div>
-
-          <div className="events-table-wrapper">
-            <table className="events-table">
-              <thead>
-                <tr>
-                  <th>Event</th>
-                  <th>Type</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {recentEvents.map((event) => (
-                  <tr key={`${event.event}-${event.time}`}>
-                    <td>{event.event}</td>
-                    <td>
-                      <span className="event-type-pill">{event.type}</span>
-                    </td>
-                    <td>{event.time}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        */}
       </section>
     </main>
   );

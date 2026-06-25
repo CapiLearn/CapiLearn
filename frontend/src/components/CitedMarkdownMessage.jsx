@@ -54,6 +54,13 @@ const citationPreviewComponents = {
   },
 };
 
+/**
+ * CitedMarkdownMessage renders assistant answers with backend-provided RAG
+ * citation metadata.
+ *
+ * The message body remains normal Markdown, while citation chips expose source
+ * file and chunk previews so reviewers can verify answer grounding from the UI.
+ */
 function CitationPreviewMarkdown({ content = "" }) {
   return (
     <ReactMarkdown
