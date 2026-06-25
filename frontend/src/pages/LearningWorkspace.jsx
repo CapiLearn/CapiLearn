@@ -202,6 +202,7 @@ function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
   const [chatMessages, setChatMessages] = useState(initialChatMessages);
   const activeConversationIdRef = useRef(null);
+  const hasRecordedLoginRef = useRef(false);
 
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -254,14 +255,25 @@ function LearningWorkspace() {
       try {
         setActivityError("");
 
-        const token = (await getToken()) || "test";
-        const loginActivity = await recordLoginActivity(token);
+        const token = await getToken();
 
-        if (!isMounted) {
+        if (!token) {
+          if (isMounted) {
+            setActivityError("Unable to load activity. Please sign in again.");
+          }
           return;
         }
 
-        setCurrentStreak(loginActivity.currentStreak);
+        if (!hasRecordedLoginRef.current) {
+          hasRecordedLoginRef.current = true;
+          const loginActivity = await recordLoginActivity(token);
+
+          if (!isMounted) {
+            return;
+          }
+
+          setCurrentStreak(loginActivity.currentStreak);
+        }
 
         const calendarRange = getCurrentMonthRange();
         const calendarActivity = await getActivityCalendar(token, calendarRange);
