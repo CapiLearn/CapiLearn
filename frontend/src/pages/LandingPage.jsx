@@ -1,6 +1,10 @@
 import { Link } from "react-router-dom";
+import DemoAdminLoginButton from "../components/DemoAdminLoginButton";
 import "../styles/LandingPage.css";
 import landingBackground from "../assets/capilearn-landing-background-v2.webp";
+
+const isDemoAdminLoginEnabled =
+  import.meta.env.VITE_DEMO_ADMIN_LOGIN_ENABLED === "true";
 
 function LandingPage() {
   return (
@@ -36,6 +40,7 @@ function LandingPage() {
               <Link className="capilearn-primary link-button" to="/workspace">
                 Get Started
               </Link>
+              {isDemoAdminLoginEnabled ? <DemoAdminLoginButton /> : null}
             </div>
 
             <div className="capilearn-feature-row">

@@ -8,6 +8,7 @@ from clerk_backend_api.security.types import AuthenticateRequestOptions
 from fastapi import Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.clerk_sign_in_tokens import ClerkSignInTokenClient, SignInTokenClient
 from backend.auth.repository import UserAccountRepository
 from backend.auth.schemas import (
     AuthPrincipal,
@@ -21,6 +22,22 @@ from backend.core.database import DbSession
 from backend.core.exceptions import ApiError
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+
+def require_demo_admin_login_enabled(settings: SettingsDep) -> Settings:
+    if not settings.demo_admin_login_enabled:
+        raise ApiError(
+            code="not_found",
+            message="Not found.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return settings
+
+
+DemoAdminLoginSettingsDep = Annotated[
+    Settings,
+    Depends(require_demo_admin_login_enabled),
+]
 
 
 class AuthRequestVerifier(Protocol):
@@ -141,6 +158,16 @@ def get_auth_user_service(
 
 
 AuthUserServiceDep = Annotated[CurrentUserResolver, Depends(get_auth_user_service)]
+
+
+def get_sign_in_token_client(settings: SettingsDep) -> SignInTokenClient:
+    return ClerkSignInTokenClient(settings)
+
+
+SignInTokenClientDep = Annotated[
+    SignInTokenClient,
+    Depends(get_sign_in_token_client),
+]
 
 
 async def require_clerk_auth(
