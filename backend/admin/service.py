@@ -1,3 +1,5 @@
+"""Service layer for admin usage reporting."""
+
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -21,6 +23,8 @@ MAX_USAGE_RANGE_DAYS = 366
 
 
 class AdminUsageService:
+    """Coordinates admin usage queries and response shaping."""
+
     def __init__(
         self,
         *,
@@ -38,6 +42,7 @@ class AdminUsageService:
         from_date: str | None,
         to_date: str | None,
     ) -> AdminUsageSummaryResponse:
+        """Return aggregate and daily usage metrics for a validated date window."""
         usage_window = self._resolve_window(from_date=from_date, to_date=to_date)
 
         metrics = await self._repository.get_usage_metrics(
@@ -82,6 +87,7 @@ class AdminUsageService:
         limit: int = 100,
         offset: int = 0,
     ) -> AdminUserOverviewResponse:
+        """Return user activity rollups for a validated date window."""
         usage_window = self._resolve_window(from_date=from_date, to_date=to_date)
         users = await self._repository.list_user_overviews(
             self._session,
@@ -104,6 +110,7 @@ class AdminUsageService:
         )
 
     def _resolve_window(self, *, from_date: str | None, to_date: str | None) -> DateWindow:
+        """Resolve optional query dates into a bounded UTC date window."""
         return resolve_date_window(
             from_date,
             to_date,
@@ -127,6 +134,7 @@ def _fill_daily_usage(
     to_date: date,
     aggregates: list[DailyUsageAggregate],
 ) -> list[DailyUsagePoint]:
+    """Expand sparse daily aggregates into contiguous chart points."""
     by_date = {aggregate.date: aggregate for aggregate in aggregates}
     points = []
     current = from_date

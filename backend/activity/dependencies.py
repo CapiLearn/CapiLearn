@@ -1,3 +1,5 @@
+"""FastAPI dependency providers for the activity subdomain."""
+
 from typing import Annotated
 
 from fastapi import Depends
@@ -11,6 +13,7 @@ def get_student_activity_service(
     session: DbSession,
     current_user: StudentUserDep,
 ) -> StudentActivityService:
+    """Build the activity service for the authenticated student."""
     return StudentActivityService(session=session, user_id=current_user.id)
 
 

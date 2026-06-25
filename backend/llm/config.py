@@ -1,3 +1,5 @@
+"""Environment-backed settings for the LLM orchestration domain."""
+
 from enum import StrEnum
 from functools import lru_cache
 
@@ -6,17 +8,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class InputGuardrailMode(StrEnum):
+    """Supported guardrail modes for student input checks."""
+
     POLICY = "policy"
     REGEX = "regex"
     OFF = "off"
 
 
 class OutputGuardrailMode(StrEnum):
+    """Supported guardrail modes for assistant output checks."""
+
     POLICY = "policy"
     OFF = "off"
 
 
 class LLMSettings(BaseSettings):
+    """LLM settings loaded from `LLM_*` environment variables."""
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="LLM_", extra="ignore")
 
     model_profile_key: str = "default_tutor"
@@ -40,6 +48,8 @@ class LLMSettings(BaseSettings):
     @field_validator("input_guardrail_mode", "output_guardrail_mode", mode="before")
     @classmethod
     def _map_legacy_guardrail_mode(cls, value: object) -> object:
+        """Map the retired NeMo mode name to the current policy guardrail mode."""
+
         if isinstance(value, str) and value.lower() == "nemo":
             return "policy"
         return value
@@ -47,6 +57,8 @@ class LLMSettings(BaseSettings):
 
 @lru_cache
 def get_llm_settings() -> LLMSettings:
+    """Return the process-wide cached LLM settings instance."""
+
     return LLMSettings()
 
 

@@ -1,3 +1,5 @@
+"""SQLAlchemy models for student activity tracking."""
+
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
@@ -8,10 +10,13 @@ from backend.core.database import Base
 
 
 def utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp for model defaults."""
     return datetime.now(UTC)
 
 
 class StudentDailyActivity(Base):
+    """One student's login activity aggregate for a single activity date."""
+
     __tablename__ = "student_daily_activity"
     __table_args__ = (
         UniqueConstraint(

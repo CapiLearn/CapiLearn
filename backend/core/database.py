@@ -1,3 +1,5 @@
+"""Async SQLAlchemy engine, session dependency, and declarative base."""
+
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -18,6 +20,8 @@ POSTGRES_INDEXES_NAMING_CONVENTION = {
 
 
 class Base(DeclarativeBase):
+    """Declarative base with stable PostgreSQL-style constraint names."""
+
     metadata = MetaData(naming_convention=POSTGRES_INDEXES_NAMING_CONVENTION)
 
 
@@ -26,6 +30,7 @@ SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
+    """Yield an async database session for FastAPI dependencies."""
     async with SessionFactory() as session:
         yield session
 

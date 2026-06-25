@@ -1,3 +1,5 @@
+"""SQLAlchemy models for persisted chat data."""
+
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -22,10 +24,13 @@ from backend.core.database import Base
 
 
 def utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp for database defaults."""
     return datetime.now(UTC)
 
 
 class Conversation(Base):
+    """Persisted chat thread owned by a user."""
+
     __tablename__ = "conversation"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -66,6 +71,8 @@ class Conversation(Base):
 
 
 class Message(Base):
+    """Persisted user, assistant, system, or context message within a conversation."""
+
     __tablename__ = "message"
     __table_args__ = (
         UniqueConstraint("conversation_id", "sequence", name="message_conversation_sequence_key"),
@@ -108,6 +115,8 @@ class Message(Base):
 
 
 class LLMCostComponent(Base):
+    """Persisted usage and estimated-cost component for one LLM chat turn."""
+
     __tablename__ = "llm_cost_component"
     __table_args__ = (
         Index("llm_cost_component_assistant_message_id_idx", "assistant_message_id"),

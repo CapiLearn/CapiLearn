@@ -1,3 +1,5 @@
+"""Application service for instructor dashboard workflows."""
+
 from collections.abc import Callable
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -21,6 +23,8 @@ DEFAULT_ROSTER_LIMIT = 100
 
 
 class InstructorDashboardService:
+    """Coordinate instructor dashboard reads and response shaping."""
+
     def __init__(
         self,
         *,
@@ -28,6 +32,7 @@ class InstructorDashboardService:
         repository: InstructorDashboardRepository | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """Create a service with injectable persistence and time dependencies."""
         self._session = session
         self._repository = repository or InstructorDashboardRepository()
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -38,6 +43,7 @@ class InstructorDashboardService:
         from_date: str | None,
         to_date: str | None,
     ) -> InstructorDashboardResponse:
+        """Return dashboard metrics and roster activity for the requested range."""
         window = self._resolve_window(from_date=from_date, to_date=to_date)
         summary = await self._repository.get_summary_metrics(
             self._session,
@@ -74,6 +80,7 @@ class InstructorDashboardService:
         from_date: str | None,
         to_date: str | None,
     ) -> DateWindow:
+        """Resolve API date strings using the instructor dashboard range rules."""
         return resolve_date_window(
             from_date,
             to_date,

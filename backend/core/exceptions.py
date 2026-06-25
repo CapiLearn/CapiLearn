@@ -1,3 +1,5 @@
+"""Shared API exception types and FastAPI handlers."""
+
 from typing import Any
 
 from fastapi import Request, status
@@ -6,12 +8,16 @@ from pydantic import BaseModel
 
 
 class ErrorResponse(BaseModel):
+    """Wire format returned for application-level API errors."""
+
     code: str
     message: str
     details: dict[str, Any] | None = None
 
 
 class ApiError(Exception):
+    """Application exception that maps directly to an HTTP JSON response."""
+
     def __init__(
         self,
         code: str,
@@ -26,6 +32,7 @@ class ApiError(Exception):
 
 
 async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
+    """Convert an ApiError raised by application code into JSON."""
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(

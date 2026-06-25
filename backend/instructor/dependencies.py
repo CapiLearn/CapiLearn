@@ -1,3 +1,5 @@
+"""Dependency providers for instructor API routes."""
+
 from typing import Annotated
 
 from fastapi import Depends
@@ -8,6 +10,7 @@ from backend.instructor.service import InstructorDashboardService
 
 
 def get_instructor_dashboard_service(session: DbSession) -> InstructorDashboardService:
+    """Build the dashboard service for a request-scoped database session."""
     return InstructorDashboardService(session=session)
 
 

@@ -1,3 +1,5 @@
+"""Database repository for chat conversations, messages, and LLM usage records."""
+
 from uuid import UUID
 
 from sqlalchemy import Select, func, select
@@ -12,16 +14,21 @@ MESSAGE_SEQUENCE_CONSTRAINT = "message_conversation_sequence_key"
 
 
 class MessageSequenceConflictError(Exception):
+    """Raised when concurrent message inserts collide on conversation sequence."""
+
     pass
 
 
 class ChatRepository:
+    """Persist and query chat-domain SQLAlchemy models."""
+
     async def list_conversations(
         self,
         session: AsyncSession,
         *,
         user_id: UUID,
     ) -> list[Conversation]:
+        """List active conversations for a user in most-recently-updated order."""
         statement = (
             select(Conversation)
             .where(
@@ -39,6 +46,7 @@ class ChatRepository:
         conversation_id: UUID,
         user_id: UUID,
     ) -> Conversation | None:
+        """Return a non-deleted conversation owned by a user, if one exists."""
         statement = select(Conversation).where(
             Conversation.id == conversation_id,
             Conversation.user_id == user_id,
@@ -57,6 +65,7 @@ class ChatRepository:
         guardrails_config_id: str | None,
         rag_index_version: str | None,
     ) -> Conversation:
+        """Create a conversation row with the model and RAG configuration in effect."""
         conversation = Conversation(
             user_id=user_id,
             title=title,
@@ -76,6 +85,7 @@ class ChatRepository:
         conversation_id: UUID,
         user_id: UUID,
     ) -> list[Message]:
+        """List messages in conversation sequence order for a user."""
         statement = (
             select(Message)
             .where(Message.conversation_id == conversation_id, Message.user_id == user_id)
@@ -91,6 +101,7 @@ class ChatRepository:
         user_id: UUID,
         content: str,
     ) -> tuple[Message, Message]:
+        """Create a completed user message and pending assistant placeholder."""
         next_sequence = await self._next_sequence(session, conversation_id=conversation.id)
         user_message = Message(
             conversation_id=conversation.id,
@@ -112,6 +123,7 @@ class ChatRepository:
         session.add(user_message)
         session.add(assistant_message)
         try:
+            # The unique constraint is the concurrency guard for same-conversation writers.
             await session.flush()
         except IntegrityError as exc:
             if _is_message_sequence_conflict(exc):
@@ -125,6 +137,7 @@ class ChatRepository:
         *,
         components: list[LLMCostComponentRecord],
     ) -> None:
+        """Persist usage and cost components emitted during an LLM turn."""
         if any(component.assistant_message_id is None for component in components):
             raise ValueError("LLM cost component requires assistant_message_id.")
         for component in components:
@@ -154,6 +167,7 @@ class ChatRepository:
         await session.flush()
 
     async def _next_sequence(self, session: AsyncSession, *, conversation_id: UUID) -> int:
+        """Return the next message sequence number for a conversation."""
         statement: Select[tuple[int | None]] = select(func.max(Message.sequence)).where(
             Message.conversation_id == conversation_id,
         )
@@ -166,6 +180,7 @@ def _is_message_sequence_conflict(exc: IntegrityError) -> bool:
 
 
 def _integrity_constraint_name(exc: IntegrityError) -> str | None:
+    """Extract a database constraint name across wrapped asyncpg/SQLAlchemy errors."""
     error = exc.orig
     seen: set[int] = set()
     while error is not None and id(error) not in seen:

@@ -1,3 +1,5 @@
+"""Trace sink contracts for best-effort LLM observability."""
+
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
@@ -10,10 +12,14 @@ TraceOperation = Callable[[], Awaitable[None]]
 
 
 class TraceSinkContractError(Exception):
+    """Raised when trace metadata violates a sink's required contract."""
+
     pass
 
 
 class LLMTraceOperation(StrEnum):
+    """Supported LLM trace event names."""
+
     START_CHAT_TURN = "start_chat_turn"
     RECORD_GUARDRAIL = "record_guardrail"
     RECORD_GENERATION = "record_generation"
@@ -23,16 +29,21 @@ class LLMTraceOperation(StrEnum):
 
 
 class LLMTraceSink(ABC):
+    """Interface implemented by LLM trace sinks."""
+
     @abstractmethod
     async def record(
         self,
         operation: LLMTraceOperation,
         metadata: dict[str, Any],
     ) -> None:
+        """Record one trace operation with structured metadata."""
         raise NotImplementedError
 
 
 class NoopLLMTraceSink(LLMTraceSink):
+    """Trace sink that intentionally drops all operations."""
+
     async def record(
         self,
         operation: LLMTraceOperation,
@@ -42,7 +53,10 @@ class NoopLLMTraceSink(LLMTraceSink):
 
 
 class BestEffortLLMTraceSink(LLMTraceSink):
+    """Wrapper that logs sink failures without failing the user request."""
+
     def __init__(self, delegate: LLMTraceSink) -> None:
+        """Create a best-effort wrapper around another trace sink."""
         self._delegate = delegate
 
     async def record(
@@ -65,6 +79,7 @@ async def record_best_effort_trace_operation(
     sink_type: str,
     logger: logging.Logger,
 ) -> None:
+    """Run a trace operation while preserving contract failures for callers."""
     try:
         await operation()
     except TraceSinkContractError:

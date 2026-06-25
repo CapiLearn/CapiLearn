@@ -1,3 +1,5 @@
+"""Admin API routes for health, usage summaries, and user activity."""
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -22,6 +24,7 @@ router = APIRouter(
     summary="Get admin health status",
 )
 async def get_admin_health(service: AdminHealthServiceDep) -> AdminHealthResponse:
+    """Return cached health checks for admin dashboard status panels."""
     return await service.get_health()
 
 
@@ -35,6 +38,7 @@ async def get_usage_summary(
     from_date: Annotated[str | None, Query(alias="fromDate")] = None,
     to_date: Annotated[str | None, Query(alias="toDate")] = None,
 ) -> AdminUsageSummaryResponse:
+    """Return aggregate admin usage metrics for an optional UTC date range."""
     return await service.get_usage_summary(from_date=from_date, to_date=to_date)
 
 
@@ -50,6 +54,7 @@ async def list_user_overviews(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> AdminUserOverviewResponse:
+    """Return paginated user activity rollups for admin dashboard tables."""
     return await service.list_user_overviews(
         from_date=from_date,
         to_date=to_date,

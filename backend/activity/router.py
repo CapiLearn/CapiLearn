@@ -1,3 +1,5 @@
+"""FastAPI routes for student activity tracking."""
+
 from datetime import date
 from typing import Annotated
 
@@ -20,6 +22,7 @@ router = APIRouter(
 async def record_login_activity(
     service: StudentActivityServiceDep,
 ) -> LoginActivityResponse:
+    """Record the authenticated student's login for the current activity day."""
     return await service.record_login()
 
 
@@ -33,4 +36,5 @@ async def get_activity_calendar(
     from_date: Annotated[date, Query(alias="fromDate")],
     to_date: Annotated[date, Query(alias="toDate")],
 ) -> ActivityCalendarResponse:
+    """Return login activity for the inclusive requested activity-date range."""
     return await service.get_calendar(from_date=from_date, to_date=to_date)

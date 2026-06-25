@@ -1,3 +1,5 @@
+"""Structured logging configuration and event helpers."""
+
 import json
 import logging
 import sys
@@ -11,7 +13,10 @@ _RESERVED_ATTRS = set(logging.makeLogRecord({}).__dict__)
 
 
 class JsonFormatter(logging.Formatter):
+    """Format log records as compact JSON with request context."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Serialize a log record and its non-reserved extra fields."""
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
@@ -32,13 +37,17 @@ class JsonFormatter(logging.Formatter):
 
 
 class RequestContextFilter(logging.Filter):
+    """Attach the current request id to records used by plain formatters."""
+
     def filter(self, record: logging.LogRecord) -> bool:
+        """Populate request_id when the record did not provide one."""
         if not hasattr(record, "request_id"):
             record.request_id = get_request_id()
         return True
 
 
 def configure_logging(config: Settings = settings) -> None:
+    """Configure root logging for the current process."""
     level = getattr(logging, config.log_level)
     formatter: logging.Formatter
     if config.log_format == "json":
@@ -65,6 +74,7 @@ def log_event(
     exc_info: bool | BaseException | tuple | None = None,
     **fields: Any,
 ) -> None:
+    """Emit a structured application event when observability is enabled."""
     if not settings.observability_enabled:
         return
     payload = {"event": event, **fields}
@@ -74,6 +84,7 @@ def log_event(
 
 
 def _json_safe(value: Any) -> Any:
+    """Convert nested values into JSON-serializable logging fields."""
     if isinstance(value, str | int | float | bool) or value is None:
         return value
     if isinstance(value, dict):

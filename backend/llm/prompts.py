@@ -1,3 +1,5 @@
+"""Prompt and message builders for CapiLearn tutoring generations."""
+
 import json
 from collections.abc import Mapping
 
@@ -57,6 +59,8 @@ Requirements:
 
 
 def build_user_message_content(*, user_input: str, chunks: list[RetrievedChunk]) -> str:
+    """Build the current-turn JSON user payload with citable retrieved context."""
+
     return _json_dumps(
         {
             "studentMessage": user_input,
@@ -70,6 +74,8 @@ def build_history_user_message_content(
     user_input: str,
     contexts: list[Mapping[str, str | None]],
 ) -> str:
+    """Build a prior-turn payload whose retrieved context is not citable."""
+
     return _json_dumps(
         {
             "studentMessage": user_input,
@@ -84,6 +90,8 @@ def build_messages(
     history: list[ChatMessage],
     chunks: list[RetrievedChunk],
 ) -> list[ChatMessage]:
+    """Build the full provider message list for a primary tutoring response."""
+
     return [
         ChatMessage(role=ChatRole.SYSTEM, content=BASE_SYSTEM_PROMPT),
         *history,
@@ -103,6 +111,8 @@ def build_socratic_repair_messages(
     draft_response: str,
     chunks: list[RetrievedChunk],
 ) -> list[ChatMessage]:
+    """Build messages for rewriting an output that failed Socratic guardrails."""
+
     return [
         ChatMessage(
             role=ChatRole.SYSTEM,

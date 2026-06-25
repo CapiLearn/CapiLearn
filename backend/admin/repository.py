@@ -1,3 +1,5 @@
+"""Database access for admin usage reporting."""
+
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -12,6 +14,8 @@ from backend.usage.repository import UserActivityAggregate, list_admin_user_acti
 
 @dataclass(frozen=True)
 class UsageMetricsAggregate:
+    """Raw aggregate usage metrics returned from admin reporting queries."""
+
     total_users: int
     total_conversations: int
     user_queries: int
@@ -25,6 +29,8 @@ class UsageMetricsAggregate:
 
 @dataclass(frozen=True)
 class DailyUsageAggregate:
+    """Raw per-day usage counts returned from admin reporting queries."""
+
     date: date
     user_queries: int
     assistant_responses: int
@@ -32,6 +38,8 @@ class DailyUsageAggregate:
 
 
 class AdminUsageRepository:
+    """Runs read-only reporting queries for admin usage screens."""
+
     async def get_usage_metrics(
         self,
         session: AsyncSession,
@@ -39,6 +47,7 @@ class AdminUsageRepository:
         range_start: datetime,
         range_end: datetime,
     ) -> UsageMetricsAggregate:
+        """Return aggregate usage metrics for the half-open datetime range."""
         message_statement = select(
             func.count(func.distinct(Message.user_id)),
             func.coalesce(
@@ -128,6 +137,7 @@ class AdminUsageRepository:
         range_start: datetime,
         range_end: datetime,
     ) -> list[DailyUsageAggregate]:
+        """Return sparse per-day usage aggregates for the half-open datetime range."""
         usage_date = _utc_date(Message.created_at)
         statement = (
             select(
@@ -185,6 +195,7 @@ class AdminUsageRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[UserActivityAggregate]:
+        """Return admin-facing user activity rollups for the datetime range."""
         return await list_admin_user_activity(
             session,
             range_start=range_start,
@@ -200,6 +211,7 @@ async def _list_daily_component_tokens(
     range_start: datetime,
     range_end: datetime,
 ) -> dict[date, int]:
+    """Return daily token totals keyed by UTC usage date."""
     component_date = _utc_date(LLMCostComponent.created_at)
     component_statement = (
         select(
@@ -221,4 +233,5 @@ async def _list_daily_component_tokens(
 
 
 def _utc_date(column):
+    """Cast a timestamp column to its UTC calendar date for reporting buckets."""
     return cast(column.op("AT TIME ZONE")("UTC"), Date)

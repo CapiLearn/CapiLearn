@@ -1,3 +1,5 @@
+"""LiteLLM-backed chat completion provider for the LLM service."""
+
 import asyncio
 import logging
 from typing import Any
@@ -30,7 +32,11 @@ class ProviderResponseError(RuntimeError):
 
 
 class LiteLLMProvider:
+    """Provider adapter that turns CapiLearn chat messages into LiteLLM calls."""
+
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
+        """Return a normalized provider response, retrying transient provider errors."""
+
         last_error: Exception | None = None
         max_attempts = llm_settings.max_retries + 1
         for attempt in range(1, max_attempts + 1):
@@ -63,6 +69,8 @@ class LiteLLMProvider:
         *,
         attempt_index: int,
     ) -> ProviderResponse:
+        """Execute one provider attempt and validate the successful response shape."""
+
         started_at = timer_start()
         kwargs = {
             "model": llm_settings.model,
