@@ -48,6 +48,10 @@ class ClerkAuthClaims(BaseModel):
     claims: dict
 
 
+class DemoAdminSignInTokenResponse(AuthBaseModel):
+    token: str
+
+
 def current_user_to_principal(
     current_user: CurrentUser,
     *,

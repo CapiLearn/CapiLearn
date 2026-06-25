@@ -7,6 +7,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _VALID_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
+_MAX_DEMO_ADMIN_SIGN_IN_TOKEN_TTL_SECONDS = 300
 
 
 class Settings(BaseSettings):
@@ -32,6 +33,9 @@ class Settings(BaseSettings):
     clerk_jwt_key: str | None = None
     clerk_webhook_signing_secret: str | None = None
     clerk_authorized_parties: list[str] = Field(default_factory=list)
+    demo_admin_login_enabled: bool = False
+    demo_admin_clerk_user_id: str | None = None
+    demo_admin_sign_in_token_ttl_seconds: int = 60
     auth_mode: Literal["clerk", "test"] = "clerk"
     test_auth_clerk_id: str = "user_local_dev"
     test_auth_first_name: str | None = "Local"
@@ -46,6 +50,13 @@ class Settings(BaseSettings):
         if normalized not in _VALID_LOG_LEVELS:
             raise ValueError(f"log_level must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}")
         return normalized
+
+    @field_validator("demo_admin_sign_in_token_ttl_seconds")
+    @classmethod
+    def validate_demo_admin_sign_in_token_ttl_seconds(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("demo_admin_sign_in_token_ttl_seconds must be at least 1 second")
+        return min(value, _MAX_DEMO_ADMIN_SIGN_IN_TOKEN_TTL_SECONDS)
 
 
 @lru_cache

@@ -8,6 +8,7 @@ from clerk_backend_api.security.types import AuthenticateRequestOptions
 from fastapi import Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.clerk_sign_in_tokens import ClerkSignInTokenClient, SignInTokenClient
 from backend.auth.repository import UserAccountRepository
 from backend.auth.schemas import (
     AuthPrincipal,
@@ -141,6 +142,16 @@ def get_auth_user_service(
 
 
 AuthUserServiceDep = Annotated[CurrentUserResolver, Depends(get_auth_user_service)]
+
+
+def get_sign_in_token_client(settings: SettingsDep) -> SignInTokenClient:
+    return ClerkSignInTokenClient(settings)
+
+
+SignInTokenClientDep = Annotated[
+    SignInTokenClient,
+    Depends(get_sign_in_token_client),
+]
 
 
 async def require_clerk_auth(

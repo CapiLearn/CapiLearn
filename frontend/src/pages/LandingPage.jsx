@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import DemoAdminLoginButton from "../components/DemoAdminLoginButton";
 import "../styles/LandingPage.css";
 import landingBackground from "../assets/capilearn-landing-background-v2.webp";
 
@@ -36,6 +37,7 @@ function LandingPage() {
               <Link className="capilearn-primary link-button" to="/workspace">
                 Get Started
               </Link>
+              <DemoAdminLoginButton />
             </div>
 
             <div className="capilearn-feature-row">
