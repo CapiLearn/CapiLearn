@@ -1,3 +1,5 @@
+"""Citation payload models shared by RAG, chat, and response schemas."""
+
 from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
@@ -11,6 +13,8 @@ CitationId = Annotated[
 
 
 class CitationRecord(BaseModel):
+    """Citation data exposed on chat responses and persisted with messages."""
+
     model_config = ConfigDict(
         alias_generator=to_camel,
         extra="forbid",
@@ -25,4 +29,5 @@ class CitationRecord(BaseModel):
 
     @classmethod
     def model_validate_wire(cls, data: Any) -> Self:
+        """Validate an externally serialized camelCase citation payload."""
         return cls.model_validate(data, by_alias=True, by_name=False)

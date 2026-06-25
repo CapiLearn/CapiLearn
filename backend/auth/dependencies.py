@@ -1,3 +1,5 @@
+"""FastAPI dependencies for Clerk authentication and role authorization."""
+
 from collections.abc import Callable
 from typing import Annotated, Any, Protocol
 
@@ -22,10 +24,14 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 class AuthRequestVerifier(Protocol):
+    """Verifies an incoming bearer token and returns normalized auth claims."""
+
     async def verify(self, bearer_token: str) -> ClerkAuthClaims: ...
 
 
 class CurrentUserResolver(Protocol):
+    """Loads auth-facing user projections for request dependencies."""
+
     async def get_or_create_current_user(
         self,
         session: AsyncSession,
@@ -46,10 +52,13 @@ class CurrentUserResolver(Protocol):
 
 
 class ClerkRequestVerifier:
+    """Authenticates production requests against Clerk session tokens."""
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
     async def verify(self, bearer_token: str) -> ClerkAuthClaims:
+        """Validate a Clerk session token and normalize its payload."""
         if not self._settings.clerk_secret_key and not self._settings.clerk_jwt_key:
             raise ApiError(
                 code="invalid_auth_token",
@@ -78,10 +87,13 @@ class ClerkRequestVerifier:
 
 
 class TestRequestVerifier:
+    """Builds deterministic auth claims for local and test-mode requests."""
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
     async def verify(self, _bearer_token: str) -> ClerkAuthClaims:
+        """Return configured test-mode claims without external verification."""
         payload: dict[str, Any] = {
             "sub": self._settings.test_auth_clerk_id,
             "role": self._settings.test_auth_role,
@@ -95,6 +107,7 @@ class TestRequestVerifier:
 
 
 def get_auth_request_verifier(settings: SettingsDep) -> AuthRequestVerifier:
+    """Select the request verifier for the configured auth mode."""
     if settings.auth_mode == "test":
         return TestRequestVerifier(settings)
     return ClerkRequestVerifier(settings)
@@ -107,6 +120,7 @@ AuthRequestVerifierDep = Annotated[
 
 
 def get_user_repository() -> UserAccountRepository:
+    """Provide a user account repository for auth dependencies."""
     return UserAccountRepository()
 
 
@@ -117,6 +131,7 @@ def get_auth_user_service(
     settings: SettingsDep,
     repository: UserRepositoryDep,
 ) -> CurrentUserResolver:
+    """Select the current-user resolver for the configured auth mode."""
     if settings.auth_mode == "test":
         return AuthTestModeService(
             repository=repository,
@@ -132,6 +147,7 @@ async def require_clerk_auth(
     verifier: AuthRequestVerifierDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> ClerkAuthClaims:
+    """Require a valid Clerk bearer token and expose normalized claims."""
     bearer_token = _extract_bearer_token(authorization)
     return await verifier.verify(bearer_token)
 
@@ -144,6 +160,7 @@ async def get_current_user(
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
 ) -> CurrentUser:
+    """Load the already-provisioned user for ordinary authenticated requests."""
     # Normal app requests read an already-provisioned local user.
     current_user = await service.get_existing_current_user(session, auth_claims)
     if current_user is None:
@@ -159,6 +176,7 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 
 def require_student_user(current_user: CurrentUserDep) -> CurrentUser:
+    """Require the current user to have the student role."""
     if current_user.role != UserRole.STUDENT:
         raise ApiError(
             code="student_required",
@@ -176,6 +194,7 @@ async def get_bootstrap_current_user(
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
 ) -> CurrentUser:
+    """Load or create the current user during explicit account bootstrap."""
     # /api/me is the explicit first-use bootstrap and repair path.
     return await service.get_or_create_current_user(session, auth_claims)
 
@@ -191,6 +210,7 @@ async def get_current_principal(
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
 ) -> AuthPrincipal | None:
+    """Load role-bearing auth state without provisioning or profile repair."""
     # Authorization checks load role state only; they never provision or repair profiles.
     return await service.get_current_principal(session, auth_claims)
 
@@ -202,6 +222,7 @@ AuthPrincipalDep = Annotated[
 
 
 def require_role(*roles: UserRole) -> Callable[[AuthPrincipal], AuthPrincipal]:
+    """Build a FastAPI dependency that permits only the provided roles."""
     allowed_roles = set(roles)
 
     async def dependency(principal: AuthPrincipalDep) -> AuthPrincipal:

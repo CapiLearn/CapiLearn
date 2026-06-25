@@ -1,1 +1,1 @@
-
+"""Instructor-facing API subdomain."""

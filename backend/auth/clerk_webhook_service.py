@@ -1,3 +1,5 @@
+"""Services for applying Clerk user webhooks to local auth state."""
+
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,10 +14,13 @@ UPSERT_USER_EVENTS = {"user.created", "user.updated"}
 
 
 class ClerkWebhookService:
+    """Project Clerk user lifecycle events into the local user account table."""
+
     def __init__(self, repository: UserAccountRepository | None = None) -> None:
         self._repository = repository or UserAccountRepository()
 
     async def handle_event(self, session: AsyncSession, event: dict[str, Any]) -> None:
+        """Apply supported Clerk user events and ignore unrelated event types."""
         event_type = event.get("type")
         data = event.get("data")
 

@@ -1,3 +1,5 @@
+"""Factories for configured LLM guardrail providers."""
+
 from backend.llm.config import InputGuardrailMode, OutputGuardrailMode, llm_settings
 from backend.llm.guardrails import (
     CompositeGuardrailsProvider,
@@ -9,6 +11,8 @@ from backend.llm.schemas import GuardrailsProvider
 
 
 def build_input_guardrails() -> GuardrailsProvider:
+    """Build the configured input guardrail chain."""
+
     if not llm_settings.guardrails_enabled:
         return NoopGuardrailsProvider()
     if llm_settings.input_guardrail_mode == InputGuardrailMode.OFF:
@@ -26,6 +30,8 @@ def build_input_guardrails() -> GuardrailsProvider:
 
 
 def build_output_guardrails() -> GuardrailsProvider:
+    """Build the configured output guardrail provider."""
+
     if (
         not llm_settings.guardrails_enabled
         or llm_settings.output_guardrail_mode == OutputGuardrailMode.OFF

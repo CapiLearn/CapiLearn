@@ -1,3 +1,5 @@
+"""Application configuration loaded from environment variables."""
+
 from functools import lru_cache
 from typing import Literal
 
@@ -8,6 +10,8 @@ _VALID_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
 
 
 class Settings(BaseSettings):
+    """Runtime settings shared by the backend application."""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "CapiLearn API"
@@ -37,6 +41,7 @@ class Settings(BaseSettings):
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, value: str) -> str:
+        """Normalize log levels and reject values unsupported by logging."""
         normalized = value.upper()
         if normalized not in _VALID_LOG_LEVELS:
             raise ValueError(f"log_level must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}")
@@ -45,6 +50,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the process-wide settings instance."""
     return Settings()
 
 

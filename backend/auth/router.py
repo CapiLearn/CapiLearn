@@ -1,3 +1,5 @@
+"""Authentication API routes."""
+
 from fastapi import APIRouter
 
 from backend.auth.dependencies import BootstrapCurrentUserDep
@@ -12,4 +14,5 @@ router = APIRouter(tags=["auth"])
     summary="Bootstrap current user",
 )
 async def get_me(current_user: BootstrapCurrentUserDep) -> CurrentUser:
+    """Return the signed-in user, creating the local account on first use."""
     return current_user

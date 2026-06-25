@@ -1,1 +1,1 @@
-
+"""Student activity tracking domain."""

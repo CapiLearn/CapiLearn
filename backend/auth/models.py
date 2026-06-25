@@ -1,3 +1,5 @@
+"""SQLAlchemy models for authentication-owned tables."""
+
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -8,10 +10,13 @@ from backend.core.database import Base
 
 
 def utc_now() -> datetime:
+    """Return an aware UTC timestamp for ORM-managed audit columns."""
     return datetime.now(UTC)
 
 
 class UserAccount(Base):
+    """Local account projection keyed by Clerk user id."""
+
     __tablename__ = "user_account"
     __table_args__ = (
         CheckConstraint(

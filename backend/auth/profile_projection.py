@@ -1,3 +1,5 @@
+"""Translate Clerk profile payloads into validated local profile snapshots."""
+
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -11,12 +13,16 @@ PROFILE_INCOMPLETE_ERROR = "Complete your profile before using the app."
 
 @dataclass(frozen=True)
 class ParsedClerkProfile:
+    """Profile fields required from a Clerk session token."""
+
     first_name: str
     last_name: str
 
 
 @dataclass(frozen=True)
 class ClerkProfileSnapshot:
+    """Profile fields required from a Clerk user webhook payload."""
+
     clerk_id: str
     first_name: str
     last_name: str
@@ -24,6 +30,7 @@ class ClerkProfileSnapshot:
 
 
 def profile_from_clerk_payload(payload: dict[str, Any]) -> ParsedClerkProfile:
+    """Validate profile claims from a Clerk session token."""
     # Clerk sign-up requires first and last name, and our session token template
     # must expose both claims. Missing values mean that contract is misconfigured.
     first_name = _normalized_string(payload.get("first_name"))
@@ -39,6 +46,7 @@ def profile_from_clerk_payload(payload: dict[str, Any]) -> ParsedClerkProfile:
 
 
 def profile_from_clerk_user(data: dict[str, object]) -> ClerkProfileSnapshot:
+    """Validate the Clerk user object carried by user lifecycle webhooks."""
     clerk_id = _normalized_string(data.get("id"))
     if clerk_id is None:
         raise ApiError(
@@ -69,6 +77,7 @@ def _normalized_string(value: object) -> str | None:
 
 
 def _clerk_millis_to_datetime(value: object) -> datetime:
+    # bool is an int subclass, but it is not a valid Clerk millisecond timestamp.
     if isinstance(value, bool) or not isinstance(value, int):
         raise ApiError(
             code="invalid_clerk_profile",

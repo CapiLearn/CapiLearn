@@ -1,3 +1,5 @@
+"""Database access for student daily activity."""
+
 from datetime import date, datetime
 from uuid import UUID
 
@@ -9,6 +11,8 @@ from backend.activity.models import StudentDailyActivity
 
 
 class StudentDailyActivityRepository:
+    """Persists and queries per-student daily login activity rows."""
+
     async def record_login(
         self,
         session: AsyncSession,
@@ -17,6 +21,8 @@ class StudentDailyActivityRepository:
         activity_date: date,
         seen_at: datetime,
     ) -> StudentDailyActivity:
+        """Create or update the user's activity row for one activity date."""
+        # The unique user/date row is updated atomically so concurrent logins cannot split counts.
         statement = (
             insert(StudentDailyActivity)
             .values(
@@ -49,6 +55,7 @@ class StudentDailyActivityRepository:
         user_id: UUID,
         through_date: date,
     ) -> list[date]:
+        """Return activity dates for a student up to and including a date."""
         statement = (
             select(StudentDailyActivity.activity_date)
             .where(
@@ -68,6 +75,7 @@ class StudentDailyActivityRepository:
         from_date: date,
         to_date: date,
     ) -> list[StudentDailyActivity]:
+        """Return activity rows in ascending order for an inclusive date range."""
         statement = (
             select(StudentDailyActivity)
             .where(

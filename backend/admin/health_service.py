@@ -1,3 +1,5 @@
+"""Admin health checks for backend, database, RAG, LLM provider, and guardrails."""
+
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
@@ -27,16 +29,24 @@ ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
 
 
 class ProviderMetadataProvider(Protocol):
-    async def get_models(self, provider: str) -> list[str]: ...
+    """Protocol for loading model metadata from an LLM provider."""
+
+    async def get_models(self, provider: str) -> list[str]:
+        """Return model names advertised by the provider."""
+        ...
 
 
 @dataclass(frozen=True)
 class ProviderMetadataCacheEntry:
+    """Cached provider model list with a monotonic-clock expiry."""
+
     models: tuple[str, ...]
     expires_at: float
 
 
 class AdminHealthResponseCache:
+    """Short-lived async cache for the full admin health response."""
+
     def __init__(self, *, ttl_seconds: int = ADMIN_HEALTH_CACHE_TTL_SECONDS) -> None:
         self._ttl_seconds = ttl_seconds
         self._response: AdminHealthResponse | None = None
@@ -47,11 +57,13 @@ class AdminHealthResponseCache:
         self,
         loader: Callable[[], Awaitable[AdminHealthResponse]],
     ) -> AdminHealthResponse:
+        """Return a cached health response or load one under a single-flight lock."""
         now = time.monotonic()
         if self._response is not None and now < self._expires_at:
             return self._response.model_copy(deep=True)
 
         async with self._lock:
+            # Recheck after acquiring the lock so concurrent misses share one load.
             now = time.monotonic()
             if self._response is not None and now < self._expires_at:
                 return self._response.model_copy(deep=True)
@@ -62,11 +74,14 @@ class AdminHealthResponseCache:
             return self._response.model_copy(deep=True)
 
     def clear(self) -> None:
+        """Invalidate the cached health response."""
         self._response = None
         self._expires_at = 0.0
 
 
 class CachedLiteLLMProviderMetadataProvider:
+    """Loads LiteLLM provider metadata with a short in-memory TTL cache."""
+
     def __init__(
         self,
         *,
@@ -79,12 +94,14 @@ class CachedLiteLLMProviderMetadataProvider:
         self._lock = asyncio.Lock()
 
     async def get_models(self, provider: str) -> list[str]:
+        """Return provider model names without blocking the event loop."""
         now = time.monotonic()
         cached_models = self._cached_models(provider, now=now)
         if cached_models is not None:
             return cached_models
 
         async with self._lock:
+            # LiteLLM metadata calls can be slow; avoid duplicate concurrent probes.
             now = time.monotonic()
             cached_models = self._cached_models(provider, now=now)
             if cached_models is not None:
@@ -107,6 +124,7 @@ class CachedLiteLLMProviderMetadataProvider:
         return list(cached_entry.models)
 
     def clear(self) -> None:
+        """Invalidate all cached provider metadata."""
         self._cache_by_provider.clear()
 
 
@@ -122,6 +140,8 @@ admin_health_response_cache = AdminHealthResponseCache()
 
 
 class AdminHealthService:
+    """Builds the admin health response from dependency-specific probes."""
+
     def __init__(
         self,
         *,
@@ -141,9 +161,11 @@ class AdminHealthService:
         self._provider_models: dict[str, list[str]] = {}
 
     async def get_health(self) -> AdminHealthResponse:
+        """Return the cached admin health response, loading checks when stale."""
         return await self._response_cache.get_or_load(self._load_health)
 
     async def _load_health(self) -> AdminHealthResponse:
+        """Run health checks and aggregate their statuses."""
         checks = [
             self._check_backend(),
             await self._check_database(),
@@ -196,6 +218,8 @@ class AdminHealthService:
 
     async def _check_rag(self) -> AdminHealthCheck:
         if self._rag_config.backend == RagBackend.CHROMA:
+            # Chroma deployments may be remote or file-backed; a cheap portable probe
+            # is not available without adding backend-specific I/O here.
             return AdminHealthCheck(
                 id="rag",
                 name="RAG",
@@ -333,6 +357,7 @@ class AdminHealthService:
         return check
 
     def _guardrails_need_provider_metadata(self) -> bool:
+        """Return whether configured guardrails depend on the judge provider."""
         if not self._llm_config.guardrails_enabled:
             return False
         if not self._llm_config.guardrails_judge_enabled:
@@ -352,6 +377,7 @@ class AdminHealthService:
         failed_message: str,
         empty_message: str,
     ) -> AdminHealthCheck:
+        """Build a degraded check when provider metadata cannot confirm liveness."""
         started_at = timer_start()
         try:
             provider = _provider_for_model(model)
@@ -419,6 +445,7 @@ class AdminHealthService:
         )
 
     async def _get_provider_models(self, provider: str) -> list[str]:
+        """Memoize provider metadata within one health response load."""
         if provider not in self._provider_models:
             self._provider_models[provider] = await self._provider_metadata_provider.get_models(
                 provider
@@ -469,6 +496,7 @@ class AdminHealthService:
 
 
 def _provider_for_model(model: str) -> str:
+    """Resolve the LiteLLM provider for a configured model name."""
     _, provider, _, _ = get_llm_provider(model)
     if not provider:
         raise ValueError("LiteLLM did not resolve a provider for the configured model.")
@@ -482,6 +510,7 @@ def _count_value(value: int | None) -> int:
 
 
 def _aggregate_status(checks: list[AdminHealthCheck]) -> HealthStatus:
+    """Collapse individual health checks into the top-level admin status."""
     statuses = {check.status for check in checks}
     if HealthStatus.UNHEALTHY in statuses:
         return HealthStatus.UNHEALTHY

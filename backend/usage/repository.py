@@ -1,3 +1,5 @@
+"""Repository helpers for usage and roster activity reports."""
+
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -11,6 +13,8 @@ from backend.chat.schemas import MessageRole, MessageStatus
 
 @dataclass(frozen=True)
 class UserActivityAggregate:
+    """Per-user usage metrics returned to admin and instructor views."""
+
     display_name: str
     access_level: str
     total_messages_sent: int
@@ -26,6 +30,8 @@ async def list_admin_user_activity(
     limit: int = 100,
     offset: int = 0,
 ) -> list[UserActivityAggregate]:
+    """List non-deleted users with activity metrics for an admin usage window."""
+
     activity = _user_activity_subquery(range_start=range_start, range_end=range_end)
     statement = (
         _user_activity_select(activity)
@@ -51,6 +57,8 @@ async def list_student_roster_activity(
     range_end: datetime,
     limit: int = 100,
 ) -> list[UserActivityAggregate]:
+    """List active student accounts with activity metrics for roster display."""
+
     activity = _user_activity_subquery(range_start=range_start, range_end=range_end)
     statement = (
         _user_activity_select(activity)
@@ -70,6 +78,8 @@ async def list_student_roster_activity(
 
 
 def _user_activity_subquery(*, range_start: datetime, range_end: datetime):
+    """Build per-user message counts for a half-open reporting window."""
+
     last_activity = func.max(Message.created_at).label("last_activity")
     total_messages_sent = func.coalesce(
         func.sum(case((Message.role == MessageRole.USER.value, 1), else_=0)),
@@ -97,6 +107,7 @@ def _user_activity_subquery(*, range_start: datetime, range_end: datetime):
             last_activity,
         )
         .where(
+            # Half-open bounds prevent double-counting boundary messages.
             Message.created_at >= range_start,
             Message.created_at < range_end,
         )
@@ -107,6 +118,8 @@ def _user_activity_subquery(*, range_start: datetime, range_end: datetime):
 
 
 def _user_activity_select(activity):
+    """Select user account fields with optional activity aggregate columns."""
+
     return (
         select(
             UserAccount.first_name,
@@ -117,6 +130,7 @@ def _user_activity_select(activity):
             activity.c.last_activity,
         )
         .select_from(UserAccount)
+        # Keep users with no messages in the period so zero-activity accounts remain visible.
         .outerjoin(activity, activity.c.user_id == UserAccount.id)
     )
 

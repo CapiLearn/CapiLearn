@@ -1,3 +1,5 @@
+"""High-level LLM orchestration service for retrieval, guardrails, and generation."""
+
 import asyncio
 import logging
 from enum import StrEnum
@@ -40,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 
 class GenerationStage(StrEnum):
+    """Generation passes that are tracked separately for cost and events."""
+
     PRIMARY = "primary"
     REPAIR = "repair"
 
@@ -53,6 +57,8 @@ class GenerationStage(StrEnum):
 
 
 class LLMServiceError(Exception):
+    """Wraps service failures with any cost components recorded before failure."""
+
     def __init__(
         self,
         original_exception: Exception,
@@ -65,6 +71,8 @@ class LLMServiceError(Exception):
 
 
 class EmptyRetrievalProvider:
+    """Retrieval provider used when no RAG backend is configured."""
+
     async def retrieve(
         self,
         query: str,
@@ -73,10 +81,14 @@ class EmptyRetrievalProvider:
         conversation_id,
         user_message_id,
     ) -> RetrievalResult:
+        """Return an empty retrieval result."""
+
         return RetrievalResult(chunks=[])
 
 
 class LLMService:
+    """Coordinates RAG retrieval, guardrails, provider calls, repair, and costing."""
+
     def __init__(
         self,
         *,
@@ -96,6 +108,8 @@ class LLMService:
         self._retrieval_trace_sink = retrieval_trace_sink or NoopRetrievalTraceSink()
 
     async def complete(self, request: LLMRequest) -> LLMResult:
+        """Generate an LLM result and attach all recorded cost components."""
+
         recorder = LLMCostRecorder(
             user_id=str(request.user_id),
             conversation_id=str(request.conversation_id),
@@ -113,6 +127,8 @@ class LLMService:
         return result.model_copy(update={"cost_components": recorder.components})
 
     async def _complete(self, request: LLMRequest) -> LLMResult:
+        """Run the request workflow after cost-recording context is installed."""
+
         events = LLMEventRecorder(
             trace_sink=self._trace_sink,
             retrieval_trace_sink=self._retrieval_trace_sink,
@@ -120,6 +136,8 @@ class LLMService:
             request=request,
         )
         retrieval_started_at = timer_start()
+        # Retrieval runs in parallel with input guardrails to reduce latency, but its
+        # result is discarded if the input check blocks the request.
         retrieval_task = asyncio.create_task(
             self._retriever.retrieve(
                 request.content,
@@ -150,6 +168,7 @@ class LLMService:
         )
 
         if input_result.blocked:
+            # Blocked inputs must not expose retrieved context or provider content.
             _discard_task_result(retrieval_task)
             provider_response = ProviderResponse(content="")
             output_result = GuardrailResult()
@@ -163,6 +182,8 @@ class LLMService:
         try:
             retrieval_result = await retrieval_task
         except Exception as exc:
+            # Chat generation can proceed without retrieved context; the failure is
+            # still logged for RAG diagnostics.
             retrieval_result = RetrievalResult(chunks=[])
             await events.record_retrieval_error(
                 started_at=retrieval_started_at,
@@ -205,6 +226,8 @@ class LLMService:
         provider_response: ProviderResponse,
         retrieved_context: list[RetrievedChunk],
     ) -> tuple[GuardrailResult, ProviderResponse]:
+        """Run output guardrails and perform one Socratic repair pass if blocked."""
+
         output_guardrail_started_at = timer_start()
         try:
             with guardrail_component_context("output_guardrail"):
@@ -227,6 +250,8 @@ class LLMService:
         if not output_result.blocked:
             return output_result, provider_response
 
+        # A blocked primary response is rewritten once, then the repaired response is
+        # judged again so unsafe repair output is not returned silently.
         repair_started_at = timer_start()
         repair_response = await self._generate(
             events=events,
@@ -273,6 +298,8 @@ class LLMService:
         messages: list[ChatMessage],
         stage: GenerationStage,
     ) -> ProviderResponse:
+        """Generate provider content for one stage and emit generation events."""
+
         started_at = timer_start()
         try:
             with generation_component_context(stage.component_type):
@@ -296,6 +323,8 @@ class LLMService:
 
 
 def _discard_task_result(task: asyncio.Task[RetrievalResult]) -> None:
+    """Cancel a background retrieval task and consume its eventual exception."""
+
     task.cancel()
     task.add_done_callback(_consume_task_exception)
 

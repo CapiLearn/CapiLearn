@@ -1,3 +1,5 @@
+"""FastAPI routes for conversation and message operations."""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Request, status
@@ -27,6 +29,7 @@ router = APIRouter(
     summary="List conversations",
 )
 async def list_conversations(service: ChatServiceDep) -> ConversationListResponse:
+    """Return conversations visible to the authenticated student."""
     return await service.list_conversations()
 
 
@@ -42,6 +45,7 @@ async def create_conversation(
     rate_limit_user: ChatRateLimitUserDep,
     service: ChatServiceDep,
 ) -> SendMessageResponse:
+    """Start a new conversation with an initial user message."""
     return await service.create_conversation_message(payload.content)
 
 
@@ -54,6 +58,7 @@ async def list_messages(
     conversation_id: UUID,
     service: ChatServiceDep,
 ) -> MessageListResponse:
+    """Return messages for a conversation visible to the authenticated student."""
     return await service.list_messages(conversation_id)
 
 
@@ -70,6 +75,7 @@ async def create_message(
     rate_limit_user: ChatRateLimitUserDep,
     service: ChatServiceDep,
 ) -> SendMessageResponse:
+    """Send a message in an existing conversation."""
     return await service.create_message(conversation_id, payload.content)
 
 
@@ -83,4 +89,5 @@ async def delete_conversation(
     conversation_id: UUID,
     service: ChatServiceDep,
 ) -> None:
+    """Soft-delete a conversation visible to the authenticated student."""
     await service.delete_conversation(conversation_id)

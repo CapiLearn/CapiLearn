@@ -1,3 +1,5 @@
+"""Database access for instructor dashboard projections."""
+
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -14,11 +16,15 @@ from backend.usage.repository import UserActivityAggregate, list_student_roster_
 
 @dataclass(frozen=True)
 class InstructorSummaryAggregate:
+    """Instructor dashboard summary counts for a resolved date window."""
+
     active_students: int
     questions_asked: int
 
 
 class InstructorDashboardRepository:
+    """Read instructor dashboard aggregates from activity and chat tables."""
+
     async def get_summary_metrics(
         self,
         session: AsyncSession,
@@ -28,6 +34,7 @@ class InstructorDashboardRepository:
         activity_from_date: date,
         activity_to_date: date,
     ) -> InstructorSummaryAggregate:
+        """Count active students and student questions for the dashboard range."""
         message_activity_exists = (
             select(Message.id)
             .where(
@@ -47,6 +54,8 @@ class InstructorDashboardRepository:
             )
             .exists()
         )
+        # A student counts as active if either source observed activity in range:
+        # live chat messages or the daily activity rollup.
         active_students = await session.scalar(
             select(func.count(UserAccount.id)).where(
                 UserAccount.role == UserRole.STUDENT.value,
@@ -80,6 +89,7 @@ class InstructorDashboardRepository:
         range_end: datetime,
         limit: int = 100,
     ) -> list[UserActivityAggregate]:
+        """Return roster rows ordered by the shared usage activity projection."""
         return await list_student_roster_activity(
             session,
             range_start=range_start,

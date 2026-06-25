@@ -1,3 +1,5 @@
+"""Structured event recording for LLM generation, retrieval, and guardrails."""
+
 import logging
 from typing import Any
 
@@ -12,6 +14,8 @@ from backend.rag.trace_contracts import RetrievalTraceSink
 
 
 class LLMEventRecorder:
+    """Writes trace records and application logs for one LLM request."""
+
     def __init__(
         self,
         *,
@@ -33,6 +37,8 @@ class LLMEventRecorder:
         started_at: float,
         result: GuardrailResult,
     ) -> None:
+        """Record a completed guardrail check."""
+
         fields = {
             **self._request_fields,
             **guardrail_event_fields(result),
@@ -49,6 +55,8 @@ class LLMEventRecorder:
         started_at: float,
         exc: Exception,
     ) -> None:
+        """Record a guardrail provider failure."""
+
         fields = {
             **self._request_fields,
             "guardrail_stage": stage,
@@ -70,6 +78,8 @@ class LLMEventRecorder:
         started_at: float,
         result: RetrievalResult,
     ) -> None:
+        """Record successful retrieval in both RAG and LLM observability channels."""
+
         chunks = [retrieval_chunk_log_metadata(chunk) for chunk in result.chunks]
         fields = {
             **self._request_fields,
@@ -98,6 +108,8 @@ class LLMEventRecorder:
         exc: Exception,
         retriever_class: str,
     ) -> None:
+        """Record retrieval failure without failing the chat request."""
+
         fields = {
             **self._request_fields,
             "latency_ms": elapsed_ms(started_at),
@@ -119,6 +131,8 @@ class LLMEventRecorder:
         started_at: float,
         exc: Exception,
     ) -> None:
+        """Record a failed provider generation attempt."""
+
         fields = {
             **self._request_fields,
             "generation_stage": stage,
@@ -140,6 +154,8 @@ class LLMEventRecorder:
         stage: str,
         provider_response: ProviderResponse,
     ) -> None:
+        """Record a successful provider generation."""
+
         fields = {
             **self._request_fields,
             "generation_stage": stage,
@@ -160,6 +176,8 @@ class LLMEventRecorder:
         repair_result: GuardrailResult,
         initial_result: GuardrailResult,
     ) -> None:
+        """Record the outcome of the Socratic output-repair pass."""
+
         fields = {
             **self._request_fields,
             "latency_ms": elapsed_ms(started_at),
@@ -173,6 +191,8 @@ class LLMEventRecorder:
 
 
 def request_event_fields(request: LLMRequest) -> dict[str, Any]:
+    """Return common request identifiers for LLM logs and traces."""
+
     return {
         "user_id": str(request.user_id),
         "conversation_id": str(request.conversation_id),
@@ -182,6 +202,8 @@ def request_event_fields(request: LLMRequest) -> dict[str, Any]:
 
 
 def guardrail_event_fields(result: GuardrailResult) -> dict[str, Any]:
+    """Flatten a guardrail result into stable event fields."""
+
     metadata = result.metadata or {}
     return {
         "blocked": result.blocked,

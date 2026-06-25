@@ -1,3 +1,5 @@
+"""Shared date-window parsing for API filters."""
+
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -10,6 +12,8 @@ DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 @dataclass(frozen=True)
 class DateWindow:
+    """Resolved inclusive date labels and an exclusive datetime query window."""
+
     from_date: date
     to_date: date
     range_start: datetime
@@ -26,6 +30,7 @@ def resolve_date_window(
     invalid_message: str,
     too_large_message: str,
 ) -> DateWindow:
+    """Resolve optional YYYY-MM-DD bounds into a timezone-aware query window."""
     resolved_to_date = (
         _parse_date(
             to_date,
@@ -68,6 +73,8 @@ def resolve_date_window(
     return DateWindow(
         from_date=resolved_from_date,
         to_date=resolved_to_date,
+        # Use midnight-to-midnight bounds so to_date behaves as an exclusive
+        # upper bound for timestamp queries.
         range_start=datetime.combine(resolved_from_date, time.min, tzinfo=timezone),
         range_end=datetime.combine(resolved_to_date, time.min, tzinfo=timezone),
     )

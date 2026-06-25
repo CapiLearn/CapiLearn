@@ -1,1 +1,1 @@
-
+"""Webhook integration endpoints."""

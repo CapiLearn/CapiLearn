@@ -1,3 +1,5 @@
+"""FastAPI dependency factories for admin services."""
+
 from typing import Annotated
 
 from fastapi import Depends
@@ -9,10 +11,12 @@ from backend.core.database import DbSession
 
 
 def get_admin_usage_service(session: DbSession) -> AdminUsageService:
+    """Build the per-request admin usage service."""
     return AdminUsageService(session=session)
 
 
 def get_admin_health_service(session: DbSession) -> AdminHealthService:
+    """Build the per-request admin health service."""
     return AdminHealthService(session=session)
 
 

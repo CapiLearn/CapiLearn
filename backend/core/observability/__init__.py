@@ -1,3 +1,5 @@
+"""Public observability helpers exported for backend services."""
+
 from backend.core.observability.context import (
     get_request_id,
     new_request_id,

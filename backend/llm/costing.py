@@ -1,3 +1,5 @@
+"""Cost and usage tracking for provider-backed LLM component calls."""
+
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -27,6 +29,8 @@ _guardrail_component_type: ContextVar[str | None] = ContextVar(
 
 
 class LLMCostRecorder:
+    """Collects ordered cost components for a single LLM service request."""
+
     def __init__(
         self,
         *,
@@ -45,6 +49,8 @@ class LLMCostRecorder:
 
     @property
     def components(self) -> list[LLMCostComponent]:
+        """Return a copy of collected component records in execution order."""
+
         return list(self._components)
 
     def append(
@@ -59,6 +65,8 @@ class LLMCostRecorder:
         error_type: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        """Append one component record from a provider response or failure."""
+
         usage = _response_value(response, "usage")
         choice = _first_choice(response)
         cost, cost_metadata, cost_status = _estimate_cost(response, metadata)
@@ -87,6 +95,8 @@ class LLMCostRecorder:
 
 @contextmanager
 def cost_recorder_context(recorder: LLMCostRecorder) -> Iterator[None]:
+    """Make a request cost recorder available to nested async-safe code."""
+
     token = _cost_recorder.set(recorder)
     try:
         yield
@@ -96,6 +106,8 @@ def cost_recorder_context(recorder: LLMCostRecorder) -> Iterator[None]:
 
 @contextmanager
 def generation_component_context(component_type: str) -> Iterator[None]:
+    """Set the generation component type for nested provider calls."""
+
     token = _generation_component_type.set(component_type)
     try:
         yield
@@ -105,6 +117,8 @@ def generation_component_context(component_type: str) -> Iterator[None]:
 
 @contextmanager
 def guardrail_component_context(component_type: str) -> Iterator[None]:
+    """Set the output guardrail component type for nested judge calls."""
+
     token = _guardrail_component_type.set(component_type)
     try:
         yield
@@ -113,10 +127,14 @@ def guardrail_component_context(component_type: str) -> Iterator[None]:
 
 
 def current_generation_component_type() -> str:
+    """Return the active generation component type."""
+
     return _generation_component_type.get()
 
 
 def guardrail_component_type(check_type: str) -> str:
+    """Return the cost component type for the active guardrail check."""
+
     if check_type == "input":
         return "input_guardrail"
     return _guardrail_component_type.get() or "output_guardrail"
@@ -132,6 +150,8 @@ async def tracked_acompletion(
     metadata: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> Any:
+    """Run a LiteLLM completion and record cost metadata for success or failure."""
+
     started_at = timer_start()
     response = None
     try:
@@ -199,6 +219,7 @@ def _estimate_cost(
     try:
         cost = completion_cost(completion_response=response, call_type="acompletion")
     except Exception as exc:
+        # Cost lookup can lag behind provider/model support; keep the usage record.
         merged_metadata["costError"] = type(exc).__name__
         merged_metadata["costErrorMessage"] = str(exc)
         return None, merged_metadata, "cost_unavailable"

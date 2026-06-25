@@ -1,3 +1,5 @@
+"""Application services for current-user bootstrap and authorization state."""
+
 from fastapi import status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,8 @@ from backend.core.exceptions import ApiError
 
 
 class AuthUserService:
+    """Coordinates local user bootstrap, lookup, and profile repair."""
+
     def __init__(self, repository: UserAccountRepository | None = None) -> None:
         self._repository = repository or UserAccountRepository()
 
@@ -25,6 +29,7 @@ class AuthUserService:
         *,
         initial_role: UserRole = UserRole.STUDENT,
     ) -> CurrentUser:
+        """Return the current user, creating a local account when needed."""
         user = await self._repository.get_by_clerk_id(session, clerk_id=claims.clerk_id)
         if user is None:
             user, created = await self._create_user(
@@ -51,6 +56,7 @@ class AuthUserService:
         session: AsyncSession,
         claims: ClerkAuthClaims,
     ) -> CurrentUser | None:
+        """Return the current user only when a local account already exists."""
         user = await self._repository.get_by_clerk_id(session, clerk_id=claims.clerk_id)
         if user is None:
             return None
@@ -63,6 +69,7 @@ class AuthUserService:
         session: AsyncSession,
         claims: ClerkAuthClaims,
     ) -> AuthPrincipal | None:
+        """Return the auth principal used by role checks, if provisioned."""
         user = await self._repository.get_by_clerk_id(session, clerk_id=claims.clerk_id)
         if user is None:
             return None
@@ -76,6 +83,7 @@ class AuthUserService:
         claims: ClerkAuthClaims,
         initial_role: UserRole,
     ) -> tuple[UserAccount, bool]:
+        """Create a local account and report whether this request inserted it."""
         profile = profile_from_clerk_payload(claims.claims)
         try:
             user, created = await self._repository.create_or_get_by_clerk_id(
@@ -99,6 +107,7 @@ class AuthUserService:
         user: UserAccount,
         claims: ClerkAuthClaims,
     ) -> None:
+        """Backfill profile fields from claims until the first Clerk webhook lands."""
         # Only /api/me bootstrap uses session claims as a narrow fallback before webhook sync.
         _reject_disabled_user(user)
         if user.clerk_profile_updated_at is not None:
@@ -116,6 +125,8 @@ class AuthUserService:
 
 
 class AuthTestModeService:
+    """Wrap the auth service while forcing the configured test role."""
+
     def __init__(
         self,
         repository: UserAccountRepository | None = None,
@@ -131,6 +142,7 @@ class AuthTestModeService:
         session: AsyncSession,
         claims: ClerkAuthClaims,
     ) -> CurrentUser:
+        """Bootstrap or load the current test-mode user."""
         current_user = await self._auth_service.get_or_create_current_user(
             session,
             claims,
@@ -148,6 +160,7 @@ class AuthTestModeService:
         session: AsyncSession,
         claims: ClerkAuthClaims,
     ) -> CurrentUser | None:
+        """Load the current test-mode user only if it is already provisioned."""
         current_user = await self._auth_service.get_existing_current_user(
             session,
             claims,
@@ -167,6 +180,7 @@ class AuthTestModeService:
         session: AsyncSession,
         claims: ClerkAuthClaims,
     ) -> AuthPrincipal | None:
+        """Load the test-mode principal used by role checks."""
         principal = await self._auth_service.get_current_principal(
             session,
             claims,

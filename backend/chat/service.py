@@ -1,3 +1,5 @@
+"""Application service for persisted chat conversations and LLM turns."""
+
 import logging
 from uuid import UUID
 
@@ -49,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 
 class ChatService:
+    """Coordinate chat persistence, retrieval context, LLM calls, and trace events."""
+
     def __init__(
         self,
         *,
@@ -65,6 +69,7 @@ class ChatService:
         self._trace_sink = trace_sink or NoopLLMTraceSink()
 
     async def list_conversations(self) -> ConversationListResponse:
+        """List non-deleted conversations owned by the current user."""
         conversations = await self._repository.list_conversations(
             self._session,
             user_id=self._user_id,
@@ -76,6 +81,7 @@ class ChatService:
         )
 
     async def list_messages(self, conversation_id: UUID) -> MessageListResponse:
+        """List messages for a conversation owned by the current user."""
         conversation = await self._get_owned_conversation(conversation_id)
         messages = await self._repository.list_messages(
             self._session,
@@ -87,6 +93,7 @@ class ChatService:
         )
 
     async def delete_conversation(self, conversation_id: UUID) -> None:
+        """Soft-delete a conversation owned by the current user."""
         conversation = await self._get_owned_conversation(conversation_id)
         conversation.status = ConversationStatus.DELETED.value
         now = utc_now()
@@ -95,6 +102,7 @@ class ChatService:
         await self._session.commit()
 
     async def create_conversation_message(self, content: str) -> SendMessageResponse:
+        """Create a new conversation and send its first user message."""
         title = _title_from_content(content)
         conversation = await self._repository.create_conversation(
             self._session,
@@ -112,6 +120,7 @@ class ChatService:
         conversation_id: UUID,
         content: str,
     ) -> SendMessageResponse:
+        """Send a user message in an existing conversation owned by the current user."""
         conversation = await self._get_owned_conversation(conversation_id)
         existing_messages = await self._repository.list_messages(
             self._session,
@@ -132,6 +141,7 @@ class ChatService:
         content: str,
         history: list[ChatMessage],
     ) -> SendMessageResponse:
+        """Persist a user/assistant turn, complete it with the LLM, and record outcomes."""
         turn_started_at = timer_start()
         request_id = get_request_id() or new_request_id()
         try:
@@ -175,6 +185,7 @@ class ChatService:
         try:
             result = await self._llm_service.complete(request)
         except Exception as exc:
+            # Persist the assistant placeholder as failed before surfacing provider errors.
             latency_ms = elapsed_ms(turn_started_at)
             original_exc = _original_llm_exception(exc)
             cost_components = exc.cost_components if isinstance(exc, LLMServiceError) else []
@@ -249,6 +260,7 @@ class ChatService:
         )
 
     async def _get_owned_conversation(self, conversation_id: UUID) -> Conversation:
+        """Return a visible conversation or raise the API-level not-found error."""
         conversation = await self._repository.get_conversation(
             self._session,
             conversation_id=conversation_id,
@@ -353,6 +365,7 @@ class ChatService:
 
 
 def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
+    """Build LLM history from completed chat messages and recent stored RAG context."""
     history = []
     recent_user_message_ids = _recent_user_message_ids(messages)
     for message in messages:
@@ -364,6 +377,8 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
         if message.role == MessageRole.USER.value:
             contexts = []
             if message.id in recent_user_message_ids:
+                # Each completed user message stores its own retrieval context, but
+                # only the last RECENT_RETRIEVED_CONTEXT_TURNS user turns replay it.
                 contexts = [
                     context.model_dump(mode="json", by_alias=True)
                     for context in _stored_rag_context_from_data(message.history_context or [])
@@ -377,6 +392,7 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
 
 
 def _message_content_for_response(message: Message) -> str:
+    """Return response-safe content for messages that may still be pending or failed."""
     if message.content is not None:
         return message.content
 
@@ -392,6 +408,7 @@ def _message_content_for_response(message: Message) -> str:
 
 
 def _message_citations_for_response(message: Message) -> list[CitationRecord]:
+    """Decode persisted citation payloads into API citation records."""
     if message.citations is None:
         raise ValueError(
             "Persisted chat message is missing required citations "
@@ -402,6 +419,7 @@ def _message_citations_for_response(message: Message) -> list[CitationRecord]:
 
 
 def _required_message_content(message: Message) -> str:
+    """Return persisted message content or raise when the row violates chat invariants."""
     if message.content is not None:
         return message.content
 
@@ -471,6 +489,7 @@ def _provider_event_fields(result: LLMResult) -> dict:
 
 
 def _recent_user_message_ids(messages: list[Message]) -> set[UUID]:
+    """Return the last RECENT_RETRIEVED_CONTEXT_TURNS completed user-message IDs."""
     completed_user_messages = [
         message
         for message in messages
@@ -495,6 +514,7 @@ def _stored_rag_context_from_chunks(
 def _stored_rag_context_from_data(
     context_refs: list[dict],
 ) -> list[StoredRagHistoryContext]:
+    """Validate stored RAG history context loaded from message JSON."""
     contexts = []
     for context_ref in context_refs:
         try:

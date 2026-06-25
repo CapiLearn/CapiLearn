@@ -1,3 +1,5 @@
+"""FastAPI routes for external webhook providers."""
+
 from binascii import Error as BinasciiError
 from typing import Annotated, Any
 
@@ -13,6 +15,7 @@ router = APIRouter(tags=["webhooks"])
 
 
 def get_clerk_webhook_service() -> ClerkWebhookService:
+    """Build the service that applies verified Clerk webhook events."""
     return ClerkWebhookService()
 
 
@@ -35,6 +38,7 @@ async def handle_clerk_webhook(
     settings: SettingsDep,
     service: ClerkWebhookServiceDep,
 ) -> Response:
+    """Verify and process a Clerk webhook event."""
     event = await verify_clerk_webhook(request, settings=settings)
     await service.handle_event(session, event)
     await session.commit()
@@ -42,6 +46,7 @@ async def handle_clerk_webhook(
 
 
 async def verify_clerk_webhook(request: Request, *, settings: Settings) -> dict[str, Any]:
+    """Return the verified Clerk webhook event or raise an API error."""
     if not settings.clerk_webhook_signing_secret:
         raise ApiError(
             code="webhook_not_configured",
@@ -56,6 +61,7 @@ async def verify_clerk_webhook(request: Request, *, settings: Settings) -> dict[
             dict(request.headers),
         )
     except (BinasciiError, WebhookVerificationError) as exc:
+        # Svix may surface malformed base64 input before it raises its own error.
         raise ApiError(
             code="invalid_webhook_signature",
             message="Invalid Clerk webhook signature.",

@@ -1,3 +1,5 @@
+"""FastAPI dependency providers for the chat API."""
+
 from functools import lru_cache
 from typing import Annotated
 
@@ -17,6 +19,7 @@ from backend.rag.tracing import PostgresRagTraceSink
 
 @lru_cache(maxsize=1)
 def get_rag_retrieval_provider() -> RetrievalProvider:
+    """Build the process-local retrieval provider used by chat completions."""
     return build_rag_retrieval_provider(rag_settings)
 
 
@@ -27,8 +30,10 @@ RetrievalProviderDep = Annotated[
 
 
 def get_llm_service(retriever: RetrievalProviderDep) -> LLMService:
+    """Create an LLM service wired with retrieval and optional RAG tracing."""
     retrieval_trace_sink = None
     if rag_settings.backend == RagBackend.PGVECTOR and rag_settings.write_retrieval_logs:
+        # Retrieval traces are observational data, so failures must not block chat turns.
         retrieval_trace_sink = BestEffortRetrievalTraceSink(
             PostgresRagTraceSink(rag_index_version=rag_settings.index_version)
         )
@@ -42,6 +47,7 @@ async def bind_chat_rate_limit_user(
     request: Request,
     current_user: StudentUserDep,
 ) -> CurrentUser:
+    """Expose the authenticated user to the shared chat rate-limit key function."""
     request.state.current_user = current_user
     return current_user
 
@@ -54,6 +60,7 @@ def get_chat_service(
     current_user: StudentUserDep,
     llm_service: LLMServiceDep,
 ) -> ChatService:
+    """Create the per-request chat service for the authenticated student."""
     return ChatService(
         session=session,
         user_id=current_user.id,

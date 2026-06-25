@@ -1,3 +1,5 @@
+"""Per-user rate limiting primitives for API routes."""
+
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
@@ -11,6 +13,7 @@ RATE_LIMITED_MESSAGE = "You can send up to 10 messages per minute. Please wait a
 
 
 def rate_limit_key(request: Request) -> str:
+    """Return the authenticated user key used to scope route limits."""
     current_user = getattr(request.state, "current_user", None)
     user_id = getattr(current_user, "id", None)
     if user_id is None:
@@ -31,6 +34,7 @@ async def rate_limit_exceeded_handler(
     _: Request,
     __: RateLimitExceeded,
 ) -> JSONResponse:
+    """Return the public error payload for exceeded rate limits."""
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content=ErrorResponse(
