@@ -479,6 +479,57 @@ body {
   }
 }
 
+.users-panel {
+  max-height: 70vh;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.users-table-wrapper {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.users-table th,
+.users-table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid #e0d8bd;
+  text-align: left;
+  font-size: 14px;
+}
+
+.users-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fbf8e8;
+  color: #867a69;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.users-table td {
+  color: #4e453c;
+}
+
+.access-level-pill {
+  display: inline-flex;
+  background: #dfe8c1;
+  color: #557c38;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .admin-status-pill {
   display: inline-flex;
   border-radius: 999px;

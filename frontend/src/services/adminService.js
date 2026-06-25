@@ -175,6 +175,36 @@ function normalizeSystemHealthResponse(data) {
   };
 }
 
+export async function getAdminUsersOverview(
+  getToken,
+  { fromDate, toDate, limit = 25, offset = 0 } = {}
+) {
+  const params = new URLSearchParams();
+
+  if (fromDate) {
+    params.set("fromDate", fromDate);
+  }
+
+  if (toDate) {
+    params.set("toDate", toDate);
+  }
+
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+
+  const queryString = params.toString();
+
+  const url = queryString
+    ? `${API_BASE_URL}/api/admin/users/overview?${queryString}`
+    : `${API_BASE_URL}/api/admin/users/overview`;
+
+  const response = await authFetch(url, getToken, {
+    method: "GET",
+  });
+
+  return handleApiResponse(response, "Unable to load admin users.");
+}
+
 export async function getAdminSystemHealth(getToken) {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminSystemHealth;

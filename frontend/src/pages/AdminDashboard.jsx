@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   getAdminSystemHealth,
   getAdminUsageSummary,
+  getAdminUsersOverview,
 } from "../services/adminService";
 import "../styles/AdminDashboard.css";
 import { useAuth } from "@clerk/react";
@@ -10,41 +11,9 @@ import LogoutButton from "../components/LogoutButton";
 import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 
 const adminNavItems = [
-  { id: "overview", label: "System Overview", status: "available" },
-  /*
-   * These admin sections have not been implemented yet.
-  { id: "users", label: "Users", status: "coming-soon" },
-  { id: "ingestion", label: "Ingestion", status: "coming-soon" },
-  { id: "guardrails", label: "Guardrails", status: "coming-soon" },
-  { id: "logs", label: "Logs", status: "coming-soon" },
-   */
+  { id: "overview", label: "System Overview" },
+  { id: "users", label: "Users" },
 ];
-
-/*
- * Recent events have not been implemented yet.
-const recentEvents = [
-  {
-    event: "Postgres health check passed",
-    time: "2 minutes ago",
-    type: "System",
-  },
-  {
-    event: "6 documents failed ingestion",
-    time: "15 minutes ago",
-    type: "Ingestion",
-  },
-  {
-    event: "LLM provider returned successful response",
-    time: "22 minutes ago",
-    type: "LLM",
-  },
-  {
-    event: "Guardrails blocked unsafe direct-answer request",
-    time: "35 minutes ago",
-    type: "Safety",
-  },
-];
- */
 
 function addUtcCalendarDay(dateString) {
   const date = new Date(`${dateString}T00:00:00.000Z`);
@@ -65,6 +34,26 @@ function getDefaultDateRange() {
   };
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return "No activity yet";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Unknown";
+  }
+
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function getStatusClass(status) {
   if (status === "healthy") {
     return "admin-status-good";
@@ -83,6 +72,14 @@ function formatStatus(status) {
   }
 
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function formatAccessLevel(accessLevel) {
+  if (!accessLevel) {
+    return "Unknown";
+  }
+
+  return accessLevel.charAt(0).toUpperCase() + accessLevel.slice(1);
 }
 
 function formatCheckedAt(checkedAt) {
@@ -133,6 +130,10 @@ function AdminDashboard() {
   const [isLoadingSystemHealth, setIsLoadingSystemHealth] = useState(false);
   const [usageErrorMessage, setUsageErrorMessage] = useState("");
   const [systemHealthErrorMessage, setSystemHealthErrorMessage] = useState("");
+  const [activeAdminSection, setActiveAdminSection] = useState("overview");
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [isLoadingAdminUsers, setIsLoadingAdminUsers] = useState(false);
+  const [adminUsersErrorMessage, setAdminUsersErrorMessage] = useState("");
   const [metricsDateRange, setMetricsDateRange] = useState(getDefaultDateRange);
   const isMetricsDateRangeInvalid =
     metricsDateRange.fromDate &&
@@ -191,6 +192,43 @@ function AdminDashboard() {
 
     loadSystemHealth();
   }, [getToken]);
+
+  useEffect(() => {
+    if (activeAdminSection !== "users") {
+      return;
+    }
+
+    async function loadAdminUsers() {
+      if (isMetricsDateRangeInvalid) {
+        setAdminUsersErrorMessage("Start date must be before or equal to end date.");
+        return;
+      }
+
+      try {
+        setIsLoadingAdminUsers(true);
+        setAdminUsersErrorMessage("");
+
+        const apiDateRange = {
+          fromDate: metricsDateRange.fromDate,
+          toDate: addUtcCalendarDay(metricsDateRange.toDate),
+          limit: 25,
+          offset: 0,
+        };
+
+        const data = await getAdminUsersOverview(getToken, apiDateRange);
+
+        setAdminUsers(data.users || []);
+      } catch (error) {
+        setAdminUsersErrorMessage(
+          error.message || "Unable to load admin users."
+        );
+      } finally {
+        setIsLoadingAdminUsers(false);
+      }
+    }
+
+    loadAdminUsers();
+  }, [activeAdminSection, getToken, metricsDateRange, isMetricsDateRangeInvalid]);
 
   const metrics = usageSummary?.metrics;
   const healthChecks = (systemHealth?.checks || []).map((check) => ({
@@ -275,16 +313,12 @@ function AdminDashboard() {
         <nav className="admin-nav">
           {adminNavItems.map((item) => (
             <button
-              className={item.id === "overview" ? "active" : ""}
-              disabled={item.status === "coming-soon"}
+              className={activeAdminSection === item.id ? "active" : ""}
               key={item.id}
               type="button"
+              onClick={() => setActiveAdminSection(item.id)}
             >
               <span>{item.label}</span>
-
-              {item.status === "coming-soon" && (
-                <small> Coming soon</small>
-              )}
             </button>
           ))}
         </nav>
@@ -304,10 +338,14 @@ function AdminDashboard() {
         <header className="admin-header">
           <div>
             <p className="admin-kicker">Administrator Dashboard</p>
-            <h1>System Operations</h1>
+
+            <h1>
+              {activeAdminSection === "users" ? "Users" : "System Operations"}
+            </h1>
             <p>
-              Monitor service health, ingestion status, safety checks, and
-              platform readiness.
+              {activeAdminSection === "users"
+                ? "Review user access levels, message volume, blocked requests, and latest activity."
+                : "Monitor service health, ingestion status, safety checks, and platform readiness."}
             </p>
           </div>
 
@@ -317,6 +355,9 @@ function AdminDashboard() {
           </Link>
           */}
         </header>
+
+        {activeAdminSection === "overview" && (
+          <>
 
         {isLoadingUsage && (
           <p className="admin-helper-message">Loading admin usage data...</p>
@@ -467,6 +508,110 @@ function AdminDashboard() {
             </article>
           </aside>
         </section>
+          </>
+        )}
+
+        {activeAdminSection === "users" && (
+          <section className="admin-panel users-panel">
+            <div className="admin-panel-header">
+              <div>
+                <p className="admin-panel-label">Users</p>
+                <h2>User access and guardrail usage</h2>
+              </div>
+              <span>Showing {adminUsers.length} most recent users</span>
+            </div>
+
+            <div className="metrics-date-controls">
+              <label>
+                From
+                <input
+                  type="date"
+                  value={metricsDateRange.fromDate}
+                  max={metricsDateRange.toDate}
+                  onChange={(event) =>
+                    setMetricsDateRange((currentRange) => ({
+                      ...currentRange,
+                      fromDate: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              <label>
+                To
+                <input
+                  type="date"
+                  value={metricsDateRange.toDate}
+                  min={metricsDateRange.fromDate}
+                  onChange={(event) =>
+                    setMetricsDateRange((currentRange) => ({
+                      ...currentRange,
+                      toDate: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            </div>
+
+            {isMetricsDateRangeInvalid && (
+              <p className="metrics-date-error">
+                Start date must be before or equal to end date.
+              </p>
+            )}
+
+            {isLoadingAdminUsers && (
+              <p className="admin-helper-message">Loading admin users...</p>
+            )}
+
+            {adminUsersErrorMessage && (
+              <p className="admin-error-message">{adminUsersErrorMessage}</p>
+            )}
+
+            {!isLoadingAdminUsers &&
+              !adminUsersErrorMessage &&
+              adminUsers.length === 0 && (
+                <p className="admin-helper-message">
+                  No admin user activity found for this date range.
+                </p>
+              )}
+
+            {adminUsers.length > 0 && (
+              <div className="users-table-wrapper">
+                <table className="users-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Access level</th>
+                      <th>Total messages sent</th>
+                      <th>Blocked requests</th>
+                      <th>Last activity</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {adminUsers.map((user, index) => (
+                      <tr key={`${user.displayName}-${user.accessLevel}-${index}`}>
+                        <td>{user.displayName}</td>
+                        <td>
+                          <span className="access-level-pill">
+                            {formatAccessLevel(user.accessLevel)}
+                          </span>
+                        </td>
+                        <td>
+                          {Number(user.totalMessagesSent || 0).toLocaleString()}
+                        </td>
+                        <td>
+                          {Number(user.blockedRequests || 0).toLocaleString()}
+                        </td>
+                        <td>{formatDateTime(user.lastActivity)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Recent events have not been implemented yet.
         <section className="admin-panel events-panel">
