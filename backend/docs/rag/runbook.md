@@ -282,7 +282,9 @@ deactivation. Unexpected preprocessing failures are not targeted.
 
 ## Enable pgvector Retrieval
 
-Set these values before application startup:
+Set these values before application startup. Keep retrieval logging disabled
+for production, Render, and default deployment unless debugging explicitly
+requires it and the privacy implications of storing `query_text` are accepted.
 
 ```dotenv
 RAG_BACKEND=pgvector
@@ -292,10 +294,13 @@ RAG_EMBEDDING_DIMENSIONS=384
 RAG_TOP_K=5
 RAG_CANDIDATE_POOL_MULTIPLIER=3
 RAG_MAX_CANDIDATES=50
-RAG_WRITE_RETRIEVAL_LOGS=true
+RAG_WRITE_RETRIEVAL_LOGS=false
 # Canonical RAG index label used by admin health, retrieval logs, and conversations.
 # RAG_INDEX_VERSION=full-stack-open-2026-06
 ```
+
+For local diagnostics only, temporarily set `RAG_WRITE_RETRIEVAL_LOGS=true`
+before creating and inspecting a durable retrieval record.
 
 Restart FastAPI after changing RAG settings:
 
