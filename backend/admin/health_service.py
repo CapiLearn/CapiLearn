@@ -20,7 +20,7 @@ from backend.llm.config import (
     OutputGuardrailMode,
     llm_settings,
 )
-from backend.rag.config import RagBackend, RagSettings, rag_settings
+from backend.rag.config import RagSettings, rag_settings
 from backend.rag.models import RagChunk, RagDocument, RagEmbedding, RagRetrievalLog
 from backend.rag.repository import embedding_contract_filter
 
@@ -217,21 +217,6 @@ class AdminHealthService:
         )
 
     async def _check_rag(self) -> AdminHealthCheck:
-        if self._rag_config.backend == RagBackend.CHROMA:
-            # Chroma deployments may be remote or file-backed; a cheap portable probe
-            # is not available without adding backend-specific I/O here.
-            return AdminHealthCheck(
-                id="rag",
-                name="RAG",
-                status=HealthStatus.NOT_CHECKED,
-                message="Chroma RAG backend does not expose a cheap admin health probe.",
-                details={
-                    "backend": self._rag_config.backend.value,
-                    "modelName": self._rag_config.model_name,
-                    "indexVersion": self._rag_config.index_version,
-                },
-            )
-
         started_at = timer_start()
         try:
             document_count = await self._count(RagDocument.id)
