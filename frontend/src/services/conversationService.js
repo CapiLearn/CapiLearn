@@ -1,8 +1,13 @@
-import { getToken } from "@clerk/react";
 import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
-// Set to true while backend branch is unavailable.
-// Change to false when backend is running locally.
+/**
+ * Conversation service wraps the student chat API.
+ *
+ * The live path sends Clerk bearer tokens to conversation and message endpoints
+ * so the backend can persist authenticated user messages and assistant replies.
+ */
+// Disabled by default; retained only as a local UI fallback when the backend is
+// intentionally unavailable during manual frontend work.
 const USE_MOCK_API = false;
 const mockConversations = [];
 const mockMessagesByConversationId = {};
@@ -137,13 +142,13 @@ export async function listConversations(getToken) {
   }
 
   const response = await authFetch("/api/conversations", getToken, {
-        method: "GET",
+    method: "GET",
   });
 
   return handleApiResponse(response, "Unable to load conversations.");
 }
 
-export async function createConversation(content) {
+export async function createConversation(content, getToken) {
   if (USE_MOCK_API) {
     return mockCreateConversation(content, getToken);
   }
@@ -161,7 +166,7 @@ export async function createConversation(content) {
   return handleApiResponse(response, "Unable to create conversation.");
 }
 
-export async function listMessages(conversationId) {
+export async function listMessages(conversationId, getToken) {
   if (USE_MOCK_API) {
     return mockListMessages(conversationId);
   }
@@ -177,7 +182,7 @@ export async function listMessages(conversationId) {
   return handleApiResponse(response, "Unable to load conversation messages.");
 }
 
-export async function createMessage(conversationId, content) {
+export async function createMessage(conversationId, content, getToken) {
   if (USE_MOCK_API) {
     return mockCreateMessage(conversationId, content);
   }

@@ -1,16 +1,36 @@
-# React + Vite
+# CapiLearn Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This React/Vite app is the browser client for CapiLearn. It uses Clerk for
+sign-in, calls the FastAPI backend through `VITE_API_BASE_URL`, and renders the
+student workspace, dashboards, and demo-only admin login entry point.
 
-Currently, two official plugins are available:
+## Local Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev
+```
 
-## React Compiler
+Create `frontend/.env.local` for local browser-safe values:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```env
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+VITE_API_BASE_URL=http://127.0.0.1:8001
+```
 
-## Expanding the ESLint configuration
+Restart Vite after changing these values. Production Render builds must set
+`VITE_CLERK_PUBLISHABLE_KEY` and `VITE_API_BASE_URL` on the frontend static
+site.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Demo Admin Login
+
+`VITE_DEMO_ADMIN_LOGIN_ENABLED=true` only shows the frontend button. The backend
+must also explicitly set `DEMO_ADMIN_LOGIN_ENABLED=true` and a
+`DEMO_ADMIN_EMAIL`. Keep this disabled by default outside intentional demos.
+
+## Checks
+
+```bash
+npm run lint
+npm run build
+```

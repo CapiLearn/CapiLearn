@@ -143,11 +143,9 @@ frontend/
     uv run alembic current
     ```
 
-    The migration graph should have one head at `20260610_0008`. Phase 2
-    migration `0007` adds nullable chunk-contract fields and uniqueness
-    constraints; `0008` adds document activity fields. A fresh re-ingestion is
-    required after upgrading so the active corpus uses the new metadata and
-    `markdown-structure-v3` chunker.
+    The migration graph should have one head at `20260624_0016` on current
+    `main`. A fresh re-ingestion is required after schema changes that affect
+    RAG document or embedding metadata.
 
 6. Ingest the pgvector corpus manually:
 
@@ -179,7 +177,7 @@ frontend/
     RAG_EMBEDDING_PROVIDER=openai
     RAG_MODEL_NAME=text-embedding-3-small
     RAG_EMBEDDING_DIMENSIONS=384
-    RAG_WRITE_RETRIEVAL_LOGS=true
+    RAG_WRITE_RETRIEVAL_LOGS=false
     ```
 
     `RAG_BACKEND=chroma` is no longer supported. Restart the backend whenever

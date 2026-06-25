@@ -17,27 +17,27 @@ const summaryStats = [
 
 const commonContexts = [
   {
-    context: "Ipsum Lorem...",
+    context: "React component state",
     count: 38,
     percentage: 78,
   },
   {
-    context: "Ipsum Lorem...",
+    context: "API request flow",
     count: 31,
     percentage: 64,
   },
   {
-    context: "Ipsum Lorem...",
+    context: "Database relationships",
     count: 24,
     percentage: 50,
   },
   {
-    context: "Ipsum Lorem...",
+    context: "Effect dependencies",
     count: 19,
     percentage: 39,
   },
   {
-    context: "Ipsum Lorem...",
+    context: "Guardrail feedback",
     count: 15,
     percentage: 31,
   },
@@ -46,35 +46,35 @@ const commonContexts = [
 const studentRoster = [
   {
     name: "John Carter",
-    topTopic: "Ipsum Lorem",
+    topTopic: "State management",
     questions: 18,
     streak: "4 days",
     lastActive: "Today",
   },
   {
     name: "Maya Singh",
-    topTopic: "Ipsum Lorem",
+    topTopic: "Backend APIs",
     questions: 9,
     streak: "1 day",
     lastActive: "Yesterday",
   },
   {
     name: "Luis Rivera",
-    topTopic: "Ipsum Lorem",
+    topTopic: "Database basics",
     questions: 14,
     streak: "5 days",
     lastActive: "Today",
   },
   {
     name: "Ava Thompson",
-    topTopic: "Ipsum Lorem",
+    topTopic: "Async JavaScript",
     questions: 6,
     streak: "6 days",
     lastActive: "Today",
   },
   {
     name: "Noah Kim",
-    topTopic: "Ipsum Lorem",
+    topTopic: "RAG citations",
     questions: 7,
     streak: "3 days",
     lastActive: "2 days ago",
@@ -94,6 +94,12 @@ function scrollToSection(sectionId) {
   });
 }
 
+/**
+ * InstructorDashboard shows classroom-level learning signals.
+ *
+ * This page currently uses representative classroom data while the backend
+ * instructor analytics API is still separate from the admin reporting surface.
+ */
 function InstructorDashboard() {
   return (
     <main className="instructor-page">
@@ -126,7 +132,7 @@ function InstructorDashboard() {
         <div className="instructor-profile-card">
           <div className="instructor-avatar">O</div>
           <div>
-            <h3>Trogdor (He/Him/Burninator)</h3>
+            <h3>Instructor</h3>
             <p>FCF Instructor</p>
           </div>
         </div>
@@ -155,7 +161,7 @@ function InstructorDashboard() {
             <div>
               <p className="panel-label">Student Roster</p>
               <h2>Student activity overview</h2>
-            </div>            
+            </div>
           </div>
 
           <div className="roster-table-wrapper">

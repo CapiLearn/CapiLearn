@@ -5,6 +5,13 @@ import { useNavigate } from "react-router-dom";
 
 import { API_BASE_URL, handleApiResponse } from "../services/apiClient";
 
+/**
+ * DemoAdminLoginButton exchanges the opt-in demo admin endpoint for a Clerk
+ * sign-in ticket.
+ *
+ * The landing page only renders this button when the frontend demo flag is
+ * enabled; the backend must also explicitly enable and configure the demo user.
+ */
 function DemoAdminLoginButton() {
   const clerk = useClerk();
   const { fetchStatus, signIn } = useSignIn();

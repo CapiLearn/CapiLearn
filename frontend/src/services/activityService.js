@@ -1,5 +1,9 @@
 import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
+/**
+ * Activity service calls authenticated backend endpoints for learning streaks
+ * and calendar activity shown in the workspace and student dashboard.
+ */
 function authHeaders(token) {
   return {
     Authorization: `Bearer ${token}`,
