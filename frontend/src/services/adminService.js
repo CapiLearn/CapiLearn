@@ -117,7 +117,27 @@ async function authFetch(url, getToken, options = {}) {
   });
 }
 
-export async function getAdminUsageSummary( getToken, { fromDate, toDate } = {}) {
+/**
+ * Fetches aggregate usage metrics for the Admin Dashboard.
+ *
+ * The backend returns high-level usage data such as total users,
+ * conversations, user queries, assistant responses, failed responses,
+ * blocked responses, token usage, estimated cost, and daily usage totals.
+ *
+ * If no date range is provided, the backend defaults to its configured
+ * recent usage window.
+ *
+ * @param {Function} getToken - Clerk token getter used for authenticated requests.
+ * @param {Object} [options] - Optional date range filters.
+ * @param {string} [options.fromDate] - Inclusive UTC start date in YYYY-MM-DD format.
+ * @param {string} [options.toDate] - Exclusive UTC end date in YYYY-MM-DD format.
+ * @returns {Promise<Object>} Admin usage summary response from the backend.
+ */
+
+export async function getAdminUsageSummary(
+  getToken,
+  { fromDate, toDate } = {}
+) {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminUsageSummary;
   }

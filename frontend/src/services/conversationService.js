@@ -134,6 +134,12 @@ async function authFetch(path, getToken, options = {}) {
   });
 }
 
+/**
+ * Lists saved conversations for the current user.
+ *
+ * @param {Function} getToken - Clerk token getter used for authenticated requests.
+ * @returns {Promise<Object>} Object containing a conversations array.
+ */
 export async function listConversations(getToken) {
   if (USE_MOCK_API) {
     return {
@@ -148,6 +154,13 @@ export async function listConversations(getToken) {
   return handleApiResponse(response, "Unable to load conversations.");
 }
 
+/**
+ * Creates a new conversation from the student's first message.
+ *
+ * @param {string} content - Initial message submitted by the student.
+ * @param {Function} getToken - Clerk token getter used for authenticated requests.
+ * @returns {Promise<Object>} Created conversation response.
+ */
 export async function createConversation(content, getToken) {
   if (USE_MOCK_API) {
     return mockCreateConversation(content, getToken);
@@ -166,6 +179,13 @@ export async function createConversation(content, getToken) {
   return handleApiResponse(response, "Unable to create conversation.");
 }
 
+/**
+ * Loads all messages for a selected conversation.
+ *
+ * @param {string} conversationId - ID of the conversation to load.
+ * @param {Function} getToken - Clerk token getter used for authenticated requests.
+ * @returns {Promise<Object>} Object containing a messages array.
+ */
 export async function listMessages(conversationId, getToken) {
   if (USE_MOCK_API) {
     return mockListMessages(conversationId);
@@ -182,6 +202,17 @@ export async function listMessages(conversationId, getToken) {
   return handleApiResponse(response, "Unable to load conversation messages.");
 }
 
+/**
+ * Sends a follow-up message in an existing conversation.
+ *
+ * The backend response includes the saved user message and generated
+ * assistant message for the active conversation.
+ *
+ * @param {string} conversationId - ID of the active conversation.
+ * @param {string} content - Message submitted by the student.
+ * @param {Function} getToken - Clerk token getter used for authenticated requests.
+ * @returns {Promise<Object>} Message creation response.
+ */
 export async function createMessage(conversationId, content, getToken) {
   if (USE_MOCK_API) {
     return mockCreateMessage(conversationId, content);

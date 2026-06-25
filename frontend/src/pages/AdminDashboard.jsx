@@ -129,6 +129,15 @@ function getVisibleDetailEntries(details) {
   );
 }
 
+/**
+ * Admin dashboard page for operational usage metrics.
+ *
+ * Loads aggregate platform usage data from the admin API and displays
+ * high-level metrics such as users, conversations, queries, responses,
+ * failures, blocked responses, token usage, cost, latency, system health,
+ * and user activity summaries.
+ */
+
 function AdminDashboard() {
   const [usageSummary, setUsageSummary] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);

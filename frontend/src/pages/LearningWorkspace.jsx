@@ -207,6 +207,14 @@ function getCurrentMonthRange() {
   };
 }
 
+/**
+ * Learning workspace page for student chat.
+ *
+ * Handles conversation creation, follow-up messages, sidebar conversation
+ * selection, new conversation reset behavior, assistant response display,
+ * and learning streak activity.
+ */
+
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
   const [chatMessages, setChatMessages] = useState(initialChatMessages);
