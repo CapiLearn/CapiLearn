@@ -2,6 +2,8 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.admin.health_service import (
     AdminHealthResponseCache,
@@ -27,19 +29,20 @@ def clear_shared_health_cache():
 @pytest.mark.asyncio
 async def test_admin_health_reports_database_success() -> None:
     service = AdminHealthService(
-        session=ScalarSession([1]),
+        session=ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None]),
         provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
         clock=lambda: datetime(2026, 6, 9, 12, tzinfo=UTC),
     )
 
     response = await service.get_health()
 
     database_check = _check(response.checks, "database")
+    assert database_check.name == "Database"
     assert database_check.status == HealthStatus.OK
     assert database_check.latency_ms is not None
 
@@ -47,7 +50,7 @@ async def test_admin_health_reports_database_success() -> None:
 @pytest.mark.asyncio
 async def test_admin_health_response_is_cached_for_short_ttl() -> None:
     cache = AdminHealthResponseCache(ttl_seconds=30)
-    session = ScalarSession([1])
+    session = ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None])
     provider = StaticModelProvider(["gpt-4o-mini"])
     service = AdminHealthService(
         session=session,
@@ -57,7 +60,7 @@ async def test_admin_health_response_is_cached_for_short_ttl() -> None:
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
         clock=lambda: datetime(2026, 6, 9, 12, tzinfo=UTC),
     )
 
@@ -66,8 +69,10 @@ async def test_admin_health_response_is_cached_for_short_ttl() -> None:
     second_response = await service.get_health()
 
     assert first_response.checked_at == second_response.checked_at
-    assert second_response.checks[0].message == "Backend process is responding."
-    assert len(session.scalar_statements) == 1
+    assert second_response.checks[0].id == "backend"
+    assert second_response.checks[0].name == "Backend"
+    assert second_response.checks[0].message == "Backend process is healthy"
+    assert len(session.scalar_statements) == 9
     assert provider.requested_providers == ["openai"]
 
 
@@ -94,7 +99,7 @@ async def test_admin_health_reports_database_failure() -> None:
             model="openai/gpt-4o-mini",
             guardrails_enabled=False,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     response = await service.get_health()
@@ -127,7 +132,7 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
         ),
         rag_config=RagSettings(
             backend=RagBackend.PGVECTOR,
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_name=DEFAULT_RAG_MODEL_NAME,
             index_version="v1",
         ),
     )
@@ -135,6 +140,7 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
     response = await service.get_health()
 
     rag_check = _check(response.checks, "rag")
+    assert rag_check.name == "RAG"
     assert rag_check.status == HealthStatus.DEGRADED
     assert rag_check.details["documents"] == 2
     assert rag_check.details["chunks"] == 5
@@ -143,6 +149,59 @@ async def test_admin_health_reports_pgvector_rag_counts_and_missing_embeddings()
     assert rag_check.details["configuredModelEmbeddings"] == 4
     assert rag_check.details["chunksMissingConfiguredModelEmbeddings"] == 1
     assert rag_check.details["latestDocumentUpdatedAt"] == "2026-06-09T11:00:00+00:00"
+    configured_embeddings_sql = _compiled_sql(session.scalar_statements[5])
+    missing_configured_embeddings_sql = _compiled_sql(session.scalar_statements[6])
+    assert "rag_embeddings.embedding_provider" in configured_embeddings_sql
+    assert "rag_embeddings.embedding_dimensions" in configured_embeddings_sql
+    assert "rag_embeddings.embedding_provider" in missing_configured_embeddings_sql
+    assert "rag_embeddings.embedding_dimensions" in missing_configured_embeddings_sql
+
+
+@pytest.mark.asyncio
+async def test_pgvector_rag_none_count_scalar_raises_invariant_error() -> None:
+    service = AdminHealthService(
+        session=ScalarSession([2, None]),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
+        llm_config=LLMSettings(
+            model="openai/gpt-4o-mini",
+            guardrails_enabled=False,
+        ),
+        rag_config=RagSettings(
+            backend=RagBackend.PGVECTOR,
+            model_name=DEFAULT_RAG_MODEL_NAME,
+            index_version="v1",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="COUNT query returned no scalar value"):
+        await service._check_rag()
+
+
+@pytest.mark.asyncio
+async def test_pgvector_rag_sqlalchemy_failure_is_unhealthy() -> None:
+    service = AdminHealthService(
+        session=FailingScalarSession(),
+        provider_metadata_provider=StaticModelProvider(["gpt-4o-mini"]),
+        llm_config=LLMSettings(
+            model="openai/gpt-4o-mini",
+            guardrails_enabled=False,
+        ),
+        rag_config=RagSettings(
+            backend=RagBackend.PGVECTOR,
+            model_name=DEFAULT_RAG_MODEL_NAME,
+            index_version="v1",
+        ),
+    )
+
+    rag_check = await service._check_rag()
+
+    assert rag_check.status == HealthStatus.UNHEALTHY
+    assert rag_check.message == "RAG storage health check failed."
+    assert rag_check.details == {
+        "backend": RagBackend.PGVECTOR.value,
+        "modelName": DEFAULT_RAG_MODEL_NAME,
+        "indexVersion": "v1",
+    }
 
 
 @pytest.mark.asyncio
@@ -226,11 +285,13 @@ async def test_guardrails_regex_or_off_is_ok_without_provider_metadata_call() ->
             output_guardrail_mode=OutputGuardrailMode.OFF,
             guardrails_judge_enabled=True,
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_guardrails()
 
+    assert check.id == "guardrails"
+    assert check.name == "Guardrails"
     assert check.status == HealthStatus.OK
     assert provider.calls == 0
 
@@ -248,11 +309,13 @@ async def test_guardrails_policy_uses_provider_metadata_without_completion_call(
             guardrails_judge_enabled=True,
             guardrails_judge_model="openai/gpt-4o-mini",
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_guardrails()
 
+    assert check.id == "guardrails"
+    assert check.name == "Guardrails"
     assert check.status == HealthStatus.OK
     assert check.details["configuredModel"] == "openai/gpt-4o-mini"
     assert check.details["provider"] == "openai"
@@ -267,11 +330,13 @@ async def test_llm_provider_metadata_empty_model_list_is_degraded() -> None:
         session=ScalarSession([]),
         provider_metadata_provider=StaticModelProvider([]),
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_llm_provider_metadata()
 
+    assert check.id == "llm-provider"
+    assert check.name == "LLM Provider"
     assert check.status == HealthStatus.DEGRADED
     assert check.details["returnedModelCount"] == 0
     assert check.details["providerAvailable"] is False
@@ -284,11 +349,13 @@ async def test_llm_provider_metadata_does_not_require_exact_configured_model() -
         session=ScalarSession([]),
         provider_metadata_provider=provider,
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_llm_provider_metadata()
 
+    assert check.id == "llm-provider"
+    assert check.name == "LLM Provider"
     assert check.status == HealthStatus.OK
     assert check.details == {
         "configuredModel": "openai/gpt-4o-mini",
@@ -305,7 +372,7 @@ async def test_llm_provider_metadata_failure_is_degraded() -> None:
         session=ScalarSession([]),
         provider_metadata_provider=FailingModelProvider(),
         llm_config=LLMSettings(model="openai/gpt-4o-mini"),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     check = await service._check_llm_provider_metadata()
@@ -326,7 +393,7 @@ async def test_llm_provider_metadata_failure_is_degraded() -> None:
 async def test_provider_metadata_result_is_cached_within_request_for_same_provider() -> None:
     provider = StaticModelProvider({"openai": ["gpt-4o-mini"]})
     service = AdminHealthService(
-        session=ScalarSession([1]),
+        session=ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None]),
         provider_metadata_provider=provider,
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
@@ -336,12 +403,12 @@ async def test_provider_metadata_result_is_cached_within_request_for_same_provid
             guardrails_judge_enabled=True,
             guardrails_judge_model="openai/gpt-4o",
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     response = await service.get_health()
 
-    assert _check(response.checks, "llmProviderMetadata").status == HealthStatus.OK
+    assert _check(response.checks, "llm-provider").status == HealthStatus.OK
     assert _check(response.checks, "guardrails").status == HealthStatus.OK
     assert provider.requested_providers == ["openai"]
 
@@ -355,7 +422,7 @@ async def test_provider_metadata_checks_main_and_guardrail_judge_providers_separ
         }
     )
     service = AdminHealthService(
-        session=ScalarSession([1]),
+        session=ScalarSession([1, 0, 0, 0, 0, 0, 0, None, None]),
         provider_metadata_provider=provider,
         llm_config=LLMSettings(
             model="openai/gpt-4o-mini",
@@ -365,12 +432,12 @@ async def test_provider_metadata_checks_main_and_guardrail_judge_providers_separ
             guardrails_judge_enabled=True,
             guardrails_judge_model="gemini/gemini-1.5-flash",
         ),
-        rag_config=RagSettings(backend=RagBackend.CHROMA),
+        rag_config=RagSettings(),
     )
 
     response = await service.get_health()
 
-    assert _check(response.checks, "llmProviderMetadata").details["provider"] == "openai"
+    assert _check(response.checks, "llm-provider").details["provider"] == "openai"
     assert _check(response.checks, "guardrails").details["provider"] == "gemini"
     assert provider.requested_providers == ["openai", "gemini"]
 
@@ -401,8 +468,8 @@ def test_aggregate_status_precedence() -> None:
     assert (
         _aggregate_status(
             [
-                AdminHealthCheck(name="backend", status=HealthStatus.OK),
-                AdminHealthCheck(name="rag", status=HealthStatus.DEGRADED),
+                AdminHealthCheck(id="backend", name="Backend", status=HealthStatus.OK),
+                AdminHealthCheck(id="rag", name="RAG", status=HealthStatus.DEGRADED),
             ]
         )
         == HealthStatus.DEGRADED
@@ -410,23 +477,36 @@ def test_aggregate_status_precedence() -> None:
     assert (
         _aggregate_status(
             [
-                AdminHealthCheck(name="backend", status=HealthStatus.OK),
-                AdminHealthCheck(name="database", status=HealthStatus.UNHEALTHY),
+                AdminHealthCheck(id="backend", name="Backend", status=HealthStatus.OK),
+                AdminHealthCheck(
+                    id="database",
+                    name="Database",
+                    status=HealthStatus.UNHEALTHY,
+                ),
             ]
         )
         == HealthStatus.UNHEALTHY
     )
     assert (
-        _aggregate_status([AdminHealthCheck(name="rag", status=HealthStatus.NOT_CHECKED)])
+        _aggregate_status([AdminHealthCheck(id="rag", name="RAG", status=HealthStatus.NOT_CHECKED)])
         == HealthStatus.NOT_CHECKED
     )
 
 
-def _check(checks: list[AdminHealthCheck], name: str) -> AdminHealthCheck:
+def _check(checks: list[AdminHealthCheck], id: str) -> AdminHealthCheck:
     for check in checks:
-        if check.name == name:
+        if check.id == id:
             return check
-    raise AssertionError(f"Missing health check: {name}")
+    raise AssertionError(f"Missing health check: {id}")
+
+
+def _compiled_sql(statement) -> str:
+    return str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": False},
+        )
+    )
 
 
 class ScalarSession:
@@ -443,7 +523,7 @@ class ScalarSession:
 
 class FailingScalarSession:
     async def scalar(self, statement):
-        raise RuntimeError("database unavailable")
+        raise SQLAlchemyError("database unavailable")
 
 
 class StaticModelProvider:
@@ -484,5 +564,5 @@ class CountingHealthResponseLoader:
         return AdminHealthResponse(
             status=HealthStatus.OK,
             checked_at=datetime(2026, 6, 9, 12, tzinfo=UTC),
-            checks=[AdminHealthCheck(name="backend", status=HealthStatus.OK)],
+            checks=[AdminHealthCheck(id="backend", name="Backend", status=HealthStatus.OK)],
         )

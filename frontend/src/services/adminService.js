@@ -2,12 +2,6 @@ import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
 const USE_MOCK_ADMIN_API = false;
 
-const ADMIN_HEADERS = {
-  "X-Admin-User": "true",
-  "X-User-Id": "00000000-0000-0000-0000-000000000001",
-  "X-User-Email": "instructor@example.com",
-};
-
 const mockAdminUsageSummary = {
   range: {
     fromDate: "2026-05-01",
@@ -46,7 +40,7 @@ const mockAdminSystemHealth = {
   checks: [
     {
       id: "backend",
-      name: "FastAPI Backend",
+      name: "Backend",
       status: "healthy",
       message: "API is running.",
       details: {
@@ -56,7 +50,7 @@ const mockAdminSystemHealth = {
     },
     {
       id: "database",
-      name: "Postgres + pgvector",
+      name: "Database",
       status: "healthy",
       message: "Database accepts connections and pgvector is available.",
       details: {
@@ -66,7 +60,7 @@ const mockAdminSystemHealth = {
     },
     {
       id: "rag",
-      name: "RAG Index",
+      name: "RAG",
       status: "warning",
       message: "6 documents failed processing.",
       details: {
@@ -77,8 +71,8 @@ const mockAdminSystemHealth = {
       },
     },
     {
-      id: "llm",
-      name: "LLM Gateway",
+      id: "llm-provider",
+      name: "LLM Provider",
       status: "healthy",
       message: "Provider configuration is available.",
       details: {
@@ -99,7 +93,23 @@ const mockAdminSystemHealth = {
   ],
 };
 
-export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
+async function authFetch(url, getToken, options = {}) {
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("Not authenticated.");
+  }
+
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+}
+
+export async function getAdminUsageSummary( getToken, { fromDate, toDate } = {}) {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminUsageSummary;
   }
@@ -120,9 +130,8 @@ export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
     ? `${API_BASE_URL}/api/admin/usage/summary?${queryString}`
     : `${API_BASE_URL}/api/admin/usage/summary`;
 
-  const response = await fetch(url, {
+  const response = await authFetch(url, getToken, {
     method: "GET",
-    headers: ADMIN_HEADERS,
   });
 
   return handleApiResponse(response, "Unable to load admin usage summary.");
@@ -156,7 +165,7 @@ function normalizeSystemHealthResponse(data) {
     overallStatus: mapHealthStatus(data.status),
     checkedAt: data.checkedAt,
     checks: (data.checks || []).map((check) => ({
-      id: createHealthCheckId(check.name),
+      id: check.id || createHealthCheckId(check.name),
       name: check.name,
       status: mapHealthStatus(check.status),
       message: check.message,
@@ -166,14 +175,13 @@ function normalizeSystemHealthResponse(data) {
   };
 }
 
-export async function getAdminSystemHealth() {
+export async function getAdminSystemHealth(getToken) {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminSystemHealth;
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/admin/health`, {
+  const response = await authFetch(`${API_BASE_URL}/api/admin/health`, getToken, {
     method: "GET",
-    headers: ADMIN_HEADERS,
   });
 
   const data = await handleApiResponse(

@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.core.database import Base
-from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_DIMENSIONS
+from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_DIMENSIONS, DEFAULT_RAG_EMBEDDING_PROVIDER
 
 EMBEDDING_DIMENSIONS = DEFAULT_RAG_EMBEDDING_DIMENSIONS
 
@@ -101,9 +101,12 @@ class RagEmbedding(Base):
     __table_args__ = (
         UniqueConstraint(
             "chunk_id",
+            "embedding_provider",
             "embedding_model",
-            name="rag_embeddings_chunk_id_embedding_model_key",
+            "embedding_dimensions",
+            name="rag_embeddings_chunk_id_embedding_contract_key",
         ),
+        Index("rag_embeddings_embedding_provider_idx", "embedding_provider"),
         Index(
             "rag_embeddings_embedding_cosine_idx",
             "embedding",
@@ -119,7 +122,17 @@ class RagEmbedding(Base):
         index=True,
     )
     embedding: Mapped[Any] = mapped_column(VECTOR(EMBEDDING_DIMENSIONS), nullable=False)
+    embedding_provider: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        default=DEFAULT_RAG_EMBEDDING_PROVIDER,
+    )
     embedding_model: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    embedding_dimensions: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=EMBEDDING_DIMENSIONS,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     chunk: Mapped[RagChunk] = relationship(back_populates="embeddings")

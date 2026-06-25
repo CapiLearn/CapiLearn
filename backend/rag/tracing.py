@@ -5,14 +5,14 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import SessionFactory
-from backend.core.observability import LLMTraceSink
+from backend.core.observability import TraceSinkContractError
 from backend.rag.repository import RagRepository
 from backend.rag.schemas import RagRetrievalLogRecord
 
 SessionFactoryCallable = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
-class PostgresRagTraceSink(LLMTraceSink):
+class PostgresRagTraceSink:
     def __init__(
         self,
         *,
@@ -24,10 +24,9 @@ class PostgresRagTraceSink(LLMTraceSink):
         self._session_factory = session_factory
         self._repository = repository or RagRepository()
 
-    async def _record_retrieval(self, metadata: dict[str, object]) -> None:
-        record = metadata.get("rag_retrieval")
+    async def record_retrieval(self, record: RagRetrievalLogRecord) -> None:
         if not isinstance(record, RagRetrievalLogRecord):
-            raise TypeError("rag_retrieval must be a RagRetrievalLogRecord")
+            raise TraceSinkContractError("record must be a RagRetrievalLogRecord")
 
         retrieved_chunk_ids = [str(chunk.chunk_id) for chunk in record.chunks]
         scores = [

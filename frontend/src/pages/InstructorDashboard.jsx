@@ -1,5 +1,6 @@
-import { Link } from "react-router-dom";
 import "../styles/InstructorDashboard.css";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
+import LogoutButton from "../components/LogoutButton";
 
 const summaryStats = [
   {
@@ -12,36 +13,31 @@ const summaryStats = [
     value: "142",
     helper: "Across all learning sessions",
   },
-  {
-    label: "Students to review",
-    value: "4",
-    helper: "May need instructor support",
-  },
 ];
 
-const topicDistribution = [
+const commonContexts = [
   {
-    topic: "Ipsum Lorem...",
+    context: "Ipsum Lorem...",
     count: 38,
     percentage: 78,
   },
   {
-    topic: "Ipsum Lorem...",
+    context: "Ipsum Lorem...",
     count: 31,
     percentage: 64,
   },
   {
-    topic: "Ipsum Lorem...",
+    context: "Ipsum Lorem...",
     count: 24,
     percentage: 50,
   },
   {
-    topic: "Ipsum Lorem...",
+    context: "Ipsum Lorem...",
     count: 19,
     percentage: 39,
   },
   {
-    topic: "Ipsum Lorem...",
+    context: "Ipsum Lorem...",
     count: 15,
     percentage: 31,
   },
@@ -52,57 +48,80 @@ const studentRoster = [
     name: "John Carter",
     topTopic: "Ipsum Lorem",
     questions: 18,
-    streak: "4 days",    
+    streak: "4 days",
     lastActive: "Today",
   },
   {
     name: "Maya Singh",
     topTopic: "Ipsum Lorem",
     questions: 9,
-    streak: "1 day",   
+    streak: "1 day",
     lastActive: "Yesterday",
   },
   {
     name: "Luis Rivera",
     topTopic: "Ipsum Lorem",
     questions: 14,
-    streak: "5 days",   
+    streak: "5 days",
     lastActive: "Today",
   },
   {
     name: "Ava Thompson",
     topTopic: "Ipsum Lorem",
     questions: 6,
-    streak: "6 days",    
+    streak: "6 days",
     lastActive: "Today",
   },
   {
     name: "Noah Kim",
     topTopic: "Ipsum Lorem",
     questions: 7,
-    streak: "3 days",    
+    streak: "3 days",
     lastActive: "2 days ago",
   },
 ];
+
+const instructorNavItems = [
+  { id: "dashboard-summary", label: "Dashboard" },
+  { id: "student-roster", label: "Students" },
+  { id: "common-contexts", label: "Top Context" },
+];
+
+function scrollToSection(sectionId) {
+  document.getElementById(sectionId)?.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  });
+}
 
 function InstructorDashboard() {
   return (
     <main className="instructor-page">
       <aside className="instructor-sidebar">
         <div className="instructor-brand">
-          <div className="instructor-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="instructor-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
         <nav className="instructor-nav">
-          <button className="active">Dashboard</button>
-          <button>Students</button>
-          <button>Question Trends</button>          
+          {instructorNavItems.map((item, index) => (
+            <button
+              className={index === 0 ? "active" : ""}
+              key={item.id}
+              type="button"
+              onClick={() => scrollToSection(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
         </nav>
 
-        <Link className="instructor-logout-link" to="/">
-          Log out
-        </Link>
+        <LogoutButton className="instructor-logout-link" />
 
         <div className="instructor-profile-card">
           <div className="instructor-avatar">O</div>
@@ -114,17 +133,11 @@ function InstructorDashboard() {
       </aside>
 
       <section className="instructor-main">
-        <header className="instructor-header">
+        <header className="instructor-header" id="dashboard-summary">
           <div>
             <p className="instructor-kicker">Instructor Dashboard</p>
             <h1>Student learning insights</h1>
-            <p>
-              Monitor student activity, identify common areas of confusion, and
-              see where instructor support may be needed.
-            </p>
           </div>
-
-          <button className="export-button">Export report</button>
         </header>
 
         <section className="instructor-stat-grid">
@@ -137,47 +150,12 @@ function InstructorDashboard() {
           ))}
         </section>
 
-        <section className="instructor-content-grid">
-          <article className="instructor-panel topic-panel">
-            <div className="panel-header">
-              <div>
-                <p className="panel-label">Question Trends</p>
-                <h2>Common confusion topics</h2>
-              </div>
-              <span>This week</span>
-            </div>
-
-            <div className="topic-list">
-              {topicDistribution.map((topic) => (
-                <div className="topic-row" key={topic.topic}>
-                  <div className="topic-info">
-                    <h3>{topic.topic}</h3>
-                    <p>{topic.count} questions</p>
-                  </div>
-
-                  <div className="topic-bar-block">
-                    <div className="topic-bar">
-                      <div
-                        className="topic-fill"
-                        style={{ width: `${topic.percentage}%` }}
-                      ></div>
-                    </div>
-                    <span>{topic.percentage}%</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-          
-        </section>
-
-        <section className="instructor-panel roster-panel">
+        <section className="instructor-panel roster-panel" id="student-roster">
           <div className="panel-header">
             <div>
               <p className="panel-label">Student Roster</p>
               <h2>Student activity overview</h2>
-            </div>
-            <button className="small-outline-button">View all students</button>
+            </div>            
           </div>
 
           <div className="roster-table-wrapper">
@@ -187,7 +165,7 @@ function InstructorDashboard() {
                   <th>Student</th>
                   <th>Top topic</th>
                   <th>Questions</th>
-                  <th>Streak</th>                  
+                  <th>Streak</th>
                   <th>Last active</th>
                 </tr>
               </thead>
@@ -212,6 +190,41 @@ function InstructorDashboard() {
               </tbody>
             </table>
           </div>
+        </section>
+
+        <section className="instructor-content-grid">
+          <article
+            className="instructor-panel topic-panel"
+            id="common-contexts"
+          >
+            <div className="panel-header">
+              <div>
+                <p className="panel-label">Top 5 Common Context Retrieved</p>
+                <h2>Most retrieved learning context</h2>
+              </div>
+            </div>
+
+            <div className="topic-list">
+              {commonContexts.map((context) => (
+                <div className="topic-row" key={context.context}>
+                  <div className="topic-info">
+                    <h3>{context.context}</h3>
+                    <p>{context.count} retrievals</p>
+                  </div>
+
+                  <div className="topic-bar-block">
+                    <div className="topic-bar">
+                      <div
+                        className="topic-fill"
+                        style={{ width: `${context.percentage}%` }}
+                      ></div>
+                    </div>
+                    <span>{context.percentage}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
         </section>
       </section>
     </main>

@@ -1,17 +1,15 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 
 from backend.admin.repository import (
-    AdminUsageRepository,
-    CostComponentAggregate,
     DailyUsageAggregate,
     UsageMetricsAggregate,
 )
 from backend.admin.service import AdminUsageService
 from backend.core.exceptions import ApiError
+from backend.usage.repository import UserActivityAggregate
 
 
 @pytest.mark.asyncio
@@ -126,171 +124,37 @@ async def test_usage_summary_returns_null_latency_when_no_latency_data_exists() 
 
 
 @pytest.mark.asyncio
-async def test_list_cost_components_maps_granular_cost_rows() -> None:
-    component = CostComponentAggregate(
-        id=uuid4(),
-        user_id=uuid4(),
-        conversation_id=uuid4(),
-        user_message_id=uuid4(),
-        assistant_message_id=uuid4(),
-        component_order=2,
-        component_type="output_guardrail",
-        attempt_index=1,
-        provider="openai",
-        configured_model="openai/gpt-4o-mini",
-        response_model="gpt-4o-mini-2024-07-18",
-        finish_reason="stop",
-        status="completed",
-        prompt_tokens=10,
-        completion_tokens=2,
-        total_tokens=12,
-        estimated_cost_usd=Decimal("0.000000123456"),
-        latency_ms=44,
-        error_type=None,
-        metadata={"checkType": "output"},
-        created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
+async def test_list_user_overviews_maps_rows_and_forwards_range_limit_offset() -> None:
+    last_activity = datetime(2026, 5, 2, 16, 30, tzinfo=UTC)
+    aggregate = UserActivityAggregate(
+        display_name="Student Demo",
+        access_level="student",
+        total_messages_sent=3,
+        blocked_requests=1,
+        last_activity=last_activity,
     )
-    repository = CapturingUsageRepository(cost_components=[component])
+    repository = CapturingUsageRepository(user_overviews=[aggregate])
     service = AdminUsageService(
         session=object(),
         repository=repository,
         clock=lambda: datetime(2026, 5, 19, 12, tzinfo=UTC),
     )
 
-    response = await service.list_cost_components(
+    response = await service.list_user_overviews(
         from_date="2026-05-01",
-        to_date="2026-05-02",
-        conversation_id=component.conversation_id,
-        assistant_message_id=component.assistant_message_id,
-        component_type="output_guardrail",
+        to_date="2026-05-03",
         limit=25,
         offset=50,
     )
 
-    assert repository.conversation_id == component.conversation_id
-    assert repository.assistant_message_id == component.assistant_message_id
-    assert repository.component_type == "output_guardrail"
+    assert repository.range_start == datetime(2026, 5, 1, tzinfo=UTC)
+    assert repository.range_end == datetime(2026, 5, 3, tzinfo=UTC)
     assert repository.limit == 25
     assert repository.offset == 50
-    assert response.cost_components[0].estimated_cost_usd == "0.000000123456"
-    assert response.cost_components[0].component_type == "output_guardrail"
-
-
-@pytest.mark.asyncio
-async def test_cost_component_repository_applies_limit_and_offset() -> None:
-    session = CapturingScalarSession()
-    repository = AdminUsageRepository()
-
-    rows = await repository.list_cost_components(
-        session,
-        range_start=datetime(2026, 5, 1, tzinfo=UTC),
-        range_end=datetime(2026, 5, 2, tzinfo=UTC),
-        limit=25,
-        offset=50,
-    )
-
-    assert rows == []
-    assert session.statement is not None
-    assert session.statement._limit_clause.value == 25
-    assert session.statement._offset_clause.value == 50
-
-
-@pytest.mark.asyncio
-async def test_usage_metrics_uses_component_tokens_plus_legacy_fallback() -> None:
-    session = SequencedSession(
-        execute_results=[
-            [
-                (
-                    2,
-                    5,
-                    4,
-                    1,
-                    2,
-                    Decimal("1830.2"),
-                )
-            ],
-        ],
-        scalar_results=[
-            3,
-            Decimal("1.2"),
-            12,
-            7,
-        ],
-    )
-    repository = AdminUsageRepository()
-
-    metrics = await repository.get_usage_metrics(
-        session,
-        range_start=datetime(2026, 5, 1, tzinfo=UTC),
-        range_end=datetime(2026, 5, 2, tzinfo=UTC),
-    )
-
-    assert metrics.total_users == 2
-    assert metrics.total_conversations == 3
-    assert metrics.user_queries == 5
-    assert metrics.assistant_responses == 4
-    assert metrics.failed_responses == 1
-    assert metrics.blocked_responses == 2
-    assert metrics.total_tokens == 19
-    assert metrics.estimated_cost_usd == Decimal("1.2")
-    assert metrics.average_latency_ms == Decimal("1830.2")
-    assert len(session.scalar_statements) == 4
-
-
-@pytest.mark.asyncio
-async def test_daily_usage_uses_pipeline_tokens_and_zeroes_nulls() -> None:
-    session = SequencedSession(
-        execute_results=[
-            [
-                (date(2026, 5, 1), 2, 1),
-                (date(2026, 5, 2), 0, 1),
-            ],
-            [
-                (date(2026, 5, 1), 12),
-                (date(2026, 5, 3), 5),
-                (date(2026, 5, 4), None),
-            ],
-            [
-                (date(2026, 5, 1), 7),
-                (date(2026, 5, 2), None),
-            ],
-        ],
-    )
-    repository = AdminUsageRepository()
-
-    daily_usage = await repository.list_daily_usage(
-        session,
-        range_start=datetime(2026, 5, 1, tzinfo=UTC),
-        range_end=datetime(2026, 5, 5, tzinfo=UTC),
-    )
-
-    assert daily_usage == [
-        DailyUsageAggregate(
-            date=date(2026, 5, 1),
-            user_queries=2,
-            assistant_responses=1,
-            total_tokens=19,
-        ),
-        DailyUsageAggregate(
-            date=date(2026, 5, 2),
-            user_queries=0,
-            assistant_responses=1,
-            total_tokens=0,
-        ),
-        DailyUsageAggregate(
-            date=date(2026, 5, 3),
-            user_queries=0,
-            assistant_responses=0,
-            total_tokens=5,
-        ),
-        DailyUsageAggregate(
-            date=date(2026, 5, 4),
-            user_queries=0,
-            assistant_responses=0,
-            total_tokens=0,
-        ),
-    ]
-    assert len(session.execute_statements) == 3
+    assert response.users[0].display_name == "Student Demo"
+    assert response.users[0].total_messages_sent == 3
+    assert response.users[0].blocked_requests == 1
+    assert response.users[0].last_activity == last_activity
 
 
 @pytest.mark.asyncio
@@ -364,7 +228,7 @@ class CapturingUsageRepository:
         *,
         metrics: UsageMetricsAggregate | None = None,
         daily_usage: list[DailyUsageAggregate] | None = None,
-        cost_components: list[CostComponentAggregate] | None = None,
+        user_overviews: list[UserActivityAggregate] | None = None,
     ) -> None:
         self.metrics = metrics or UsageMetricsAggregate(
             total_users=0,
@@ -378,12 +242,9 @@ class CapturingUsageRepository:
             average_latency_ms=None,
         )
         self.daily_usage = daily_usage or []
-        self.cost_components = cost_components or []
+        self.user_overviews = user_overviews or []
         self.range_start = None
         self.range_end = None
-        self.conversation_id = None
-        self.assistant_message_id = None
-        self.component_type = None
         self.limit = None
         self.offset = None
 
@@ -397,69 +258,17 @@ class CapturingUsageRepository:
         self.range_end = range_end
         return self.daily_usage
 
-    async def list_cost_components(
+    async def list_user_overviews(
         self,
         session,
         *,
         range_start,
         range_end,
-        conversation_id=None,
-        assistant_message_id=None,
-        component_type=None,
         limit=100,
         offset=0,
     ):
         self.range_start = range_start
         self.range_end = range_end
-        self.conversation_id = conversation_id
-        self.assistant_message_id = assistant_message_id
-        self.component_type = component_type
         self.limit = limit
         self.offset = offset
-        return self.cost_components
-
-
-class CapturingScalarSession:
-    def __init__(self) -> None:
-        self.statement = None
-
-    async def scalars(self, statement):
-        self.statement = statement
-        return EmptyScalarResult()
-
-
-class EmptyScalarResult:
-    def all(self):
-        return []
-
-
-class SequencedSession:
-    def __init__(
-        self,
-        *,
-        execute_results: list[list[tuple]] | None = None,
-        scalar_results: list | None = None,
-    ) -> None:
-        self.execute_results = execute_results or []
-        self.scalar_results = scalar_results or []
-        self.execute_statements = []
-        self.scalar_statements = []
-
-    async def execute(self, statement):
-        self.execute_statements.append(statement)
-        return SequencedExecuteResult(self.execute_results.pop(0))
-
-    async def scalar(self, statement):
-        self.scalar_statements.append(statement)
-        return self.scalar_results.pop(0)
-
-
-class SequencedExecuteResult:
-    def __init__(self, rows: list[tuple]) -> None:
-        self.rows = rows
-
-    def one(self):
-        return self.rows[0]
-
-    def all(self):
-        return self.rows
+        return self.user_overviews

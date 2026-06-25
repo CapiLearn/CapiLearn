@@ -25,6 +25,10 @@ _TRANSIENT_PROVIDER_ERRORS = (
 )
 
 
+class ProviderResponseError(RuntimeError):
+    """Raised when the provider returns a structurally invalid success response."""
+
+
 class LiteLLMProvider:
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
         last_error: Exception | None = None
@@ -60,19 +64,29 @@ class LiteLLMProvider:
         attempt_index: int,
     ) -> ProviderResponse:
         started_at = timer_start()
-        kwargs = _completion_kwargs(messages)
+        kwargs = {
+            "model": llm_settings.model,
+            "messages": [message.model_dump(mode="json") for message in messages],
+            "max_tokens": llm_settings.max_tokens,
+            "timeout": llm_settings.request_timeout_seconds,
+            "fallbacks": [llm_settings.fallback_model] if llm_settings.fallback_model else None,
+        }
+        if llm_settings.temperature is not None:
+            kwargs["temperature"] = llm_settings.temperature
         response = await tracked_acompletion(
             component_type=current_generation_component_type(),
             configured_model=llm_settings.model,
             attempt_index=attempt_index,
             completion=acompletion,
+            validate_response=_validate_provider_response,
             **kwargs,
         )
 
         choice = _first_choice(response)
+        content = _message_content(choice)
         usage = getattr(response, "usage", None)
         return ProviderResponse(
-            content=choice.message.content or "",
+            content=content,
             model=getattr(response, "model", None),
             finish_reason=getattr(choice, "finish_reason", None),
             prompt_tokens=getattr(usage, "prompt_tokens", None),
@@ -83,24 +97,29 @@ class LiteLLMProvider:
         )
 
 
-def _completion_kwargs(messages: list[ChatMessage]) -> dict[str, Any]:
-    kwargs = {
-        "model": llm_settings.model,
-        "messages": [message.model_dump(mode="json") for message in messages],
-        "max_tokens": llm_settings.max_tokens,
-        "timeout": llm_settings.request_timeout_seconds,
-        "fallbacks": [llm_settings.fallback_model] if llm_settings.fallback_model else None,
-    }
-    if llm_settings.temperature is not None:
-        kwargs["temperature"] = llm_settings.temperature
-    return kwargs
-
-
 def _first_choice(response: Any) -> Any:
     choices = getattr(response, "choices", None)
     if not choices:
         raise RuntimeError("LLM provider returned a response with no choices.")
     return choices[0]
+
+
+def _validate_provider_response(response: Any) -> None:
+    _message_content(_first_choice(response))
+
+
+def _message_content(choice: Any) -> str:
+    message = getattr(choice, "message", None)
+    content = getattr(message, "content", None)
+    if content is None:
+        raise ProviderResponseError(
+            "LLM provider returned a response choice with no message content."
+        )
+    if not isinstance(content, str):
+        raise ProviderResponseError(
+            "LLM provider returned a response choice with non-text message content."
+        )
+    return content
 
 
 def _serialize_response(response: Any) -> dict[str, Any] | None:

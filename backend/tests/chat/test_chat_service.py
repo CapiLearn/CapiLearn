@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -7,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.auth.schemas import CurrentUser, UserRole
 from backend.chat.models import Conversation, Message
+from backend.chat.repository import MessageSequenceConflictError
 from backend.chat.schemas import (
     ConversationStatus,
     MessageRole,
@@ -14,7 +16,11 @@ from backend.chat.schemas import (
 )
 from backend.chat.service import ChatService
 from backend.core.exceptions import ApiError
-from backend.core.observability import LLMTraceSink
+from backend.core.observability import (
+    BestEffortLLMTraceSink,
+    LLMTraceSink,
+    NoopLLMTraceSink,
+)
 from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
@@ -31,6 +37,7 @@ def _current_user() -> CurrentUser:
     return CurrentUser(
         id=uuid4(),
         clerk_id=f"user_{uuid4().hex}",
+        display_name="Test User",
         role=UserRole.STUDENT,
     )
 
@@ -64,7 +71,7 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -146,7 +153,7 @@ async def test_create_message_uses_completed_history() -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -162,31 +169,131 @@ async def test_create_message_uses_completed_history() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "sequence"),
+    [
+        (MessageRole.USER, 1),
+        (MessageRole.ASSISTANT, 2),
+    ],
+)
+async def test_create_message_rejects_completed_history_missing_content(
+    role: MessageRole,
+    sequence: int,
+) -> None:
+    service, session, _repository, llm_service, conversation = _service_with_existing_message(
+        sequence=sequence,
+        role=role,
+        status=MessageStatus.COMPLETED,
+        content=None,
+        llm_result=LLMResult(
+            content="Cells contain organelles.",
+            provider_response=ProviderResponse(content="Cells contain organelles."),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="missing required content"):
+        await service.create_message(conversation.id, "Tell me more.")
+
+    assert llm_service.requests == []
+    assert session.commit_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "status"),
+    [
+        (MessageRole.USER, MessageStatus.COMPLETED),
+        (MessageRole.ASSISTANT, MessageStatus.COMPLETED),
+        (MessageRole.ASSISTANT, MessageStatus.BLOCKED),
+    ],
+)
+async def test_list_messages_rejects_required_response_content_missing(
+    role: MessageRole,
+    status: MessageStatus,
+) -> None:
+    service, _session, _repository, _llm_service, conversation = _service_with_existing_message(
+        role=role,
+        status=status,
+        content=None,
+    )
+
+    with pytest.raises(ValueError, match="missing required content"):
+        await service.list_messages(conversation.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [MessageStatus.PENDING, MessageStatus.FAILED])
+async def test_list_messages_allows_empty_unfinished_assistant_content(
+    status: MessageStatus,
+) -> None:
+    service, _session, _repository, _llm_service, conversation = _service_with_existing_message(
+        role=MessageRole.ASSISTANT,
+        status=status,
+        content=None,
+    )
+
+    response = await service.list_messages(conversation.id)
+
+    assert response.messages[0].content == ""
+    assert response.messages[0].status == status
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_message_warns_when_provider_metadata_missing(
+    caplog,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="backend.chat.service")
+    service, _session, repository = _new_conversation_service(
+        LLMResult(content="ok", provider_response=None)
+    )
+
+    response = await service.create_conversation_message("Explain cells.")
+
+    assert response.assistant_message.status == MessageStatus.COMPLETED
+    assert response.assistant_message.content == "ok"
+    assert response.finish_reason is None
+    assert repository.messages[-1].finish_reason is None
+    assert repository.messages[-1].provider_response is None
+    warning_events = _events(caplog.records, "chat.turn.provider_response_missing")
+    assert len(warning_events) == 1
+    assert warning_events[0].status == MessageStatus.COMPLETED.value
+    assert warning_events[0].conversation_id == str(response.conversation.id)
+    assert warning_events[0].assistant_message_id == str(repository.messages[-1].id)
+
+
+@pytest.mark.asyncio
+async def test_blocked_message_warns_when_provider_metadata_missing(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="backend.chat.service")
+    service, _session, _repository = _new_conversation_service(
+        LLMResult(
+            content="Input blocked.",
+            input_guardrail_result=GuardrailResult(
+                blocked=True,
+                reason="Input blocked.",
+                rail="input",
+            ),
+            provider_response=None,
+        )
+    )
+
+    response = await service.create_conversation_message("unsafe")
+
+    assert response.assistant_message.status == MessageStatus.BLOCKED
+    assert response.blocked_reason == "Input blocked."
+    warning_events = _events(caplog.records, "chat.turn.provider_response_missing")
+    assert len(warning_events) == 1
+    assert warning_events[0].status == MessageStatus.BLOCKED.value
+
+
+@pytest.mark.asyncio
 async def test_create_conversation_message_persists_llm_cost_components() -> None:
     user = _current_user()
     session = FakeSession()
     repository = FakeChatRepository(user_id=user.id)
-    llm_service = FakeLLMService(
-        LLMResult(
-            content="Cells are small units.",
-            provider_response=ProviderResponse(content="Cells are small units."),
-            cost_components=[
-                LLMCostComponent(
-                    user_id=user.id,
-                    conversation_id=uuid4(),
-                    user_message_id=uuid4(),
-                    assistant_message_id=uuid4(),
-                    component_order=1,
-                    component_type="main_generation",
-                    status="completed",
-                    estimated_cost_usd="0.001000000000",
-                )
-            ],
-        )
-    )
+    llm_service = CostedLLMService()
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -194,10 +301,8 @@ async def test_create_conversation_message_persists_llm_cost_components() -> Non
     await service.create_conversation_message("Explain cells.")
 
     assert repository.cost_components == llm_service.result.cost_components
-    assert (
-        repository.messages[-1].estimated_cost_usd
-        == llm_service.result.cost_components[0].estimated_cost_usd
-    )
+    assert repository.cost_components[0].assistant_message_id == repository.messages[-1].id
+    assert repository.cost_components[0].estimated_cost_usd == Decimal("0.001000000000")
 
 
 @pytest.mark.asyncio
@@ -252,7 +357,7 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -273,49 +378,39 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
 
 
 @pytest.mark.asyncio
-async def test_create_message_ignores_legacy_contentless_context_refs() -> None:
-    user = _current_user()
-    session = FakeSession()
-    conversation = _conversation(user_id=user.id)
-    repository = FakeChatRepository(
-        user_id=user.id,
-        conversations=[conversation],
-        messages=[
-            _message(
-                conversation=conversation,
-                user_id=user.id,
-                sequence=1,
-                role=MessageRole.USER,
-                status=MessageStatus.COMPLETED,
-                content="What is a cell?",
-                retrieved_context=[
-                    {
-                        "chunkId": "legacy_chunk",
-                        "sourceId": "doc_1",
-                        "sourceTitle": "Biology Notes",
-                    }
-                ],
-            ),
-        ],
-    )
-    llm_service = FakeLLMService(
-        LLMResult(
+@pytest.mark.parametrize(
+    "retrieved_context",
+    [
+        pytest.param(
+            [{"content": "Stored note", "metadata": "bad"}],
+            id="current-metadata-not-mapping",
+        ),
+        pytest.param(
+            [{"metadata": {"source": "Biology Notes"}}],
+            id="missing-content",
+        ),
+        pytest.param([42], id="scalar-item"),
+    ],
+)
+async def test_create_message_rejects_malformed_retrieved_context(
+    retrieved_context,
+) -> None:
+    service, session, _repository, llm_service, conversation = _service_with_existing_message(
+        role=MessageRole.USER,
+        status=MessageStatus.COMPLETED,
+        content="What is a cell?",
+        retrieved_context=retrieved_context,
+        llm_result=LLMResult(
             content="A cell is a basic unit of life.",
             provider_response=ProviderResponse(content="A cell is a basic unit of life."),
-        )
-    )
-    service = ChatService(
-        session=session,
-        current_user=user,
-        llm_service=llm_service,
-        repository=repository,
+        ),
     )
 
-    await service.create_message(conversation.id, "Tell me more.")
+    with pytest.raises(ValueError, match="retrieved context is malformed"):
+        await service.create_message(conversation.id, "Tell me more.")
 
-    assert llm_service.requests[0].history == [
-        ChatMessage(role=ChatRole.USER, content="What is a cell?"),
-    ]
+    assert llm_service.requests == []
+    assert session.commit_count == 0
 
 
 @pytest.mark.asyncio
@@ -336,7 +431,7 @@ async def test_blocked_input_returns_blocked_assistant_message(caplog) -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -373,7 +468,7 @@ async def test_blocked_output_returns_blocked_assistant_message() -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -394,7 +489,7 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog)
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FailingLLMService(),
         repository=repository,
     )
@@ -420,7 +515,7 @@ async def test_llm_service_error_persists_failed_cost_components() -> None:
     llm_service = FailingCostedLLMService()
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=repository,
     )
@@ -437,6 +532,25 @@ async def test_llm_service_error_persists_failed_cost_components() -> None:
 
 
 @pytest.mark.asyncio
+async def test_default_trace_sink_is_explicit_noop() -> None:
+    user = _current_user()
+    service = ChatService(
+        session=FakeSession(),
+        user_id=user.id,
+        llm_service=FakeLLMService(LLMResult(content="ok")),
+        repository=FakeChatRepository(user_id=user.id),
+    )
+
+    assert isinstance(service._trace_sink, NoopLLMTraceSink)
+
+
+@pytest.mark.asyncio
+async def test_incomplete_trace_sink_cannot_be_constructed() -> None:
+    with pytest.raises(TypeError):
+        IncompleteTraceSink()
+
+
+@pytest.mark.asyncio
 async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="backend.core.observability.tracing")
     user = _current_user()
@@ -444,7 +558,7 @@ async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> No
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FakeLLMService(
             LLMResult(
                 content="Cells are small units.",
@@ -452,7 +566,7 @@ async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> No
             )
         ),
         repository=repository,
-        trace_sink=FailingTraceSink(),
+        trace_sink=BestEffortLLMTraceSink(FailingTraceSink()),
     )
 
     response = await service.create_conversation_message("Explain cells.")
@@ -461,7 +575,7 @@ async def test_trace_sink_failure_does_not_block_completed_message(caplog) -> No
     assert repository.messages[-1].status == MessageStatus.COMPLETED.value
     assert repository.messages[-1].content == "Cells are small units."
     assert session.commit_count == 2
-    assert _events(caplog.records, "llm.trace_sink.failed")
+    assert _events(caplog.records, "trace_sink.failed")
 
 
 @pytest.mark.asyncio
@@ -471,7 +585,7 @@ async def test_trace_sink_failure_does_not_block_blocked_message() -> None:
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FakeLLMService(
             LLMResult(
                 content="Input blocked.",
@@ -483,7 +597,7 @@ async def test_trace_sink_failure_does_not_block_blocked_message() -> None:
             )
         ),
         repository=repository,
-        trace_sink=FailingTraceSink(),
+        trace_sink=BestEffortLLMTraceSink(FailingTraceSink()),
     )
 
     response = await service.create_conversation_message("unsafe")
@@ -501,10 +615,10 @@ async def test_trace_sink_failure_preserves_llm_unavailable_error() -> None:
     repository = FakeChatRepository(user_id=user.id)
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=FailingLLMService(),
         repository=repository,
-        trace_sink=FailingTraceSink(),
+        trace_sink=BestEffortLLMTraceSink(FailingTraceSink()),
     )
 
     with pytest.raises(ApiError) as exc_info:
@@ -528,7 +642,7 @@ async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
     )
     service = ChatService(
         session=session,
-        current_user=user,
+        user_id=user.id,
         llm_service=llm_service,
         repository=ConflictingChatRepository(user_id=user.id),
     )
@@ -538,6 +652,38 @@ async def test_message_sequence_conflict_rolls_back_and_skips_llm() -> None:
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "message_sequence_conflict"
+    assert session.rollback_count == 1
+    assert llm_service.requests == []
+
+
+@pytest.mark.asyncio
+async def test_unrelated_message_integrity_error_rolls_back_and_reraises() -> None:
+    user = _current_user()
+    session = FakeSession()
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+        )
+    )
+    integrity_error = IntegrityError(
+        statement="INSERT INTO message",
+        params={},
+        orig=Exception("message user id conflict"),
+    )
+    service = ChatService(
+        session=session,
+        user_id=user.id,
+        llm_service=llm_service,
+        repository=ConflictingChatRepository(
+            user_id=user.id,
+            exc=integrity_error,
+        ),
+    )
+
+    with pytest.raises(IntegrityError):
+        await service.create_conversation_message("Explain cells.")
+
     assert session.rollback_count == 1
     assert llm_service.requests == []
 
@@ -567,8 +713,25 @@ class FakeChatRepository:
         self.messages = messages or []
         self.cost_components = []
 
-    async def create_conversation(self, session, *, user_id, title):
-        conversation = _conversation(user_id=user_id, title=title)
+    async def create_conversation(
+        self,
+        session,
+        *,
+        user_id,
+        title,
+        model_profile_key,
+        model_profile_version,
+        guardrails_config_id,
+        rag_index_version,
+    ):
+        conversation = _conversation(
+            user_id=user_id,
+            title=title,
+            model_profile_key=model_profile_key,
+            model_profile_version=model_profile_version,
+            guardrails_config_id=guardrails_config_id,
+            rag_index_version=rag_index_version,
+        )
         self.conversations.append(conversation)
         return conversation
 
@@ -585,50 +748,58 @@ class FakeChatRepository:
             if message.conversation_id == conversation_id and message.user_id == user_id
         ]
 
-    async def create_message(
+    async def create_turn_messages(
         self,
         session,
         *,
         conversation,
         user_id,
-        role,
-        status,
         content,
+        request_id,
     ):
-        message = _message(
+        next_sequence = (
+            len([item for item in self.messages if item.conversation_id == conversation.id]) + 1
+        )
+        user_message = _message(
             conversation=conversation,
             user_id=user_id,
-            sequence=len(
-                [item for item in self.messages if item.conversation_id == conversation.id]
-            )
-            + 1,
-            role=role,
-            status=status,
+            sequence=next_sequence,
+            role=MessageRole.USER,
+            status=MessageStatus.COMPLETED,
             content=content,
+            extra_metadata={"requestId": request_id},
         )
-        self.messages.append(message)
-        return message
+        assistant_message = _message(
+            conversation=conversation,
+            user_id=user_id,
+            sequence=next_sequence + 1,
+            role=MessageRole.ASSISTANT,
+            status=MessageStatus.PENDING,
+            content="",
+            extra_metadata={"requestId": request_id},
+        )
+        self.messages.extend([user_message, assistant_message])
+        return user_message, assistant_message
 
     async def create_llm_cost_components(self, session, *, components):
         self.cost_components.extend(components)
 
 
 class ConflictingChatRepository(FakeChatRepository):
-    async def create_message(
+    def __init__(self, *, user_id, exc: Exception | None = None) -> None:
+        super().__init__(user_id=user_id)
+        self.exc = exc or MessageSequenceConflictError()
+
+    async def create_turn_messages(
         self,
         session,
         *,
         conversation,
         user_id,
-        role,
-        status,
         content,
+        request_id,
     ):
-        raise IntegrityError(
-            statement="INSERT INTO message",
-            params={},
-            orig=Exception("message sequence conflict"),
-        )
+        raise self.exc
 
 
 class FakeLLMService:
@@ -638,6 +809,32 @@ class FakeLLMService:
 
     async def complete(self, request):
         self.requests.append(request)
+        return self.result
+
+
+class CostedLLMService:
+    def __init__(self) -> None:
+        self.requests = []
+        self.result = LLMResult(content="")
+
+    async def complete(self, request):
+        self.requests.append(request)
+        self.result = LLMResult(
+            content="Cells are small units.",
+            provider_response=ProviderResponse(content="Cells are small units."),
+            cost_components=[
+                LLMCostComponent(
+                    user_id=request.user_id,
+                    conversation_id=request.conversation_id,
+                    user_message_id=request.user_message_id,
+                    assistant_message_id=request.assistant_message_id,
+                    component_order=1,
+                    component_type="main_generation",
+                    status="completed",
+                    estimated_cost_usd="0.001000000000",
+                )
+            ],
+        )
         return self.result
 
 
@@ -669,15 +866,63 @@ class FailingCostedLLMService:
         )
 
 
-class FailingTraceSink(LLMTraceSink):
-    async def _start_chat_turn(self, metadata):
+class IncompleteTraceSink(LLMTraceSink):
+    pass
+
+
+class FailingTraceSink(NoopLLMTraceSink):
+    async def record(self, operation, metadata):
         raise RuntimeError("trace sink unavailable")
 
-    async def _record_error(self, metadata):
-        raise RuntimeError("trace sink unavailable")
 
-    async def _finish_chat_turn(self, metadata):
-        raise RuntimeError("trace sink unavailable")
+def _new_conversation_service(llm_result: LLMResult):
+    user = _current_user()
+    session = FakeSession()
+    repository = FakeChatRepository(user_id=user.id)
+    service = ChatService(
+        session=session,
+        user_id=user.id,
+        llm_service=FakeLLMService(llm_result),
+        repository=repository,
+    )
+    return service, session, repository
+
+
+def _service_with_existing_message(
+    *,
+    role: MessageRole,
+    status: MessageStatus,
+    content: str | None,
+    sequence: int = 1,
+    retrieved_context=None,
+    llm_result: LLMResult | None = None,
+):
+    user = _current_user()
+    session = FakeSession()
+    conversation = _conversation(user_id=user.id)
+    repository = FakeChatRepository(
+        user_id=user.id,
+        conversations=[conversation],
+        messages=[
+            _message(
+                conversation=conversation,
+                user_id=user.id,
+                sequence=sequence,
+                role=role,
+                status=status,
+                content=content,
+                retrieved_context=retrieved_context,
+            ),
+        ],
+    )
+    llm_service = FakeLLMService(llm_result or LLMResult(content="unused"))
+    service = ChatService(
+        session=session,
+        user_id=user.id,
+        llm_service=llm_service,
+        repository=repository,
+    )
+    return service, session, repository, llm_service, conversation
 
 
 def _events(records, event: str):
@@ -688,6 +933,10 @@ def _conversation(
     *,
     user_id,
     title: str | None = "Existing title",
+    model_profile_key: str = "model",
+    model_profile_version: str | None = None,
+    guardrails_config_id: str | None = None,
+    rag_index_version: str | None = None,
 ) -> Conversation:
     now = datetime.now(UTC)
     return Conversation(
@@ -695,7 +944,10 @@ def _conversation(
         user_id=user_id,
         title=title,
         status=ConversationStatus.ACTIVE.value,
-        model_profile_key="model",
+        model_profile_key=model_profile_key,
+        model_profile_version=model_profile_version,
+        guardrails_config_id=guardrails_config_id,
+        rag_index_version=rag_index_version,
         created_at=now,
         updated_at=now,
     )
@@ -708,8 +960,9 @@ def _message(
     sequence: int,
     role: MessageRole,
     status: MessageStatus,
-    content: str,
+    content: str | None,
     retrieved_context: list[dict] | None = None,
+    extra_metadata: dict | None = None,
 ) -> Message:
     return Message(
         id=uuid4(),
@@ -720,6 +973,6 @@ def _message(
         status=status.value,
         content=content,
         retrieved_context=retrieved_context or [],
-        extra_metadata={},
+        extra_metadata=extra_metadata or {},
         created_at=datetime.now(UTC),
     )

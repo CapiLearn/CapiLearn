@@ -11,8 +11,8 @@ from backend.admin.schemas import (
     AdminHealthCheck,
     AdminHealthResponse,
     AdminUsageSummaryResponse,
-    CostComponentResponse,
-    CostComponentsResponse,
+    AdminUserOverview,
+    AdminUserOverviewResponse,
     HealthStatus,
     UsageMetrics,
     UsageRange,
@@ -24,11 +24,15 @@ from backend.auth.dependencies import (
     get_user_repository,
 )
 from backend.auth.models import UserAccount
-from backend.auth.repository import UserAccountRepository
-from backend.auth.schemas import AuthPrincipal, ClerkAuthClaims, UserRole
+from backend.auth.schemas import (
+    AuthPrincipal,
+    ClerkAuthClaims,
+    UserRole,
+)
 from backend.core.config import Settings, get_settings
 from backend.core.database import get_db
 from backend.main import app
+from backend.tests.fakes import FakeUserRepository
 
 
 @pytest.fixture(autouse=True)
@@ -42,14 +46,15 @@ def test_admin_openapi_exposes_usage_summary_route() -> None:
 
     assert "/api/admin/health" in schema["paths"]
     assert "/api/admin/usage/summary" in schema["paths"]
-    assert "/api/admin/usage/cost-components" in schema["paths"]
+    assert "/api/admin/users/overview" in schema["paths"]
+    assert "/api/admin/usage/cost-components" not in schema["paths"]
     assert schema["paths"]["/api/admin/health"]["get"]["operationId"] == "getAdminHealth"
     assert (
         schema["paths"]["/api/admin/usage/summary"]["get"]["operationId"] == "getAdminUsageSummary"
     )
     assert (
-        schema["paths"]["/api/admin/usage/cost-components"]["get"]["operationId"]
-        == "listAdminUsageCostComponents"
+        schema["paths"]["/api/admin/users/overview"]["get"]["operationId"]
+        == "listAdminUserOverviews"
     )
 
 
@@ -61,28 +66,35 @@ def _authorize(role: UserRole = UserRole.ADMIN) -> None:
 
 
 @pytest.mark.asyncio
-async def test_usage_summary_requires_bearer_auth() -> None:
-    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+@pytest.mark.parametrize(
+    ("path", "service_dependency"),
+    [
+        ("/api/admin/usage/summary", get_admin_usage_service),
+        ("/api/admin/users/overview", get_admin_usage_service),
+        ("/api/admin/health", get_admin_health_service),
+    ],
+)
+async def test_admin_endpoints_require_bearer_auth(path, service_dependency) -> None:
+    service = (
+        FakeAdminHealthService()
+        if service_dependency is get_admin_health_service
+        else FakeAdminUsageService()
+    )
+    app.dependency_overrides[service_dependency] = lambda: service
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        missing_response = await client.get("/api/admin/usage/summary")
-        false_response = await client.get(
-            "/api/admin/usage/summary",
-            headers={"X-Admin-User": "false"},
-        )
+        response = await client.get(path)
 
     expected = {
         "code": "auth_required",
         "message": "Authentication is required.",
         "details": None,
     }
-    assert missing_response.status_code == 401
-    assert missing_response.json() == expected
-    assert false_response.status_code == 401
-    assert false_response.json() == expected
+    assert response.status_code == 401
+    assert response.json() == expected
 
 
 @pytest.mark.asyncio
@@ -187,8 +199,8 @@ async def test_usage_summary_defaults_to_last_seven_utc_calendar_days() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cost_components_endpoint_requires_auth() -> None:
-    app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
+async def test_cost_components_endpoint_is_not_available() -> None:
+    _authorize(UserRole.ADMIN)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -196,12 +208,11 @@ async def test_cost_components_endpoint_requires_auth() -> None:
     ) as client:
         response = await client.get("/api/admin/usage/cost-components")
 
-    assert response.status_code == 401
-    assert response.json()["code"] == "auth_required"
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_cost_components_endpoint_returns_granular_rows() -> None:
+async def test_user_overviews_endpoint_returns_camel_case_rows_and_forwards_params() -> None:
     _authorize(UserRole.ADMIN)
     service = FakeAdminUsageService()
     app.dependency_overrides[get_admin_usage_service] = lambda: service
@@ -211,24 +222,35 @@ async def test_cost_components_endpoint_returns_granular_rows() -> None:
         base_url="http://test",
     ) as client:
         response = await client.get(
-            "/api/admin/usage/cost-components?fromDate=2026-05-01&toDate=2026-05-04"
-            "&componentType=main_generation&limit=25&offset=50",
+            "/api/admin/users/overview?fromDate=2026-05-01&toDate=2026-05-04&limit=25&offset=50",
         )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["range"] == {
-        "fromDate": "2026-05-01",
-        "toDate": "2026-05-04",
+    assert response.json()["users"][0] == {
+        "displayName": "Student Demo",
+        "accessLevel": "student",
+        "totalMessagesSent": 4,
+        "blockedRequests": 1,
+        "lastActivity": "2026-05-02T16:30:00Z",
     }
-    assert payload["costComponents"][0]["componentType"] == "main_generation"
-    assert payload["costComponents"][0]["estimatedCostUsd"] == "0.001000000000"
+    assert service.from_date == "2026-05-01"
+    assert service.to_date == "2026-05-04"
     assert service.limit == 25
     assert service.offset == 50
 
 
 @pytest.mark.asyncio
-async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
+@pytest.mark.parametrize(
+    ("path", "query"),
+    [
+        ("/api/admin/users/overview", "limit=501"),
+        ("/api/admin/users/overview", "offset=-1"),
+    ],
+)
+async def test_admin_paginated_endpoints_reject_invalid_pagination(
+    path: str,
+    query: str,
+) -> None:
     _authorize(UserRole.ADMIN)
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
@@ -236,16 +258,24 @@ async def test_cost_components_endpoint_rejects_limit_over_maximum() -> None:
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        response = await client.get(
-            "/api/admin/usage/cost-components?limit=501",
-        )
+        response = await client.get(f"{path}?{query}")
 
     assert response.status_code == 422
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/admin/usage/summary",
+        "/api/admin/users/overview",
+    ],
+)
 @pytest.mark.parametrize("role", [UserRole.STUDENT, UserRole.INSTRUCTOR])
-async def test_usage_summary_rejects_non_admin_roles(role: UserRole) -> None:
+async def test_admin_usage_endpoints_reject_non_admin_roles(
+    path: str,
+    role: UserRole,
+) -> None:
     _authorize(role)
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
@@ -253,7 +283,7 @@ async def test_usage_summary_rejects_non_admin_roles(role: UserRole) -> None:
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        response = await client.get("/api/admin/usage/summary")
+        response = await client.get(path)
 
     assert response.status_code == 403
     assert response.json() == {
@@ -266,10 +296,15 @@ async def test_usage_summary_rejects_non_admin_roles(role: UserRole) -> None:
 @pytest.mark.asyncio
 async def test_usage_summary_rejects_missing_local_user_without_provisioning() -> None:
     repository = FakeUserRepository()
-    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    session = FakeSession()
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_mode="clerk")
+    app.dependency_overrides[get_db] = _fake_db_override(session)
     app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
-        ClerkAuthClaims(clerk_id="user_missing", claims={"sub": "user_missing"})
+        ClerkAuthClaims(
+            clerk_id="user_missing",
+            claims={"sub": "user_missing"},
+        )
     )
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
@@ -288,8 +323,8 @@ async def test_usage_summary_rejects_missing_local_user_without_provisioning() -
         "message": "Admin access is required.",
         "details": None,
     }
-    assert repository.calls == [("get_by_clerk_id", "user_missing")]
     assert repository.user is None
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
@@ -297,13 +332,23 @@ async def test_usage_summary_rejects_existing_non_admin_local_user() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_student",
+        first_name="Student",
+        last_name="User",
         role=UserRole.STUDENT.value,
     )
     repository = FakeUserRepository(user=user)
-    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    session = FakeSession()
+    app.dependency_overrides[get_db] = _fake_db_override(session)
     app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
-        ClerkAuthClaims(clerk_id="user_student", claims={"sub": "user_student"})
+        ClerkAuthClaims(
+            clerk_id="user_student",
+            claims={
+                "sub": "user_student",
+                "first_name": "Changed",
+                "last_name": "Student",
+            },
+        )
     )
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
@@ -318,7 +363,10 @@ async def test_usage_summary_rejects_existing_non_admin_local_user() -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "admin_required"
-    assert repository.calls == [("get_by_clerk_id", "user_student")]
+    assert repository.profile_update_calls == []
+    assert user.first_name == "Student"
+    assert user.last_name == "User"
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
@@ -326,6 +374,8 @@ async def test_usage_summary_rejects_existing_disabled_admin_local_user() -> Non
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_disabled_admin",
+        first_name="Disabled",
+        last_name="Admin",
         role=UserRole.ADMIN.value,
         deleted_at=datetime.now(UTC),
     )
@@ -356,7 +406,6 @@ async def test_usage_summary_rejects_existing_disabled_admin_local_user() -> Non
         "message": "This user account is disabled.",
         "details": None,
     }
-    assert repository.calls == [("get_by_clerk_id", "user_disabled_admin")]
     assert session.commits == 0
 
 
@@ -365,14 +414,20 @@ async def test_usage_summary_accepts_existing_admin_local_user() -> None:
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_admin",
+        first_name="Admin",
+        last_name="User",
         role=UserRole.ADMIN.value,
     )
     repository = FakeUserRepository(user=user)
+    session = FakeSession()
     app.dependency_overrides[get_settings] = lambda: Settings(auth_mode="clerk")
-    app.dependency_overrides[get_db] = _fake_db_override(FakeSession())
+    app.dependency_overrides[get_db] = _fake_db_override(session)
     app.dependency_overrides[get_user_repository] = lambda: repository
     app.dependency_overrides[get_auth_request_verifier] = lambda: FakeVerifier(
-        ClerkAuthClaims(clerk_id="user_admin", claims={"sub": "user_admin"})
+        ClerkAuthClaims(
+            clerk_id="user_admin",
+            claims={"sub": "user_admin"},
+        )
     )
     app.dependency_overrides[get_admin_usage_service] = lambda: FakeAdminUsageService()
 
@@ -387,7 +442,7 @@ async def test_usage_summary_accepts_existing_admin_local_user() -> None:
 
     assert response.status_code == 200
     assert response.json()["metrics"]["totalUsers"] == 18
-    assert repository.calls == [("get_by_clerk_id", "user_admin")]
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
@@ -414,14 +469,20 @@ async def test_test_auth_mode_rejects_non_admin_role() -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "admin_required"
-    assert repository.calls == [("get_by_clerk_id", "user_test_student")]
     assert repository.user is None
     assert session.commits == 0
 
 
 @pytest.mark.asyncio
 async def test_test_auth_mode_accepts_admin_role() -> None:
-    repository = FakeUserRepository()
+    user = UserAccount(
+        id=uuid4(),
+        clerk_id="user_test_admin",
+        first_name="Test",
+        last_name="Admin",
+        role=UserRole.STUDENT.value,
+    )
+    repository = FakeUserRepository(user=user)
     session = FakeSession()
     app.dependency_overrides[get_settings] = lambda: Settings(
         auth_mode="test",
@@ -443,8 +504,7 @@ async def test_test_auth_mode_accepts_admin_role() -> None:
 
     assert response.status_code == 200
     assert response.json()["metrics"]["totalUsers"] == 18
-    assert repository.calls == [("get_by_clerk_id", "user_test_admin")]
-    assert repository.user is None
+    assert repository.user is user
     assert session.commits == 0
 
 
@@ -453,6 +513,8 @@ async def test_test_auth_mode_rejects_disabled_local_user_before_admin_role_gate
     user = UserAccount(
         id=uuid4(),
         clerk_id="user_test_disabled",
+        first_name="Disabled",
+        last_name="User",
         role=UserRole.STUDENT.value,
         deleted_at=datetime.now(UTC),
     )
@@ -482,22 +544,7 @@ async def test_test_auth_mode_rejects_disabled_local_user_before_admin_role_gate
         "message": "This user account is disabled.",
         "details": None,
     }
-    assert repository.calls == [("get_by_clerk_id", "user_test_disabled")]
     assert session.commits == 0
-
-
-@pytest.mark.asyncio
-async def test_admin_health_requires_bearer_auth() -> None:
-    app.dependency_overrides[get_admin_health_service] = lambda: FakeAdminHealthService()
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.get("/api/admin/health")
-
-    assert response.status_code == 401
-    assert response.json()["code"] == "auth_required"
 
 
 @pytest.mark.asyncio
@@ -517,14 +564,16 @@ async def test_admin_health_returns_camel_case_response() -> None:
         "checkedAt": "2026-06-09T12:00:00Z",
         "checks": [
             {
-                "name": "database",
+                "id": "database",
+                "name": "Database",
                 "status": "ok",
                 "latencyMs": 8,
                 "message": "Database connectivity check succeeded.",
                 "details": {"backend": "postgres"},
             },
             {
-                "name": "llmProviderMetadata",
+                "id": "llm-provider",
+                "name": "LLM Provider",
                 "status": "degraded",
                 "latencyMs": None,
                 "message": "Provider metadata returned no available models.",
@@ -536,6 +585,8 @@ async def test_admin_health_returns_camel_case_response() -> None:
 
 class FakeAdminUsageService:
     def __init__(self) -> None:
+        self.from_date = None
+        self.to_date = None
         self.limit = None
         self.offset = None
 
@@ -564,47 +615,26 @@ class FakeAdminUsageService:
             daily_usage=[],
         )
 
-    async def list_cost_components(
+    async def list_user_overviews(
         self,
         *,
         from_date: str | None,
         to_date: str | None,
-        conversation_id=None,
-        assistant_message_id=None,
-        component_type: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> CostComponentsResponse:
+    ) -> AdminUserOverviewResponse:
+        self.from_date = from_date
+        self.to_date = to_date
         self.limit = limit
         self.offset = offset
-        return CostComponentsResponse(
-            range=UsageRange(
-                from_date=from_date or "2026-05-01",
-                to_date=to_date or "2026-05-04",
-            ),
-            cost_components=[
-                CostComponentResponse(
-                    id=uuid4(),
-                    user_id=uuid4(),
-                    conversation_id=conversation_id or uuid4(),
-                    user_message_id=uuid4(),
-                    assistant_message_id=assistant_message_id or uuid4(),
-                    component_order=1,
-                    component_type=component_type or "main_generation",
-                    attempt_index=1,
-                    provider="openai",
-                    configured_model="openai/gpt-4o-mini",
-                    response_model="gpt-4o-mini",
-                    finish_reason="stop",
-                    status="completed",
-                    prompt_tokens=4,
-                    completion_tokens=5,
-                    total_tokens=9,
-                    estimated_cost_usd="0.001000000000",
-                    latency_ms=120,
-                    error_type=None,
-                    metadata={},
-                    created_at=datetime(2026, 5, 1, 12, tzinfo=UTC),
+        return AdminUserOverviewResponse(
+            users=[
+                AdminUserOverview(
+                    display_name="Student Demo",
+                    access_level=UserRole.STUDENT,
+                    total_messages_sent=4,
+                    blocked_requests=1,
+                    last_activity=datetime(2026, 5, 2, 16, 30, tzinfo=UTC),
                 )
             ],
         )
@@ -617,14 +647,16 @@ class FakeAdminHealthService:
             checked_at=datetime(2026, 6, 9, 12, tzinfo=UTC),
             checks=[
                 AdminHealthCheck(
-                    name="database",
+                    id="database",
+                    name="Database",
                     status=HealthStatus.OK,
                     latency_ms=8,
                     message="Database connectivity check succeeded.",
                     details={"backend": "postgres"},
                 ),
                 AdminHealthCheck(
-                    name="llmProviderMetadata",
+                    id="llm-provider",
+                    name="LLM Provider",
                     status=HealthStatus.DEGRADED,
                     message="Provider metadata returned no available models.",
                     details={"returnedModelCount": 0},
@@ -676,28 +708,3 @@ class FakeSession:
 
     async def rollback(self) -> None:
         self.rollbacks += 1
-
-
-class FakeUserRepository(UserAccountRepository):
-    def __init__(self, user: UserAccount | None = None) -> None:
-        self.user = user
-        self.calls = []
-
-    async def get_by_clerk_id(self, session, *, clerk_id: str) -> UserAccount | None:
-        self.calls.append(("get_by_clerk_id", clerk_id))
-        return self.user
-
-    async def create(
-        self,
-        session,
-        *,
-        clerk_id: str,
-        role: UserRole = UserRole.STUDENT,
-    ) -> UserAccount:
-        self.calls.append(("create", clerk_id, role))
-        self.user = UserAccount(
-            id=uuid4(),
-            clerk_id=clerk_id,
-            role=role.value,
-        )
-        return self.user

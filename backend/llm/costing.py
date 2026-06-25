@@ -10,6 +10,7 @@ from backend.core.observability import elapsed_ms, timer_start
 from backend.llm.schemas import LLMCostComponent
 
 CompletionCallable = Callable[..., Awaitable[Any]]
+ResponseValidator = Callable[[Any], None]
 
 _cost_recorder: ContextVar["LLMCostRecorder | None"] = ContextVar(
     "llm_cost_recorder",
@@ -32,7 +33,7 @@ class LLMCostRecorder:
         user_id: str,
         conversation_id: str,
         user_message_id: str,
-        assistant_message_id: str | None,
+        assistant_message_id: str,
     ) -> None:
         self._base_fields = {
             "user_id": user_id,
@@ -61,6 +62,7 @@ class LLMCostRecorder:
         usage = _response_value(response, "usage")
         choice = _first_choice(response)
         cost, cost_metadata, cost_status = _estimate_cost(response, metadata)
+        component_status = status if status == "failed" else cost_status or status
         self._components.append(
             LLMCostComponent(
                 **self._base_fields,
@@ -70,8 +72,8 @@ class LLMCostRecorder:
                 provider=_provider_name(configured_model=configured_model, response=response),
                 configured_model=configured_model,
                 response_model=_response_value(response, "model"),
-                finish_reason=_choice_value(choice, "finish_reason"),
-                status=cost_status or status,
+                finish_reason=_response_value(choice, "finish_reason"),
+                status=component_status,
                 prompt_tokens=_response_value(usage, "prompt_tokens"),
                 completion_tokens=_response_value(usage, "completion_tokens"),
                 total_tokens=_response_value(usage, "total_tokens"),
@@ -126,18 +128,22 @@ async def tracked_acompletion(
     configured_model: str,
     attempt_index: int = 1,
     completion: CompletionCallable = acompletion,
+    validate_response: ResponseValidator | None = None,
     metadata: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> Any:
     started_at = timer_start()
+    response = None
     try:
         response = await completion(**kwargs)
+        if validate_response is not None:
+            validate_response(response)
     except Exception as exc:
         _append_component(
             component_type=component_type,
             attempt_index=attempt_index,
             configured_model=configured_model,
-            response=None,
+            response=response,
             status="failed",
             latency_ms=elapsed_ms(started_at),
             error_type=type(exc).__name__,
@@ -216,10 +222,6 @@ def _response_value(value: Any | None, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return getattr(value, key, None)
-
-
-def _choice_value(choice: Any | None, key: str) -> Any:
-    return _response_value(choice, key)
 
 
 def _provider_name(*, configured_model: str | None, response: Any | None) -> str | None:

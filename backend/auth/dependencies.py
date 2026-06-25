@@ -32,6 +32,12 @@ class CurrentUserResolver(Protocol):
         claims: ClerkAuthClaims,
     ) -> CurrentUser: ...
 
+    async def get_existing_current_user(
+        self,
+        session: AsyncSession,
+        claims: ClerkAuthClaims,
+    ) -> CurrentUser | None: ...
+
     async def get_current_principal(
         self,
         session: AsyncSession,
@@ -76,17 +82,16 @@ class TestRequestVerifier:
         self._settings = settings
 
     async def verify(self, _bearer_token: str) -> ClerkAuthClaims:
-        return ClerkAuthClaims(
-            clerk_id=self._settings.test_auth_clerk_id,
-            email=self._settings.test_auth_email,
-            display_name=self._settings.test_auth_display_name,
-            claims={
-                "sub": self._settings.test_auth_clerk_id,
-                "email": self._settings.test_auth_email,
-                "name": self._settings.test_auth_display_name,
-                "role": self._settings.test_auth_role,
-            },
-        )
+        payload: dict[str, Any] = {
+            "sub": self._settings.test_auth_clerk_id,
+            "role": self._settings.test_auth_role,
+        }
+        if self._settings.test_auth_first_name is not None:
+            payload["first_name"] = self._settings.test_auth_first_name
+        if self._settings.test_auth_last_name is not None:
+            payload["last_name"] = self._settings.test_auth_last_name
+
+        return _claims_from_payload(payload)
 
 
 def get_auth_request_verifier(settings: SettingsDep) -> AuthRequestVerifier:
@@ -99,10 +104,6 @@ AuthRequestVerifierDep = Annotated[
     AuthRequestVerifier,
     Depends(get_auth_request_verifier),
 ]
-
-
-def get_clerk_request_verifier(settings: SettingsDep) -> AuthRequestVerifier:
-    return get_auth_request_verifier(settings)
 
 
 def get_user_repository() -> UserAccountRepository:
@@ -143,10 +144,46 @@ async def get_current_user(
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
 ) -> CurrentUser:
-    return await service.get_or_create_current_user(session, auth_claims)
+    # Normal app requests read an already-provisioned local user.
+    current_user = await service.get_existing_current_user(session, auth_claims)
+    if current_user is None:
+        raise ApiError(
+            code="user_not_provisioned",
+            message="User account has not been provisioned.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    return current_user
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+def require_student_user(current_user: CurrentUserDep) -> CurrentUser:
+    if current_user.role != UserRole.STUDENT:
+        raise ApiError(
+            code="student_required",
+            message="Student access is required.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    return current_user
+
+
+StudentUserDep = Annotated[CurrentUser, Depends(require_student_user)]
+
+
+async def get_bootstrap_current_user(
+    session: DbSession,
+    auth_claims: ClerkAuthClaimsDep,
+    service: AuthUserServiceDep,
+) -> CurrentUser:
+    # /api/me is the explicit first-use bootstrap and repair path.
+    return await service.get_or_create_current_user(session, auth_claims)
+
+
+BootstrapCurrentUserDep = Annotated[
+    CurrentUser,
+    Depends(get_bootstrap_current_user),
+]
 
 
 async def get_current_principal(
@@ -154,6 +191,7 @@ async def get_current_principal(
     auth_claims: ClerkAuthClaimsDep,
     service: AuthUserServiceDep,
 ) -> AuthPrincipal | None:
+    # Authorization checks load role state only; they never provision or repair profiles.
     return await service.get_current_principal(session, auth_claims)
 
 
@@ -177,7 +215,7 @@ def require_role(*roles: UserRole) -> Callable[[AuthPrincipal], AuthPrincipal]:
 
 
 require_admin = require_role(UserRole.ADMIN)
-require_instructor_or_admin = require_role(UserRole.INSTRUCTOR, UserRole.ADMIN)
+require_instructor = require_role(UserRole.INSTRUCTOR)
 
 
 def _raise_role_error(allowed_roles: set[UserRole]) -> None:
@@ -225,31 +263,8 @@ def _claims_from_payload(payload: dict[str, Any]) -> ClerkAuthClaims:
         )
     return ClerkAuthClaims(
         clerk_id=clerk_id,
-        email=_email_from_payload(payload),
-        display_name=_display_name_from_payload(payload),
         claims=payload,
     )
-
-
-def _email_from_payload(payload: dict[str, Any]) -> str | None:
-    email = payload.get("email") or payload.get("email_address")
-    return email if isinstance(email, str) and email else None
-
-
-def _display_name_from_payload(payload: dict[str, Any]) -> str | None:
-    for key in ("name", "full_name", "display_name", "username"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    first_name = payload.get("first_name")
-    last_name = payload.get("last_name")
-    name_parts = [
-        value.strip()
-        for value in (first_name, last_name)
-        if isinstance(value, str) and value.strip()
-    ]
-    return " ".join(name_parts) or None
 
 
 def _auth_failure_details(reason: object) -> dict[str, str] | None:

@@ -1,8 +1,10 @@
 import asyncio
 import logging
+from enum import StrEnum
 
 from backend.core.observability import (
     LLMTraceSink,
+    NoopLLMTraceSink,
     elapsed_ms,
     timer_start,
 )
@@ -32,8 +34,22 @@ from backend.rag.schemas import (
     RetrievalResult,
     RetrievedChunk,
 )
+from backend.rag.trace_contracts import NoopRetrievalTraceSink, RetrievalTraceSink
 
 logger = logging.getLogger(__name__)
+
+
+class GenerationStage(StrEnum):
+    PRIMARY = "primary"
+    REPAIR = "repair"
+
+    @property
+    def component_type(self) -> str:
+        if self is GenerationStage.PRIMARY:
+            return "main_generation"
+        if self is GenerationStage.REPAIR:
+            return "repair_generation"
+        raise ValueError(f"Unknown generation stage: {self!r}.")
 
 
 class LLMServiceError(Exception):
@@ -70,21 +86,21 @@ class LLMService:
         output_guardrails: GuardrailsProvider | None = None,
         retriever: RetrievalProvider | None = None,
         trace_sink: LLMTraceSink | None = None,
+        retrieval_trace_sink: RetrievalTraceSink | None = None,
     ) -> None:
         self._provider = provider or LiteLLMProvider()
         self._input_guardrails = guardrails or input_guardrails or build_input_guardrails()
         self._output_guardrails = guardrails or output_guardrails or build_output_guardrails()
         self._retriever = retriever or EmptyRetrievalProvider()
-        self._trace_sink = trace_sink or LLMTraceSink()
+        self._trace_sink = trace_sink or NoopLLMTraceSink()
+        self._retrieval_trace_sink = retrieval_trace_sink or NoopRetrievalTraceSink()
 
     async def complete(self, request: LLMRequest) -> LLMResult:
         recorder = LLMCostRecorder(
             user_id=str(request.user_id),
             conversation_id=str(request.conversation_id),
             user_message_id=str(request.user_message_id),
-            assistant_message_id=(
-                str(request.assistant_message_id) if request.assistant_message_id else None
-            ),
+            assistant_message_id=str(request.assistant_message_id),
         )
         with cost_recorder_context(recorder):
             try:
@@ -99,6 +115,7 @@ class LLMService:
     async def _complete(self, request: LLMRequest) -> LLMResult:
         events = LLMEventRecorder(
             trace_sink=self._trace_sink,
+            retrieval_trace_sink=self._retrieval_trace_sink,
             logger=logger,
             request=request,
         )
@@ -165,9 +182,9 @@ class LLMService:
                 history=request.history,
                 chunks=retrieval_result.chunks,
             ),
-            stage="primary",
+            stage=GenerationStage.PRIMARY,
         )
-        output_result, provider_response = await self._check_output(
+        output_result, provider_response = await self._check_output_and_repair_if_blocked(
             events=events,
             request=request,
             provider_response=provider_response,
@@ -180,7 +197,7 @@ class LLMService:
             retrieval_result=retrieval_result,
         )
 
-    async def _check_output(
+    async def _check_output_and_repair_if_blocked(
         self,
         *,
         events: LLMEventRecorder,
@@ -218,7 +235,7 @@ class LLMService:
                 draft_response=provider_response.content,
                 chunks=retrieved_context,
             ),
-            stage="repair",
+            stage=GenerationStage.REPAIR,
         )
         repair_guardrail_started_at = timer_start()
         try:
@@ -254,16 +271,15 @@ class LLMService:
         *,
         events: LLMEventRecorder,
         messages: list[ChatMessage],
-        stage: str,
+        stage: GenerationStage,
     ) -> ProviderResponse:
         started_at = timer_start()
         try:
-            component_type = "repair_generation" if stage == "repair" else "main_generation"
-            with generation_component_context(component_type):
+            with generation_component_context(stage.component_type):
                 provider_response = await self._provider.complete(messages)
         except Exception as exc:
             await events.record_generation_error(
-                stage=stage,
+                stage=stage.value,
                 started_at=started_at,
                 exc=exc,
             )
@@ -273,7 +289,7 @@ class LLMService:
         if provider_response.latency_ms is None:
             provider_response.latency_ms = measured_latency_ms
         await events.record_generation_result(
-            stage=stage,
+            stage=stage.value,
             provider_response=provider_response,
         )
         return provider_response

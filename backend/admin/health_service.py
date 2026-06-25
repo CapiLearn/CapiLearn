@@ -1,11 +1,13 @@
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
 from litellm import get_llm_provider, get_valid_models
 from sqlalchemy import and_, func, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.admin.schemas import AdminHealthCheck, AdminHealthResponse, HealthStatus
@@ -18,6 +20,7 @@ from backend.llm.config import (
 )
 from backend.rag.config import RagBackend, RagSettings, rag_settings
 from backend.rag.models import RagChunk, RagDocument, RagEmbedding, RagRetrievalLog
+from backend.rag.repository import embedding_contract_filter
 
 PROVIDER_METADATA_CACHE_TTL_SECONDS = 300
 ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
@@ -25,6 +28,12 @@ ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
 
 class ProviderMetadataProvider(Protocol):
     async def get_models(self, provider: str) -> list[str]: ...
+
+
+@dataclass(frozen=True)
+class ProviderMetadataCacheEntry:
+    models: tuple[str, ...]
+    expires_at: float
 
 
 class AdminHealthResponseCache:
@@ -66,32 +75,39 @@ class CachedLiteLLMProviderMetadataProvider:
     ) -> None:
         self._ttl_seconds = ttl_seconds
         self._model_loader = model_loader or _load_valid_models
-        self._models_by_provider: dict[str, list[str]] = {}
-        self._expires_at_by_provider: dict[str, float] = {}
+        self._cache_by_provider: dict[str, ProviderMetadataCacheEntry] = {}
         self._lock = asyncio.Lock()
 
     async def get_models(self, provider: str) -> list[str]:
         now = time.monotonic()
-        if provider in self._models_by_provider and now < self._expires_at_by_provider.get(
-            provider, 0.0
-        ):
-            return list(self._models_by_provider[provider])
+        cached_models = self._cached_models(provider, now=now)
+        if cached_models is not None:
+            return cached_models
 
         async with self._lock:
             now = time.monotonic()
-            if provider in self._models_by_provider and now < self._expires_at_by_provider.get(
-                provider, 0.0
-            ):
-                return list(self._models_by_provider[provider])
+            cached_models = self._cached_models(provider, now=now)
+            if cached_models is not None:
+                return cached_models
 
             models = await asyncio.to_thread(self._model_loader, provider)
-            self._models_by_provider[provider] = list(models)
-            self._expires_at_by_provider[provider] = time.monotonic() + self._ttl_seconds
-            return list(self._models_by_provider[provider])
+            cached_entry = ProviderMetadataCacheEntry(
+                models=tuple(models),
+                expires_at=time.monotonic() + self._ttl_seconds,
+            )
+            self._cache_by_provider[provider] = cached_entry
+            return list(cached_entry.models)
+
+    def _cached_models(self, provider: str, *, now: float) -> list[str] | None:
+        cached_entry = self._cache_by_provider.get(provider)
+        if cached_entry is None:
+            return None
+        if now >= cached_entry.expires_at:
+            return None
+        return list(cached_entry.models)
 
     def clear(self) -> None:
-        self._models_by_provider.clear()
-        self._expires_at_by_provider.clear()
+        self._cache_by_provider.clear()
 
 
 def _load_valid_models(provider: str) -> list[str]:
@@ -143,9 +159,10 @@ class AdminHealthService:
 
     def _check_backend(self) -> AdminHealthCheck:
         return AdminHealthCheck(
-            name="backend",
+            id="backend",
+            name="Backend",
             status=HealthStatus.OK,
-            message="Backend process is responding.",
+            message="Backend process is healthy",
         )
 
     async def _check_database(self) -> AdminHealthCheck:
@@ -154,30 +171,34 @@ class AdminHealthService:
             value = await self._session.scalar(text("SELECT 1"))
         except Exception:
             return AdminHealthCheck(
-                name="database",
+                id="database",
+                name="Database",
                 status=HealthStatus.UNHEALTHY,
                 latency_ms=elapsed_ms(started_at),
-                message="Database connectivity check failed.",
+                message="Database check failed.",
             )
 
         if value != 1:
             return AdminHealthCheck(
-                name="database",
+                id="database",
+                name="Database",
                 status=HealthStatus.UNHEALTHY,
                 latency_ms=elapsed_ms(started_at),
-                message="Database connectivity check returned an unexpected result.",
+                message="Database check returned an unexpected result.",
             )
         return AdminHealthCheck(
-            name="database",
+            id="database",
+            name="Database",
             status=HealthStatus.OK,
             latency_ms=elapsed_ms(started_at),
-            message="Database connectivity check succeeded.",
+            message="Database connected",
         )
 
     async def _check_rag(self) -> AdminHealthCheck:
         if self._rag_config.backend == RagBackend.CHROMA:
             return AdminHealthCheck(
-                name="rag",
+                id="rag",
+                name="RAG",
                 status=HealthStatus.NOT_CHECKED,
                 message="Chroma RAG backend does not expose a cheap admin health probe.",
                 details={
@@ -203,9 +224,10 @@ class AdminHealthService:
             latest_retrieval_log_created_at = await self._session.scalar(
                 select(func.max(RagRetrievalLog.created_at))
             )
-        except Exception:
+        except SQLAlchemyError:
             return AdminHealthCheck(
-                name="rag",
+                id="rag",
+                name="RAG",
                 status=HealthStatus.UNHEALTHY,
                 latency_ms=elapsed_ms(started_at),
                 message="RAG storage health check failed.",
@@ -227,7 +249,8 @@ class AdminHealthService:
             else "RAG storage counts are available."
         )
         return AdminHealthCheck(
-            name="rag",
+            id="rag",
+            name="RAG",
             status=status,
             latency_ms=elapsed_ms(started_at),
             message=message,
@@ -254,9 +277,10 @@ class AdminHealthService:
 
     async def _check_llm_provider_metadata(self) -> AdminHealthCheck:
         return await self._build_provider_metadata_check(
-            name="llmProviderMetadata",
+            id="llm-provider",
+            name="LLM Provider",
             model=self._llm_config.model,
-            ok_message="Configured LLM provider returned model metadata.",
+            ok_message="LLM provider metadata",
             unresolved_message=(
                 "Configured LLM provider could not be resolved; provider liveness "
                 "could not be confirmed."
@@ -280,14 +304,16 @@ class AdminHealthService:
         }
         if not self._guardrails_need_provider_metadata():
             return AdminHealthCheck(
-                name="guardrails",
+                id="guardrails",
+                name="Guardrails",
                 status=HealthStatus.OK,
-                message="Guardrails configuration does not require a live judge model check.",
+                message="Regex mode does not require a judge model",
                 details=details,
             )
 
         check = await self._build_provider_metadata_check(
-            name="guardrails",
+            id="guardrails",
+            name="Guardrails",
             model=self._llm_config.guardrails_judge_model,
             ok_message="Guardrail judge provider returned model metadata.",
             unresolved_message=(
@@ -318,6 +344,7 @@ class AdminHealthService:
     async def _build_provider_metadata_check(
         self,
         *,
+        id: str,
         name: str,
         model: str,
         ok_message: str,
@@ -330,6 +357,7 @@ class AdminHealthService:
             provider = _provider_for_model(model)
         except Exception:
             return AdminHealthCheck(
+                id=id,
                 name=name,
                 status=HealthStatus.DEGRADED,
                 latency_ms=elapsed_ms(started_at),
@@ -351,6 +379,7 @@ class AdminHealthService:
             models = await self._get_provider_models(provider)
         except Exception:
             return AdminHealthCheck(
+                id=id,
                 name=name,
                 status=HealthStatus.DEGRADED,
                 latency_ms=elapsed_ms(started_at),
@@ -367,6 +396,7 @@ class AdminHealthService:
         }
         if not models:
             return AdminHealthCheck(
+                id=id,
                 name=name,
                 status=HealthStatus.DEGRADED,
                 latency_ms=elapsed_ms(started_at),
@@ -377,6 +407,7 @@ class AdminHealthService:
                 },
             )
         return AdminHealthCheck(
+            id=id,
             name=name,
             status=HealthStatus.OK,
             latency_ms=elapsed_ms(started_at),
@@ -396,7 +427,7 @@ class AdminHealthService:
 
     async def _count(self, column) -> int:
         value = await self._session.scalar(select(func.count(column)))
-        return int(value or 0)
+        return _count_value(value)
 
     async def _count_chunks_missing_embeddings(self) -> int:
         value = await self._session.scalar(
@@ -404,15 +435,19 @@ class AdminHealthService:
             .outerjoin(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
             .where(RagEmbedding.id.is_(None))
         )
-        return int(value or 0)
+        return _count_value(value)
 
     async def _count_configured_model_embeddings(self) -> int:
         value = await self._session.scalar(
             select(func.count(RagEmbedding.id)).where(
-                RagEmbedding.embedding_model == self._rag_config.model_name
+                *embedding_contract_filter(
+                    embedding_provider=self._rag_config.embedding_provider,
+                    embedding_model=self._rag_config.model_name,
+                    embedding_dimensions=self._rag_config.embedding_dimensions,
+                )
             )
         )
-        return int(value or 0)
+        return _count_value(value)
 
     async def _count_chunks_missing_configured_model_embeddings(self) -> int:
         value = await self._session.scalar(
@@ -421,12 +456,16 @@ class AdminHealthService:
                 RagEmbedding,
                 and_(
                     RagEmbedding.chunk_id == RagChunk.id,
-                    RagEmbedding.embedding_model == self._rag_config.model_name,
+                    *embedding_contract_filter(
+                        embedding_provider=self._rag_config.embedding_provider,
+                        embedding_model=self._rag_config.model_name,
+                        embedding_dimensions=self._rag_config.embedding_dimensions,
+                    ),
                 ),
             )
             .where(RagEmbedding.id.is_(None))
         )
-        return int(value or 0)
+        return _count_value(value)
 
 
 def _provider_for_model(model: str) -> str:
@@ -434,6 +473,12 @@ def _provider_for_model(model: str) -> str:
     if not provider:
         raise ValueError("LiteLLM did not resolve a provider for the configured model.")
     return provider
+
+
+def _count_value(value: int | None) -> int:
+    if value is None:
+        raise ValueError("COUNT query returned no scalar value.")
+    return int(value)
 
 
 def _aggregate_status(checks: list[AdminHealthCheck]) -> HealthStatus:

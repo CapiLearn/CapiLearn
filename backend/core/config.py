@@ -1,8 +1,10 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_VALID_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
 
 
 class Settings(BaseSettings):
@@ -11,6 +13,7 @@ class Settings(BaseSettings):
     app_name: str = "CapiLearn API"
     environment: str = "local"
     api_prefix: str = "/api"
+    api_docs_enabled: bool = False
     log_level: str = "INFO"
     log_format: Literal["json", "plain"] = "json"
     request_id_header: str = "X-Request-Id"
@@ -23,12 +26,21 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=list)
     clerk_secret_key: str | None = None
     clerk_jwt_key: str | None = None
+    clerk_webhook_signing_secret: str | None = None
     clerk_authorized_parties: list[str] = Field(default_factory=list)
     auth_mode: Literal["clerk", "test"] = "clerk"
     test_auth_clerk_id: str = "user_local_dev"
-    test_auth_email: str | None = None
-    test_auth_display_name: str | None = None
+    test_auth_first_name: str | None = "Local"
+    test_auth_last_name: str | None = "Dev"
     test_auth_role: Literal["student", "instructor", "admin"] = "student"
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        normalized = value.upper()
+        if normalized not in _VALID_LOG_LEVELS:
+            raise ValueError(f"log_level must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}")
+        return normalized
 
 
 @lru_cache

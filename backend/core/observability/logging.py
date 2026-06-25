@@ -39,7 +39,7 @@ class RequestContextFilter(logging.Filter):
 
 
 def configure_logging(config: Settings = settings) -> None:
-    level = getattr(logging, config.log_level.upper(), logging.INFO)
+    level = getattr(logging, config.log_level)
     formatter: logging.Formatter
     if config.log_format == "json":
         formatter = JsonFormatter()

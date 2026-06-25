@@ -1,43 +1,27 @@
-import { Link } from "react-router-dom";
+// import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   getAdminSystemHealth,
   getAdminUsageSummary,
 } from "../services/adminService";
 import "../styles/AdminDashboard.css";
+import { useAuth } from "@clerk/react";
+import LogoutButton from "../components/LogoutButton";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
 
 const adminNavItems = [
-  { id: "overview", label: "System Overview" },
-  { id: "users", label: "Users" },
+  { id: "overview", label: "System Overview", status: "available" },
+  /*
+   * These admin sections have not been implemented yet.
+  { id: "users", label: "Users", status: "coming-soon" },
+  { id: "ingestion", label: "Ingestion", status: "coming-soon" },
+  { id: "guardrails", label: "Guardrails", status: "coming-soon" },
+  { id: "logs", label: "Logs", status: "coming-soon" },
+   */
 ];
 
-const adminUsers = [
-  {
-    id: "user-1",
-    username: "Student Demo",
-    accessLevel: "Student",
-    totalMessagesSent: 42,
-    blockedRequests: 4,
-    lastActivity: "2026-06-08T15:22:00Z",
-  },
-  {
-    id: "user-2",
-    username: "Instructor Demo",
-    accessLevel: "Instructor",
-    totalMessagesSent: 87,
-    blockedRequests: 0,
-    lastActivity: "2026-06-08T14:10:00Z",
-  },
-  {
-    id: "user-3",
-    username: "Admin Demo",
-    accessLevel: "Admin",
-    totalMessagesSent: 31,
-    blockedRequests: 2,
-    lastActivity: "2026-06-08T12:45:00Z",
-  },
-];
-
+/*
+ * Recent events have not been implemented yet.
 const recentEvents = [
   {
     event: "Postgres health check passed",
@@ -60,6 +44,26 @@ const recentEvents = [
     type: "Safety",
   },
 ];
+ */
+
+function addUtcCalendarDay(dateString) {
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+
+  return date.toISOString().slice(0, 10);
+}
+
+function getDefaultDateRange() {
+  const today = new Date();
+  const fromDate = new Date();
+
+  fromDate.setDate(today.getDate() - 7);
+
+  return {
+    fromDate: fromDate.toISOString().slice(0, 10),
+    toDate: today.toISOString().slice(0, 10),
+  };
+}
 
 function getStatusClass(status) {
   if (status === "healthy") {
@@ -89,14 +93,6 @@ function formatCheckedAt(checkedAt) {
   return new Date(checkedAt).toLocaleString();
 }
 
-function formatDateTime(value) {
-  if (!value) {
-    return "Unavailable";
-  }
-
-  return new Date(value).toLocaleString();
-}
-
 function formatDetailValue(value) {
   if (value === null || value === undefined) {
     return "Unavailable";
@@ -119,6 +115,17 @@ function formatDetailLabel(label) {
     .replace(/^./, (character) => character.toUpperCase());
 }
 
+const hiddenHealthDetailKeys = new Set([
+  // Hide backend RAG index metadata from the admin health cards.
+  "indexVersion",
+]);
+
+function getVisibleDetailEntries(details) {
+  return Object.entries(details || {}).filter(
+    ([key]) => !hiddenHealthDetailKeys.has(key)
+  );
+}
+
 function AdminDashboard() {
   const [usageSummary, setUsageSummary] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);
@@ -126,15 +133,30 @@ function AdminDashboard() {
   const [isLoadingSystemHealth, setIsLoadingSystemHealth] = useState(false);
   const [usageErrorMessage, setUsageErrorMessage] = useState("");
   const [systemHealthErrorMessage, setSystemHealthErrorMessage] = useState("");
-  const [activeAdminSection, setActiveAdminSection] = useState("overview");
+  const [metricsDateRange, setMetricsDateRange] = useState(getDefaultDateRange);
+  const isMetricsDateRangeInvalid =
+    metricsDateRange.fromDate &&
+    metricsDateRange.toDate &&
+    metricsDateRange.fromDate > metricsDateRange.toDate;
+  const { getToken } = useAuth();  
 
   useEffect(() => {
     async function loadUsageSummary() {
+      if (isMetricsDateRangeInvalid) {
+        setUsageErrorMessage("Start date must be before or equal to end date.");
+        return;
+      }
+
       try {
         setIsLoadingUsage(true);
         setUsageErrorMessage("");
 
-        const data = await getAdminUsageSummary();
+        const apiDateRange = {
+          fromDate: metricsDateRange.fromDate,
+          toDate: addUtcCalendarDay(metricsDateRange.toDate),
+        };
+
+        const data = await getAdminUsageSummary(getToken, apiDateRange);
 
         setUsageSummary(data);
       } catch (error) {
@@ -146,12 +168,16 @@ function AdminDashboard() {
       }
     }
 
+    loadUsageSummary();
+  }, [getToken, metricsDateRange, isMetricsDateRangeInvalid]);
+
+  useEffect(() => {
     async function loadSystemHealth() {
       try {
         setIsLoadingSystemHealth(true);
         setSystemHealthErrorMessage("");
 
-        const data = await getAdminSystemHealth();
+        const data = await getAdminSystemHealth(getToken);
 
         setSystemHealth(data);
       } catch (error) {
@@ -163,12 +189,14 @@ function AdminDashboard() {
       }
     }
 
-    loadUsageSummary();
     loadSystemHealth();
-  }, []);
+  }, [getToken]);
 
   const metrics = usageSummary?.metrics;
-  const healthChecks = systemHealth?.checks || [];
+  const healthChecks = (systemHealth?.checks || []).map((check) => ({
+    ...check,
+    detailEntries: getVisibleDetailEntries(check.details),
+  }));
 
   const usageStats = [
     {
@@ -235,26 +263,33 @@ function AdminDashboard() {
     <main className="admin-page">
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <div className="admin-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="admin-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
         <nav className="admin-nav">
           {adminNavItems.map((item) => (
             <button
-              className={activeAdminSection === item.id ? "active" : ""}
+              className={item.id === "overview" ? "active" : ""}
+              disabled={item.status === "coming-soon"}
               key={item.id}
               type="button"
-              onClick={() => setActiveAdminSection(item.id)}
             >
-              {item.label}
+              <span>{item.label}</span>
+
+              {item.status === "coming-soon" && (
+                <small> Coming soon</small>
+              )}
             </button>
           ))}
         </nav>
 
-        <Link className="admin-logout-link" to="/">
-          Log out
-        </Link>
+        <LogoutButton className="admin-logout-link" />
 
         <div className="admin-profile-card">
           <div className="admin-avatar">A</div>
@@ -269,233 +304,205 @@ function AdminDashboard() {
         <header className="admin-header">
           <div>
             <p className="admin-kicker">Administrator Dashboard</p>
-            <h1>
-              {activeAdminSection === "users" ? "Users" : "System operations"}
-            </h1>
+            <h1>System Operations</h1>
             <p>
-              {activeAdminSection === "users"
-                ? "Review user access levels and individual guardrail usage."
-                : "Monitor service health, ingestion status, safety checks, and platform readiness."}
+              Monitor service health, ingestion status, safety checks, and
+              platform readiness.
             </p>
           </div>
 
+          {/* Instructor view has not been implemented yet.
           <Link className="admin-secondary-link" to="/instructor-dashboard">
             Instructor view
           </Link>
+          */}
         </header>
 
-        {activeAdminSection === "overview" && (
-          <>
-            {isLoadingUsage && (
-              <p className="admin-helper-message">
-                Loading admin usage data...
-              </p>
-            )}
-
-            {usageErrorMessage && (
-              <p className="admin-error-message">{usageErrorMessage}</p>
-            )}
-
-            <section className="admin-stat-grid">
-              {usageStats.map((stat) => (
-                <article className="admin-stat-card" key={stat.label}>
-                  <div className={`admin-status-dot ${stat.status}`}></div>
-                  <p>{stat.label}</p>
-                  <h2>{stat.value}</h2>
-                  <span>{stat.helper}</span>
-                </article>
-              ))}
-            </section>
-
-            <section className="admin-content-grid">
-              <article className="admin-panel">
-                <div className="admin-panel-header">
-                  <div>
-                    <p className="admin-panel-label">Service Health</p>
-                    <h2>Core system checks</h2>
-                  </div>
-
-                  <span
-                    className={`admin-overall-status ${getStatusClass(
-                      systemHealth?.overallStatus || "unknown"
-                    )}`}
-                  >
-                    {formatStatus(systemHealth?.overallStatus || "unknown")}
-                  </span>
-                </div>
-
-                <p className="admin-checked-at">
-                  Last checked: {formatCheckedAt(systemHealth?.checkedAt)}
-                </p>
-
-                {isLoadingSystemHealth && (
-                  <p className="admin-helper-message">
-                    Loading system health...
-                  </p>
-                )}
-
-                {systemHealthErrorMessage && (
-                  <p className="admin-error-message">
-                    {systemHealthErrorMessage}
-                  </p>
-                )}
-
-                {!isLoadingSystemHealth &&
-                  !systemHealthErrorMessage &&
-                  healthChecks.length === 0 && (
-                    <p className="admin-helper-message">
-                      No system health checks available.
-                    </p>
-                  )}
-
-                <div className="service-list">
-                  {healthChecks.map((check) => (
-                    <div className="service-row" key={check.id}>
-                      <div className="service-row-content">
-                        <div className="service-row-heading">
-                          <h3>{check.name}</h3>
-
-                          <span
-                            className={`admin-status-pill ${getStatusClass(
-                              check.status
-                            )}`}
-                          >
-                            {formatStatus(check.status)}
-                          </span>
-                        </div>
-
-                        <p>{check.message}</p>
-
-                        {check.latencyMs !== null &&
-                          check.latencyMs !== undefined && (
-                            <p className="service-latency">
-                              Latency: {check.latencyMs} ms
-                            </p>
-                          )}
-
-                        {check.details &&
-                          Object.keys(check.details).length > 0 && (
-                            <dl className="service-details-list">
-                              {Object.entries(check.details).map(
-                                ([key, value]) => (
-                                  <div
-                                    className="service-detail-item"
-                                    key={key}
-                                  >
-                                    <dt>{formatDetailLabel(key)}</dt>
-                                    <dd>{formatDetailValue(value)}</dd>
-                                  </div>
-                                )
-                              )}
-                            </dl>
-                          )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </article>
-
-              <aside className="admin-side-stack">
-                <article className="admin-panel">
-                  <p className="admin-panel-label">Usage Details</p>
-                  <h2>Response and cost metrics</h2>
-
-                  <div className="usage-detail-list">
-                    {operationalStats.map((item) => (
-                      <div className="usage-detail-item" key={item.label}>
-                        <p>{item.label}</p>
-                        <h3>{item.value}</h3>
-                        <span>{item.helper}</span>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-
-                <article className="admin-panel admin-safety-card">
-                  <p className="admin-panel-label">Safety</p>
-                  <h2>Guided learning mode active</h2>
-                  <p>
-                    The assistant is configured to guide students with hints and
-                    questions instead of giving direct answers.
-                  </p>
-                </article>
-              </aside>
-            </section>
-
-            <section className="admin-panel events-panel">
-              <div className="admin-panel-header">
-                <div>
-                  <p className="admin-panel-label">Recent Events</p>
-                  <h2>Operational activity</h2>
-                </div>
-              </div>
-
-              <div className="events-table-wrapper">
-                <table className="events-table">
-                  <thead>
-                    <tr>
-                      <th>Event</th>
-                      <th>Type</th>
-                      <th>Time</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {recentEvents.map((event) => (
-                      <tr key={`${event.event}-${event.time}`}>
-                        <td>{event.event}</td>
-                        <td>
-                          <span className="event-type-pill">{event.type}</span>
-                        </td>
-                        <td>{event.time}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
+        {isLoadingUsage && (
+          <p className="admin-helper-message">Loading admin usage data...</p>
         )}
 
-        {activeAdminSection === "users" && (
-          <section className="admin-panel users-panel">
+        {usageErrorMessage && (
+          <p className="admin-error-message">{usageErrorMessage}</p>
+        )}
+
+        <section className="admin-stat-grid">
+          {usageStats.map((stat) => (
+            <article className="admin-stat-card" key={stat.label}>
+              <div className={`admin-status-dot ${stat.status}`}></div>
+              <p>{stat.label}</p>
+              <h2>{stat.value}</h2>
+              <span>{stat.helper}</span>
+            </article>
+          ))}
+        </section>
+
+        <section className="admin-content-grid">
+          <article className="admin-panel">
             <div className="admin-panel-header">
               <div>
-                <p className="admin-panel-label">Users</p>
-                <h2>User access and guardrail usage</h2>
+                <p className="admin-panel-label">Service Health</p>
+                <h2>Core System Checks</h2>
               </div>
-              <span>Local preview</span>
+
+              <span
+                className={`admin-overall-status ${getStatusClass(
+                  systemHealth?.overallStatus || "unknown"
+                )}`}
+              >
+                {formatStatus(systemHealth?.overallStatus || "unknown")}
+              </span>
             </div>
 
-            <div className="users-table-wrapper">
-              <table className="users-table">
-                <thead>
-                  <tr>
-                    <th>Username</th>
-                    <th>Access level</th>
-                    <th>Total messages sent</th>                   
-                    <th>Blocked requests</th>
-                    <th>Last activity</th>
+            <p className="admin-checked-at">
+              Last checked: {formatCheckedAt(systemHealth?.checkedAt)}
+            </p>
+
+            {isLoadingSystemHealth && (
+              <p className="admin-helper-message">Loading system health...</p>
+            )}
+
+            {systemHealthErrorMessage && (
+              <p className="admin-error-message">{systemHealthErrorMessage}</p>
+            )}
+
+            {!isLoadingSystemHealth &&
+              !systemHealthErrorMessage &&
+              healthChecks.length === 0 && (
+                <p className="admin-helper-message">
+                  No system health checks available.
+                </p>
+              )}
+
+            <div className="service-list">
+              {healthChecks.map((check) => (
+                <div className="service-row" key={check.id}>
+                  <div className="service-row-content">
+                    <div className="service-row-heading">
+                      <h3>{check.name}</h3>
+
+                      <span
+                        className={`admin-status-pill ${getStatusClass(
+                          check.status
+                        )}`}
+                      >
+                        {formatStatus(check.status)}
+                      </span>
+                    </div>
+
+                    <p>{check.message}</p>
+
+                    {check.latencyMs !== null && check.latencyMs !== undefined && (
+                      <p className="service-latency">Latency: {check.latencyMs} ms</p>
+                    )}
+
+                    {check.detailEntries.length > 0 && (
+                      <dl className="service-details-list">
+                        {check.detailEntries.map(([key, value]) => (
+                          <div className="service-detail-item" key={key}>
+                            <dt>{formatDetailLabel(key)}</dt>
+                            <dd>{formatDetailValue(value)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <aside className="admin-side-stack">
+            <article className="admin-panel">
+              <p className="admin-panel-label">Usage Details</p>
+              <h2>Response and Cost Metrics</h2>
+
+              <div className="metrics-date-controls">
+                <label>
+                  From
+                  <input
+                    type="date"
+                    value={metricsDateRange.fromDate}
+                    max={metricsDateRange.toDate}
+                    onChange={(event) =>
+                      setMetricsDateRange((currentRange) => ({
+                        ...currentRange,
+                        fromDate: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  To
+                  <input
+                    type="date"
+                    value={metricsDateRange.toDate}
+                    min={metricsDateRange.fromDate}
+                    onChange={(event) =>
+                      setMetricsDateRange((currentRange) => ({
+                        ...currentRange,
+                        toDate: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+
+              {isMetricsDateRangeInvalid && (
+                <p className="metrics-date-error">
+                  Start date must be before or equal to end date.
+                </p>
+              )}
+
+              <div className="usage-detail-list">
+                {operationalStats.map((item) => (
+                  <div className="usage-detail-item" key={item.label}>
+                    <p>{item.label}</p>
+                    <h3>{item.value}</h3>
+                    <span>{item.helper}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </aside>
+        </section>
+
+        {/* Recent events have not been implemented yet.
+        <section className="admin-panel events-panel">
+          <div className="admin-panel-header">
+            <div>
+              <p className="admin-panel-label">Recent Events</p>
+              <h2>Operational activity</h2>
+            </div>
+            <button className="admin-outline-button">View all logs</button>
+          </div>
+
+          <div className="events-table-wrapper">
+            <table className="events-table">
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>Type</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {recentEvents.map((event) => (
+                  <tr key={`${event.event}-${event.time}`}>
+                    <td>{event.event}</td>
+                    <td>
+                      <span className="event-type-pill">{event.type}</span>
+                    </td>
+                    <td>{event.time}</td>
                   </tr>
-                </thead>
-
-                <tbody>
-                  {adminUsers.map((user) => (
-                    <tr key={user.id}>
-                      <td>{user.username}</td>
-                      <td>
-                        <span className="access-level-pill">{user.accessLevel}</span>
-                      </td>
-                      <td>{user.totalMessagesSent.toLocaleString()}</td>
-                      <td>{user.blockedRequests.toLocaleString()}</td>
-                      <td>{formatDateTime(user.lastActivity)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        */}
       </section>
     </main>
   );

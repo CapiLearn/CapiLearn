@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import FastAPI, Request, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -34,7 +34,3 @@ async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
             details=exc.details,
         ).model_dump(),
     )
-
-
-def register_exception_handlers(app: FastAPI) -> None:
-    app.add_exception_handler(ApiError, api_error_handler)

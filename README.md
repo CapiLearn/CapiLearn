@@ -149,11 +149,16 @@ frontend/
     required after upgrading so the active corpus uses the new metadata and
     `markdown-structure-v3` chunker.
 
-6. Ingest the pgvector corpus:
+6. Ingest the pgvector corpus manually:
 
     ```bash
     uv run python -m backend.ingestion.ingest_pgvector
     ```
+
+    These are manual RAG maintenance/ingestion commands. Do not put ingestion
+    commands in the Render backend start command or the frontend build command.
+    Render backend startup should only start the API server; it should not
+    ingest corpus data during startup.
 
     The current corpus should produce 72 active documents, 4,274 active chunks,
     and 4,274 active 384-dimensional embeddings. Stale-source reconciliation is
@@ -171,11 +176,14 @@ frontend/
 
     ```env
     RAG_BACKEND=pgvector
+    RAG_EMBEDDING_PROVIDER=openai
+    RAG_MODEL_NAME=text-embedding-3-small
+    RAG_EMBEDDING_DIMENSIONS=384
     RAG_WRITE_RETRIEVAL_LOGS=true
     ```
 
-    Chroma remains available as a rollback path with `RAG_BACKEND=chroma`.
-    Restart the backend whenever this setting changes.
+    `RAG_BACKEND=chroma` is no longer supported. Restart the backend whenever
+    RAG settings change.
 
 8. Start the FastAPI backend:
 

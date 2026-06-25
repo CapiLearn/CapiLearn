@@ -1,5 +1,4 @@
 import logging
-from decimal import Decimal
 from uuid import UUID
 
 from fastapi import status
@@ -7,9 +6,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.schemas import CurrentUser
 from backend.chat.models import Conversation, Message, utc_now
-from backend.chat.repository import ChatRepository
+from backend.chat.repository import ChatRepository, MessageSequenceConflictError
 from backend.chat.schemas import (
     ConversationListResponse,
     ConversationResponse,
@@ -22,13 +20,16 @@ from backend.chat.schemas import (
 )
 from backend.core.exceptions import ApiError
 from backend.core.observability import (
+    LLMTraceOperation,
     LLMTraceSink,
+    NoopLLMTraceSink,
     elapsed_ms,
     get_request_id,
     log_event,
     new_request_id,
     timer_start,
 )
+from backend.llm.config import llm_settings
 from backend.llm.prompts import build_user_message_content
 from backend.llm.schemas import (
     ChatMessage,
@@ -37,6 +38,7 @@ from backend.llm.schemas import (
     LLMResult,
 )
 from backend.llm.service import LLMService, LLMServiceError
+from backend.rag.config import rag_settings
 from backend.rag.schemas import RetrievedChunk
 
 RECENT_RETRIEVED_CONTEXT_TURNS = 3
@@ -48,21 +50,21 @@ class ChatService:
         self,
         *,
         session: AsyncSession,
-        current_user: CurrentUser,
+        user_id: UUID,
         llm_service: LLMService,
         repository: ChatRepository | None = None,
         trace_sink: LLMTraceSink | None = None,
     ) -> None:
         self._session = session
-        self._current_user = current_user
+        self._user_id = user_id
         self._llm_service = llm_service
         self._repository = repository or ChatRepository()
-        self._trace_sink = trace_sink or LLMTraceSink()
+        self._trace_sink = trace_sink or NoopLLMTraceSink()
 
     async def list_conversations(self) -> ConversationListResponse:
         conversations = await self._repository.list_conversations(
             self._session,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         return ConversationListResponse(
             conversations=[
@@ -75,7 +77,7 @@ class ChatService:
         messages = await self._repository.list_messages(
             self._session,
             conversation_id=conversation.id,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         return MessageListResponse(
             messages=[self._message_response(message) for message in messages],
@@ -93,8 +95,12 @@ class ChatService:
         title = _title_from_content(content)
         conversation = await self._repository.create_conversation(
             self._session,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
             title=title,
+            model_profile_key=llm_settings.model_profile_key,
+            model_profile_version=llm_settings.model_profile_version,
+            guardrails_config_id=llm_settings.guardrails_config_id,
+            rag_index_version=rag_settings.index_version,
         )
         return await self._create_message(conversation=conversation, content=content, history=[])
 
@@ -107,7 +113,7 @@ class ChatService:
         existing_messages = await self._repository.list_messages(
             self._session,
             conversation_id=conversation.id,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         history = _history_from_messages(existing_messages)
         return await self._create_message(
@@ -126,45 +132,37 @@ class ChatService:
         turn_started_at = timer_start()
         request_id = get_request_id() or new_request_id()
         try:
-            user_message = await self._repository.create_message(
+            user_message, assistant_message = await self._repository.create_turn_messages(
                 self._session,
                 conversation=conversation,
-                user_id=self._current_user.id,
-                role=MessageRole.USER,
-                status=MessageStatus.COMPLETED,
+                user_id=self._user_id,
                 content=content,
+                request_id=request_id,
             )
-            assistant_message = await self._repository.create_message(
-                self._session,
-                conversation=conversation,
-                user_id=self._current_user.id,
-                role=MessageRole.ASSISTANT,
-                status=MessageStatus.PENDING,
-                content="",
-            )
-            _set_correlation_metadata(user_message, request_id=request_id)
-            _set_correlation_metadata(assistant_message, request_id=request_id)
             await self._session.commit()
-        except IntegrityError as exc:
+        except MessageSequenceConflictError as exc:
             await self._session.rollback()
             raise ApiError(
                 code="message_sequence_conflict",
                 message="Message ordering conflict. Please retry your request.",
                 status_code=status.HTTP_409_CONFLICT,
             ) from exc
+        except IntegrityError:
+            await self._session.rollback()
+            raise
 
         event_fields = _chat_event_fields(
-            current_user=self._current_user,
+            user_id=self._user_id,
             conversation=conversation,
             user_message=user_message,
             assistant_message=assistant_message,
             request_id=request_id,
         )
-        await self._trace_sink.start_chat_turn(event_fields)
+        await self._trace_sink.record(LLMTraceOperation.START_CHAT_TURN, event_fields)
         log_event(logger, "chat.turn.started", **event_fields)
 
         request = LLMRequest(
-            user_id=self._current_user.id,
+            user_id=self._user_id,
             conversation_id=conversation.id,
             user_message_id=user_message.id,
             assistant_message_id=assistant_message.id,
@@ -190,8 +188,8 @@ class ChatService:
                 "latency_ms": latency_ms,
                 "error_type": type(original_exc).__name__,
             }
-            await self._trace_sink.record_error(failed_fields)
-            await self._trace_sink.finish_chat_turn(failed_fields)
+            await self._trace_sink.record(LLMTraceOperation.RECORD_ERROR, failed_fields)
+            await self._trace_sink.record(LLMTraceOperation.FINISH_CHAT_TURN, failed_fields)
             log_event(logger, "chat.turn.failed", level=logging.ERROR, **failed_fields)
             raise ApiError(
                 code="llm_unavailable",
@@ -203,6 +201,11 @@ class ChatService:
         if result.input_guardrail_result.blocked or result.output_guardrail_result.blocked:
             await self._save_user_retrieval(user_message, result)
             await self._mark_blocked(assistant_message, result, latency_ms=latency_ms)
+            _warn_missing_provider_response(
+                result,
+                event_fields=event_fields,
+                status=MessageStatus.BLOCKED,
+            )
             blocked_fields = {
                 **event_fields,
                 **_provider_event_fields(result),
@@ -212,18 +215,23 @@ class ChatService:
                 "input_blocked": result.input_guardrail_result.blocked,
                 "output_blocked": result.output_guardrail_result.blocked,
             }
-            await self._trace_sink.finish_chat_turn(blocked_fields)
+            await self._trace_sink.record(LLMTraceOperation.FINISH_CHAT_TURN, blocked_fields)
             log_event(logger, "chat.turn.blocked", **blocked_fields)
         else:
             await self._save_user_retrieval(user_message, result)
             await self._mark_completed(assistant_message, result, latency_ms=latency_ms)
+            _warn_missing_provider_response(
+                result,
+                event_fields=event_fields,
+                status=MessageStatus.COMPLETED,
+            )
             completed_fields = {
                 **event_fields,
                 **_provider_event_fields(result),
                 "status": MessageStatus.COMPLETED.value,
                 "latency_ms": latency_ms,
             }
-            await self._trace_sink.finish_chat_turn(completed_fields)
+            await self._trace_sink.record(LLMTraceOperation.FINISH_CHAT_TURN, completed_fields)
             log_event(logger, "chat.turn.completed", **completed_fields)
 
         finish_reason = None
@@ -242,7 +250,7 @@ class ChatService:
         conversation = await self._repository.get_conversation(
             self._session,
             conversation_id=conversation_id,
-            user_id=self._current_user.id,
+            user_id=self._user_id,
         )
         if conversation is None:
             raise ApiError(
@@ -271,7 +279,6 @@ class ChatService:
             by_alias=True,
         )
         _apply_provider_response(message, result)
-        _apply_legacy_estimated_cost(message, result)
         await self._repository.create_llm_cost_components(
             self._session,
             components=result.cost_components,
@@ -299,7 +306,6 @@ class ChatService:
             by_alias=True,
         )
         _apply_provider_response(message, result)
-        _apply_legacy_estimated_cost(message, result)
         await self._repository.create_llm_cost_components(
             self._session,
             components=result.cost_components,
@@ -345,7 +351,7 @@ class ChatService:
             id=message.id,
             conversation_id=message.conversation_id,
             role=MessageRole(message.role),
-            content=message.content or "",
+            content=_message_content_for_response(message),
             status=MessageStatus(message.status),
             created_at=message.created_at,
         )
@@ -359,7 +365,7 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
             continue
         if message.role not in {MessageRole.USER.value, MessageRole.ASSISTANT.value}:
             continue
-        content = message.content or ""
+        content = _required_message_content(message)
         if message.role == MessageRole.USER.value and message.id in recent_user_message_ids:
             chunks = _chunks_from_stored_refs(message.retrieved_context or [])
             content = _history_user_content(content, chunks)
@@ -367,10 +373,29 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
     return history
 
 
-def _set_correlation_metadata(message: Message, *, request_id: str) -> None:
-    metadata = dict(message.extra_metadata or {})
-    metadata["requestId"] = request_id
-    message.extra_metadata = metadata
+def _message_content_for_response(message: Message) -> str:
+    if message.content is not None:
+        return message.content
+
+    role = MessageRole(message.role)
+    status = MessageStatus(message.status)
+    if role == MessageRole.ASSISTANT and status in {
+        MessageStatus.PENDING,
+        MessageStatus.FAILED,
+    }:
+        return ""
+
+    return _required_message_content(message)
+
+
+def _required_message_content(message: Message) -> str:
+    if message.content is not None:
+        return message.content
+
+    raise ValueError(
+        "Persisted chat message is missing required content "
+        f"(message_id={message.id}, role={message.role}, status={message.status})"
+    )
 
 
 def _apply_provider_response(message: Message, result: LLMResult) -> None:
@@ -378,20 +403,25 @@ def _apply_provider_response(message: Message, result: LLMResult) -> None:
     if provider_response is None:
         return
     message.finish_reason = provider_response.finish_reason
-    message.prompt_tokens = provider_response.prompt_tokens
-    message.completion_tokens = provider_response.completion_tokens
-    message.total_tokens = provider_response.total_tokens
     message.provider_response = provider_response.raw_response
 
 
-def _apply_legacy_estimated_cost(message: Message, result: LLMResult) -> None:
-    component_costs = [
-        component.estimated_cost_usd
-        for component in result.cost_components
-        if component.estimated_cost_usd is not None
-    ]
-    if component_costs:
-        message.estimated_cost_usd = sum(component_costs, Decimal("0"))
+def _warn_missing_provider_response(
+    result: LLMResult,
+    *,
+    event_fields: dict,
+    status: MessageStatus,
+) -> None:
+    if result.provider_response is not None:
+        return
+
+    log_event(
+        logger,
+        "chat.turn.provider_response_missing",
+        level=logging.WARNING,
+        **event_fields,
+        status=status.value,
+    )
 
 
 def _original_llm_exception(exc: Exception) -> Exception:
@@ -402,7 +432,7 @@ def _original_llm_exception(exc: Exception) -> Exception:
 
 def _chat_event_fields(
     *,
-    current_user: CurrentUser,
+    user_id: UUID,
     conversation: Conversation,
     user_message: Message,
     assistant_message: Message,
@@ -410,7 +440,7 @@ def _chat_event_fields(
 ) -> dict:
     return {
         "request_id": request_id,
-        "user_id": str(current_user.id),
+        "user_id": str(user_id),
         "conversation_id": str(conversation.id),
         "user_message_id": str(user_message.id),
         "assistant_message_id": str(assistant_message.id),
@@ -456,8 +486,8 @@ def _chunks_from_stored_refs(chunk_refs: list[dict]) -> list[RetrievedChunk]:
     for chunk_ref in chunk_refs:
         try:
             chunks.append(RetrievedChunk.model_validate(chunk_ref))
-        except ValidationError:
-            continue
+        except (TypeError, ValidationError) as exc:
+            raise ValueError("Stored retrieved context is malformed") from exc
     return chunks
 
 

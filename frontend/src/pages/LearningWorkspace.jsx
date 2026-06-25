@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+// import { Link } from "react-router-dom";
 import MarkdownMessage from "../components/MarkdownMessage";
-import capiFavicon from "../assets/capilearn-favicon.svg";
+import { useAuth } from "@clerk/react";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
+import capiBooksIcon from "../assets/capi_books.png";
+import LogoutButton from "../components/LogoutButton";
 
 import {
   createConversation,
@@ -12,21 +15,7 @@ import {
 
 import "../styles/LearningWorkspace.css";
 
-const suggestedPrompts = [
-  "Help me understand this lesson",
-  "Ask me a guiding question",
-  "Point me to the right course material",
-  "Help me think through this bug",
-];
-
-const initialChatMessages = [
-  {
-    id: "mock-assistant-welcome",
-    role: "assistant",
-    content:
-      "Hi, I’m Capi. What lesson, assignment, or concept would you like help thinking through?",
-  },
-];
+const initialChatMessages = [];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -200,13 +189,14 @@ function LearningWorkspace() {
   const [messageSearchTerm, setMessageSearchTerm] = useState("");
   const [conversationSearchTerm, setConversationSearchTerm] = useState("");
   const [currentDate, setCurrentDate] = useState(() => new Date());
+  const { getToken } = useAuth();
 
   useEffect(() => {
     async function loadConversations() {
       try {
         setIsLoadingConversations(true);
 
-        const data = await listConversations();
+        const data = await listConversations(getToken);
 
         setConversations(data.conversations || []);
       } catch (error) {
@@ -217,7 +207,7 @@ function LearningWorkspace() {
     }
 
     loadConversations();
-  }, []);
+  }, [getToken]);
 
   useEffect(() => {
     const timerId = setInterval(() => {
@@ -243,7 +233,7 @@ function LearningWorkspace() {
       setErrorMessage("");
 
       if (targetConversationId) {
-        const data = await createMessage(targetConversationId, trimmedMessage);
+        const data = await createMessage(targetConversationId, trimmedMessage, getToken);
 
         if (activeConversationIdRef.current === targetConversationId) {
           setChatMessages((currentMessages) => [
@@ -253,7 +243,7 @@ function LearningWorkspace() {
           ]);
         }
       } else {
-        const data = await createConversation(trimmedMessage);
+        const data = await createConversation(trimmedMessage, getToken);
         const newConversationId = data.conversation.id;
 
         if (activeConversationIdRef.current === null) {
@@ -296,7 +286,7 @@ function LearningWorkspace() {
     setMessageSearchTerm("");
 
     try {
-      const data = await listMessages(selectedConversationId);
+      const data = await listMessages(selectedConversationId, getToken);
 
       if (activeConversationIdRef.current !== selectedConversationId) {
         return;
@@ -354,13 +344,18 @@ function LearningWorkspace() {
   );
 
   const calendarTitle = formatCalendarTitle(currentDate);
-  const currentDay = String(currentDate.getDate());  
+  const currentDay = String(currentDate.getDate());
 
   return (
     <main className="workspace-page">
       <aside className="workspace-sidebar">
         <div className="workspace-brand">
-          <div className="workspace-brand-icon">🌿</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="workspace-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
@@ -418,10 +413,7 @@ function LearningWorkspace() {
           </section>
         </div>
 
-        <Link className="workspace-logout-link" to="/">
-          Log out
-        </Link>
-
+        <LogoutButton className="workspace-logout-link" />
         <div className="student-profile">
           <div className="student-avatar">J</div>
           <div>
@@ -438,19 +430,22 @@ function LearningWorkspace() {
             <h1>What would you like to learn today?</h1>
           </div>
 
+          {/* Student dashboard has not been implemented yet.
           <div className="workspace-header-actions">
-            <button className="workspace-help-button">Guided mode</button>
-
             <Link className="workspace-dashboard-link" to="/student-dashboard">
               Dashboard
             </Link>
           </div>
+          */}
         </header>
 
         <section className="welcome-card">
-          <div className="capi-avatar">
-            <img src={capiFavicon} alt="Capi reading a book" />
-          </div>
+          <img
+            src={capiBooksIcon}
+            alt=""
+            className="capi-avatar"
+            aria-hidden="true"
+          />
 
           <div>
             <h2>Hi, I’m Capi.</h2>
@@ -459,23 +454,6 @@ function LearningWorkspace() {
               the right course material. I won’t give direct answers, but I’ll
               help you think through the next step.
             </p>
-          </div>
-        </section>
-
-        <section className="suggested-section">
-          <h2>Try asking</h2>
-
-          <div className="prompt-grid">
-            {suggestedPrompts.map((prompt) => (
-              <button
-                className="prompt-card"
-                key={prompt}
-                type="button"
-                onClick={() => setInputValue(prompt)}
-              >
-                {prompt}
-              </button>
-            ))}
           </div>
         </section>
 
@@ -521,20 +499,19 @@ function LearningWorkspace() {
               }`}
               key={message.id}
             >
-          
-            {message.role === "assistant" ? (
-              <MarkdownMessage
-                content={message.content}
-                searchTerm={messageSearchTerm}
-              />
-            ) : (
-              <p>
-                <HighlightedText
-                  text={message.content}
+              {message.role === "assistant" ? (
+                <MarkdownMessage
+                  content={message.content}
                   searchTerm={messageSearchTerm}
                 />
-              </p>
-            )}  
+              ) : (
+                <p>
+                  <HighlightedText
+                    text={message.content}
+                    searchTerm={messageSearchTerm}
+                  />
+                </p>
+              )}
             </div>
           ))}
 
@@ -589,37 +566,15 @@ function LearningWorkspace() {
           <div className="calendar-grid">
             {calendarDays.map((day, index) => (
               <div
-                className={`calendar-day ${day === currentDay ? "active-day" : ""}`}
+                className={`calendar-day ${
+                  day === currentDay ? "active-day" : ""
+                }`}
                 key={`${day}-${index}`}
               >
                 {day}
               </div>
             ))}
-          </div>    
-
-        </section>
-
-        <section className="tracker-card progress-card">
-          <div className="progress-heading">
-            <p className="card-label">Weekly goal</p>
-            <strong>70%</strong>
           </div>
-
-          <div className="progress-bar">
-            <div className="progress-fill"></div>
-          </div>
-
-          <p className="progress-note">
-            You completed 7 of 10 planned study sessions.
-          </p>
-        </section>
-
-        <section className="tracker-card encouragement-card">
-          <h2>One step at a time</h2>
-          <p>
-            When you feel stuck, ask for a hint, not the answer. That is how the
-            learning sticks.
-          </p>
         </section>
       </aside>
     </main>

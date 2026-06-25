@@ -1,72 +1,99 @@
-from backend.rag.embeddings import SentenceTransformerEmbeddingProvider
+from types import SimpleNamespace
+
+import pytest
+
+from backend.rag.defaults import DEFAULT_RAG_EMBEDDING_DIMENSIONS, DEFAULT_RAG_MODEL_NAME
+from backend.rag.embeddings import OpenAIEmbeddingProvider
 
 
-def test_embedding_provider_reuses_model_for_same_model_name() -> None:
-    factory = CountingModelFactory()
-    provider = SentenceTransformerEmbeddingProvider(model_factory=factory)
-
-    first = provider.embed_query("first", model_name="model-a")
-    second = provider.embed_query("second", model_name="model-a")
-
-    assert first == [0.0, 1.0]
-    assert second == [0.0, 1.0]
-    assert factory.calls == ["model-a"]
-    assert factory.models["model-a"].queries == ["first", "second"]
-
-
-def test_embedding_provider_loads_separate_models_by_model_name() -> None:
-    factory = CountingModelFactory()
-    provider = SentenceTransformerEmbeddingProvider(model_factory=factory)
-
-    provider.embed_query("first", model_name="model-a")
-    provider.embed_query("second", model_name="model-b")
-
-    assert factory.calls == ["model-a", "model-b"]
-    assert factory.models["model-a"].queries == ["first"]
-    assert factory.models["model-b"].queries == ["second"]
-
-
-def test_embedding_provider_normalizes_tolist_embedding_results() -> None:
-    provider = SentenceTransformerEmbeddingProvider(
-        model_factory=lambda name: FakeEmbeddingModel(VectorWithToList([0.2, 0.8]))
+def test_openai_embedding_provider_embeds_query_with_configured_dimensions() -> None:
+    client = FakeEmbeddingClient()
+    provider = OpenAIEmbeddingProvider(
+        embedding_client=client,
+        api_key="test-key",
     )
 
-    assert provider.embed_query("query", model_name="model-a") == [0.2, 0.8]
+    result = provider.embed_query("What is state?", model_name=DEFAULT_RAG_MODEL_NAME)
+
+    assert result == [0.0] * DEFAULT_RAG_EMBEDDING_DIMENSIONS
+    assert client.calls == [
+        {
+            "model": DEFAULT_RAG_MODEL_NAME,
+            "input": ["What is state?"],
+            "dimensions": DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+            "api_key": "test-key",
+        }
+    ]
 
 
-def test_embedding_provider_normalizes_list_like_embedding_results() -> None:
-    provider = SentenceTransformerEmbeddingProvider(
-        model_factory=lambda name: FakeEmbeddingModel((0.3, 0.7))
+def test_openai_embedding_provider_embeds_documents() -> None:
+    client = FakeEmbeddingClient(
+        vectors=[
+            [0.1] * DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+            [0.3] * DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+        ]
+    )
+    provider = OpenAIEmbeddingProvider(
+        embedding_client=client,
+        api_key="test-key",
     )
 
-    assert provider.embed_query("query", model_name="model-a") == [0.3, 0.7]
+    result = provider.embed_documents(
+        ["First", "Second"],
+        model_name=DEFAULT_RAG_MODEL_NAME,
+        embedding_dimensions=DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+    )
+
+    assert result == [
+        [0.1] * DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+        [0.3] * DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+    ]
 
 
-class CountingModelFactory:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.models: dict[str, FakeEmbeddingModel] = {}
+def test_openai_embedding_provider_rejects_wrong_vector_dimensions() -> None:
+    client = FakeEmbeddingClient(vectors=[[0.1, 0.2]])
+    provider = OpenAIEmbeddingProvider(
+        embedding_client=client,
+        api_key="test-key",
+    )
 
-    def __call__(self, model_name: str) -> "FakeEmbeddingModel":
-        self.calls.append(model_name)
-        model = FakeEmbeddingModel([0.0, 1.0])
-        self.models[model_name] = model
-        return model
-
-
-class FakeEmbeddingModel:
-    def __init__(self, vector) -> None:
-        self.vector = vector
-        self.queries: list[str] = []
-
-    def encode(self, query_text: str):
-        self.queries.append(query_text)
-        return self.vector
+    with pytest.raises(ValueError, match="expected 384"):
+        provider.embed_documents(
+            ["First"],
+            model_name=DEFAULT_RAG_MODEL_NAME,
+            embedding_dimensions=DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+        )
 
 
-class VectorWithToList:
-    def __init__(self, vector: list[float]) -> None:
-        self._vector = vector
+def test_openai_embedding_provider_rejects_missing_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    def tolist(self) -> list[float]:
-        return self._vector
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        OpenAIEmbeddingProvider()
+
+
+def test_openai_embedding_provider_rejects_non_openai_contract() -> None:
+    with pytest.raises(ValueError, match="local embedding fallback"):
+        OpenAIEmbeddingProvider(
+            embedding_provider="sentence-transformers",
+            api_key="test-key",
+        )
+
+
+class FakeEmbeddingClient:
+    def __init__(self, *, vectors: list[list[float]] | None = None) -> None:
+        self.vectors = vectors or [[0.0] * DEFAULT_RAG_EMBEDDING_DIMENSIONS]
+        self.calls = []
+
+    def __call__(self, *, model, input, dimensions, api_key=None):
+        self.calls.append(
+            {
+                "model": model,
+                "input": input,
+                "dimensions": dimensions,
+                "api_key": api_key,
+            }
+        )
+        return SimpleNamespace(
+            data=[SimpleNamespace(embedding=vector) for vector in self.vectors],
+        )
