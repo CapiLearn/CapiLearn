@@ -10,7 +10,7 @@ from backend.llm.schemas import LLMCostComponent as LLMCostComponentRecord
 
 
 @pytest.mark.asyncio
-async def test_create_conversation_persists_explicit_metadata() -> None:
+async def test_create_conversation_persists_explicit_configuration_fields() -> None:
     session = FakeSession()
     repository = ChatRepository()
 
@@ -63,7 +63,6 @@ async def test_create_llm_cost_components_persists_assistant_message_id() -> Non
 @pytest.mark.asyncio
 async def test_create_turn_messages_persists_adjacent_user_and_assistant_messages() -> None:
     user_id = uuid4()
-    request_id = "req_123"
     session = FakeSession(scalar_result=4)
     repository = ChatRepository()
     conversation = _conversation(user_id=user_id)
@@ -73,7 +72,6 @@ async def test_create_turn_messages_persists_adjacent_user_and_assistant_message
         conversation=conversation,
         user_id=user_id,
         content="Explain cells.",
-        request_id=request_id,
     )
 
     assert session.scalar_count == 1
@@ -85,14 +83,12 @@ async def test_create_turn_messages_persists_adjacent_user_and_assistant_message
     assert user_message.role == MessageRole.USER.value
     assert user_message.status == MessageStatus.COMPLETED.value
     assert user_message.content == "Explain cells."
-    assert user_message.extra_metadata == {"requestId": request_id}
     assert assistant_message.conversation_id == conversation.id
     assert assistant_message.user_id == user_id
     assert assistant_message.sequence == 6
     assert assistant_message.role == MessageRole.ASSISTANT.value
     assert assistant_message.status == MessageStatus.PENDING.value
     assert assistant_message.content == ""
-    assert assistant_message.extra_metadata == {"requestId": request_id}
 
 
 @pytest.mark.asyncio
@@ -109,7 +105,6 @@ async def test_create_turn_messages_maps_sequence_conflict_to_domain_error() -> 
             conversation=_conversation(user_id=user_id),
             user_id=user_id,
             content="Explain cells.",
-            request_id="req_123",
         )
 
     assert session.scalar_count == 1
@@ -129,7 +124,6 @@ async def test_create_turn_messages_reraises_unrelated_integrity_error() -> None
             conversation=_conversation(user_id=user_id),
             user_id=user_id,
             content="Explain cells.",
-            request_id="req_123",
         )
 
     assert exc_info.value is integrity_error

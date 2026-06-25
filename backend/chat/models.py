@@ -46,7 +46,6 @@ class Conversation(Base):
     model_profile_version: Mapped[str | None] = mapped_column(String(120))
     guardrails_config_id: Mapped[str | None] = mapped_column(String(120))
     rag_index_version: Mapped[str | None] = mapped_column(String(120))
-    extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
@@ -94,18 +93,11 @@ class Message(Base):
         default=MessageStatus.COMPLETED.value,
     )
     content: Mapped[str | None] = mapped_column(Text)
-    content_parts: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    provider_message_id: Mapped[str | None] = mapped_column(String(255))
-    finish_reason: Mapped[str | None] = mapped_column(String(120))
-    retrieved_context: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    history_context: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    input_guardrail_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    output_guardrail_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     blocked_reason: Mapped[str | None] = mapped_column(Text)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
-    provider_response: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    extra_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

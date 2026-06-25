@@ -30,7 +30,7 @@ bounded candidate oversampling
 conservative deduplication and final top-k
     |
     v
-compact source labels in <retrieved_context>
+minimal JSON retrievedContext entries
     |
     v
 LLMService and chat generation
@@ -182,15 +182,16 @@ continue.
 
 ## Prompt Context
 
-`backend/llm/prompts.py` wraps retained chunks in `<retrieved_context>`.
-Source labels prefer:
+`backend/llm/prompts.py` serializes retained chunks into the JSON user
+message. Current-turn `retrievedContext` entries contain only:
 
 ```text
-source path | heading > breadcrumb | useful chunk type
+citationId, heading, content
 ```
 
-Plain prose and unknown type labels are omitted. Missing metadata degrades to a
-numbered context block without failing prompt construction.
+Prior-turn `previousRetrievedContext` entries omit `citationId` so they can be
+used for conversational continuity without becoming citable evidence. Missing
+metadata degrades to a `null` heading without failing prompt construction.
 
 ## Deferred Work
 

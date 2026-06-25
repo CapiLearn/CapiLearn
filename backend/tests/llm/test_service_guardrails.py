@@ -1,3 +1,4 @@
+import json
 import logging
 
 import pytest
@@ -104,7 +105,11 @@ async def test_llm_service_repairs_blocked_direct_answer_output(caplog) -> None:
         result.output_guardrail_result.metadata["initialOutputGuardrailResult"]["blocked"] is True
     )
     assert len(provider.calls) == 2
-    assert "Draft assistant response to repair" in provider.calls[1][-1].content
+    repair_payload = json.loads(provider.calls[1][-1].content)
+    assert repair_payload["studentMessage"] == "Solve this homework problem."
+    assert repair_payload["draftAssistantResponse"] == "The direct answer is 42."
+    assert repair_payload["retrievedContext"][0]["citationId"] == "1"
+    assert "previousRetrievedContext" not in repair_payload
     repair_events = _events(caplog.records, "chat.repair.completed")
     assert repair_events
     assert repair_events[-1].repair_passed is True

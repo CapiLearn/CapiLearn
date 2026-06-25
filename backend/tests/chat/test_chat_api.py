@@ -39,7 +39,7 @@ def clear_overrides():
     limiter.reset()
 
 
-def test_chat_openapi_uses_json_send_routes_without_streams_or_citations() -> None:
+def test_chat_openapi_uses_json_send_routes_without_streams_and_includes_citations() -> None:
     schema = app.openapi()
 
     assert "/api/conversations/stream" not in schema["paths"]
@@ -49,7 +49,7 @@ def test_chat_openapi_uses_json_send_routes_without_streams_or_citations() -> No
 
     serialized_schema = json.dumps(schema)
     assert "text/event-stream" not in serialized_schema
-    assert "citations" not in serialized_schema
+    assert "citations" in serialized_schema
 
 
 def test_chat_routes_have_stable_operation_ids() -> None:
@@ -128,9 +128,22 @@ async def test_create_conversation_returns_complete_message_response() -> None:
     }
     assert "citations" not in payload
     assert payload["conversation"]["id"] == str(FakeChatService.conversation_id)
+    expected_message_keys = {
+        "id",
+        "conversationId",
+        "role",
+        "content",
+        "status",
+        "createdAt",
+        "citations",
+    }
+    assert set(payload["userMessage"]) == expected_message_keys
+    assert set(payload["assistantMessage"]) == expected_message_keys
     assert payload["userMessage"]["role"] == MessageRole.USER.value
+    assert payload["userMessage"]["citations"] == []
     assert payload["assistantMessage"]["content"] == "Cells are small units."
     assert payload["assistantMessage"]["status"] == MessageStatus.COMPLETED.value
+    assert payload["assistantMessage"]["citations"] == []
     assert payload["finishReason"] == "stop"
     assert payload["blockedReason"] is None
 
@@ -227,6 +240,15 @@ async def test_blocked_input_returns_blocked_assistant_message() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert set(payload["assistantMessage"]) == {
+        "id",
+        "conversationId",
+        "role",
+        "content",
+        "status",
+        "createdAt",
+        "citations",
+    }
     assert payload["assistantMessage"]["status"] == MessageStatus.BLOCKED.value
     assert payload["assistantMessage"]["content"] == "Blocked."
     assert payload["blockedReason"] == "Blocked."
@@ -415,6 +437,7 @@ async def test_conversation_and_message_reads_are_frontend_safe() -> None:
         "content",
         "status",
         "createdAt",
+        "citations",
     }
 
 
@@ -513,6 +536,7 @@ class FakeChatService:
                     content="Cells are small units.",
                     status=MessageStatus.COMPLETED,
                     created_at=self.created_at,
+                    citations=[],
                 ),
             ],
         )
@@ -544,6 +568,7 @@ class FakeChatService:
                 content=content,
                 status=MessageStatus.COMPLETED,
                 created_at=self.created_at,
+                citations=[],
             ),
             assistant_message=MessageResponse(
                 id=self.assistant_message_id,
@@ -552,6 +577,7 @@ class FakeChatService:
                 content=assistant_content,
                 status=assistant_status,
                 created_at=self.created_at,
+                citations=[],
             ),
             finish_reason=finish_reason,
             blocked_reason=blocked_reason,

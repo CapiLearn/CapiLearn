@@ -17,7 +17,9 @@ from backend.chat.schemas import (
     MessageRole,
     MessageStatus,
     SendMessageResponse,
+    StoredRagHistoryContext,
 )
+from backend.core.citations import CitationRecord
 from backend.core.exceptions import ApiError
 from backend.core.observability import (
     LLMTraceOperation,
@@ -30,7 +32,7 @@ from backend.core.observability import (
     timer_start,
 )
 from backend.llm.config import llm_settings
-from backend.llm.prompts import build_user_message_content
+from backend.llm.prompts import build_history_user_message_content
 from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
@@ -38,6 +40,7 @@ from backend.llm.schemas import (
     LLMResult,
 )
 from backend.llm.service import LLMService, LLMServiceError
+from backend.rag.citations import citation_heading, validate_cited_response
 from backend.rag.config import rag_settings
 from backend.rag.schemas import RetrievedChunk
 
@@ -137,7 +140,6 @@ class ChatService:
                 conversation=conversation,
                 user_id=self._user_id,
                 content=content,
-                request_id=request_id,
             )
             await self._session.commit()
         except MessageSequenceConflictError as exc:
@@ -267,18 +269,17 @@ class ChatService:
         *,
         latency_ms: int,
     ) -> None:
+        validated_citations = validate_cited_response(
+            result.content,
+            result.retrieved_context,
+        )
         message.status = MessageStatus.COMPLETED.value
-        message.content = result.content
+        message.content = validated_citations.content
+        message.citations = [
+            citation.model_dump(mode="json", by_alias=True)
+            for citation in validated_citations.citations
+        ]
         message.latency_ms = latency_ms
-        message.input_guardrail_result = result.input_guardrail_result.model_dump(
-            mode="json",
-            by_alias=True,
-        )
-        message.output_guardrail_result = result.output_guardrail_result.model_dump(
-            mode="json",
-            by_alias=True,
-        )
-        _apply_provider_response(message, result)
         await self._repository.create_llm_cost_components(
             self._session,
             components=result.cost_components,
@@ -295,17 +296,9 @@ class ChatService:
         reason = result.content
         message.status = MessageStatus.BLOCKED.value
         message.content = reason
+        message.citations = []
         message.blocked_reason = reason
         message.latency_ms = latency_ms
-        message.input_guardrail_result = result.input_guardrail_result.model_dump(
-            mode="json",
-            by_alias=True,
-        )
-        message.output_guardrail_result = result.output_guardrail_result.model_dump(
-            mode="json",
-            by_alias=True,
-        )
-        _apply_provider_response(message, result)
         await self._repository.create_llm_cost_components(
             self._session,
             components=result.cost_components,
@@ -317,9 +310,9 @@ class ChatService:
         message: Message,
         result: LLMResult,
     ) -> None:
-        message.retrieved_context = [
-            chunk.model_dump(mode="json", by_alias=True, exclude_none=True)
-            for chunk in result.retrieved_context
+        message.history_context = [
+            context.model_dump(mode="json", by_alias=True)
+            for context in _stored_rag_context_from_chunks(result.retrieved_context)
         ]
 
     async def _mark_failed(
@@ -331,6 +324,7 @@ class ChatService:
         cost_components=None,
     ) -> None:
         message.status = MessageStatus.FAILED.value
+        message.citations = []
         message.latency_ms = latency_ms
         message.error = {"type": type(exc).__name__}
         await self._repository.create_llm_cost_components(
@@ -354,6 +348,7 @@ class ChatService:
             content=_message_content_for_response(message),
             status=MessageStatus(message.status),
             created_at=message.created_at,
+            citations=_message_citations_for_response(message),
         )
 
 
@@ -366,9 +361,17 @@ def _history_from_messages(messages: list[Message]) -> list[ChatMessage]:
         if message.role not in {MessageRole.USER.value, MessageRole.ASSISTANT.value}:
             continue
         content = _required_message_content(message)
-        if message.role == MessageRole.USER.value and message.id in recent_user_message_ids:
-            chunks = _chunks_from_stored_refs(message.retrieved_context or [])
-            content = _history_user_content(content, chunks)
+        if message.role == MessageRole.USER.value:
+            contexts = []
+            if message.id in recent_user_message_ids:
+                contexts = [
+                    context.model_dump(mode="json", by_alias=True)
+                    for context in _stored_rag_context_from_data(message.history_context or [])
+                ]
+            content = build_history_user_message_content(
+                user_input=content,
+                contexts=contexts,
+            )
         history.append(ChatMessage(role=ChatRole(message.role), content=content))
     return history
 
@@ -388,6 +391,16 @@ def _message_content_for_response(message: Message) -> str:
     return _required_message_content(message)
 
 
+def _message_citations_for_response(message: Message) -> list[CitationRecord]:
+    if message.citations is None:
+        raise ValueError(
+            "Persisted chat message is missing required citations "
+            f"(message_id={message.id}, role={message.role}, status={message.status})"
+        )
+
+    return [CitationRecord.model_validate_wire(citation) for citation in message.citations]
+
+
 def _required_message_content(message: Message) -> str:
     if message.content is not None:
         return message.content
@@ -396,14 +409,6 @@ def _required_message_content(message: Message) -> str:
         "Persisted chat message is missing required content "
         f"(message_id={message.id}, role={message.role}, status={message.status})"
     )
-
-
-def _apply_provider_response(message: Message, result: LLMResult) -> None:
-    provider_response = result.provider_response
-    if provider_response is None:
-        return
-    message.finish_reason = provider_response.finish_reason
-    message.provider_response = provider_response.raw_response
 
 
 def _warn_missing_provider_response(
@@ -475,20 +480,28 @@ def _recent_user_message_ids(messages: list[Message]) -> set[UUID]:
     return {message.id for message in completed_user_messages[-RECENT_RETRIEVED_CONTEXT_TURNS:]}
 
 
-def _history_user_content(content: str, chunks: list[RetrievedChunk]) -> str:
-    if not chunks:
-        return content
-    return build_user_message_content(user_input=content, chunks=chunks)
+def _stored_rag_context_from_chunks(
+    chunks: list[RetrievedChunk],
+) -> list[StoredRagHistoryContext]:
+    return [
+        StoredRagHistoryContext(
+            heading=citation_heading(chunk.metadata or {}),
+            content=chunk.content,
+        )
+        for chunk in chunks
+    ]
 
 
-def _chunks_from_stored_refs(chunk_refs: list[dict]) -> list[RetrievedChunk]:
-    chunks = []
-    for chunk_ref in chunk_refs:
+def _stored_rag_context_from_data(
+    context_refs: list[dict],
+) -> list[StoredRagHistoryContext]:
+    contexts = []
+    for context_ref in context_refs:
         try:
-            chunks.append(RetrievedChunk.model_validate(chunk_ref))
+            contexts.append(StoredRagHistoryContext.model_validate(context_ref))
         except (TypeError, ValidationError) as exc:
-            raise ValueError("Stored retrieved context is malformed") from exc
-    return chunks
+            raise ValueError("Stored history context is malformed") from exc
+    return contexts
 
 
 def _title_from_content(content: str) -> str:

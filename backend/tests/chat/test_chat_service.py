@@ -1,45 +1,42 @@
+import json
 import logging
-from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from backend.auth.schemas import CurrentUser, UserRole
-from backend.chat.models import Conversation, Message
-from backend.chat.repository import MessageSequenceConflictError
-from backend.chat.schemas import (
-    ConversationStatus,
-    MessageRole,
-    MessageStatus,
-)
+from backend.chat.schemas import MessageRole, MessageStatus
 from backend.chat.service import ChatService
 from backend.core.exceptions import ApiError
 from backend.core.observability import (
     BestEffortLLMTraceSink,
-    LLMTraceSink,
     NoopLLMTraceSink,
 )
 from backend.llm.schemas import (
     ChatMessage,
     ChatRole,
     GuardrailResult,
-    LLMCostComponent,
     LLMResult,
     ProviderResponse,
 )
-from backend.llm.service import LLMServiceError
 from backend.rag.schemas import RetrievalResult, RetrievedChunk
-
-
-def _current_user() -> CurrentUser:
-    return CurrentUser(
-        id=uuid4(),
-        clerk_id=f"user_{uuid4().hex}",
-        display_name="Test User",
-        role=UserRole.STUDENT,
-    )
+from backend.tests.chat.service_helpers import (
+    ConflictingChatRepository,
+    CostedLLMService,
+    FailingCostedLLMService,
+    FailingLLMService,
+    FailingTraceSink,
+    FakeChatRepository,
+    FakeLLMService,
+    FakeSession,
+    IncompleteTraceSink,
+    _conversation,
+    _current_user,
+    _events,
+    _message,
+    _new_conversation_service,
+    _service_with_existing_message,
+)
 
 
 @pytest.mark.asyncio
@@ -55,7 +52,11 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
             retrieved_context=[
                 RetrievedChunk(
                     content="Cell note",
-                    metadata={"source_id": "doc_1", "title": "Biology Notes"},
+                    metadata={
+                        "source_id": "doc_1",
+                        "title": "Biology Notes",
+                        "section_heading": "Cells",
+                    },
                     distance=0.42,
                 )
             ],
@@ -65,7 +66,6 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
                 prompt_tokens=4,
                 completion_tokens=5,
                 total_tokens=9,
-                raw_response={"id": "provider-response"},
             ),
         )
     )
@@ -82,25 +82,25 @@ async def test_create_conversation_message_completes_assistant_message(caplog) -
     assert response.user_message.content == "Explain cells."
     assert response.assistant_message.content == "Cells are small units."
     assert response.assistant_message.status == MessageStatus.COMPLETED
+    assert response.assistant_message.citations == []
     assert response.finish_reason == "stop"
     assert response.blocked_reason is None
     assert llm_service.requests[0].history == []
     assert session.commit_count == 2
-    assert repository.messages[0].retrieved_context == [
+    assert repository.messages[0].history_context == [
         {
             "content": "Cell note",
-            "metadata": {"source_id": "doc_1", "title": "Biology Notes"},
-            "distance": 0.42,
+            "heading": "Cells",
         }
     ]
-    request_id = repository.messages[0].extra_metadata["requestId"]
-    assert request_id
-    assert repository.messages[-1].extra_metadata["requestId"] == request_id
+    assert "metadata" not in repository.messages[0].history_context[0]
+    assert "distance" not in repository.messages[0].history_context[0]
     assert repository.messages[-1].latency_ms is not None
     assert repository.messages[-1].latency_ms >= 0
+    assert not hasattr(repository.messages[-1], "content" + "_parts")
     assert repository.cost_components == []
-    assert repository.messages[-1].retrieved_context in (None, [])
-    assert repository.messages[-1].citations in (None, [])
+    assert repository.messages[-1].history_context in (None, [])
+    assert repository.messages[-1].citations == []
     assert _events(caplog.records, "chat.turn.started")
     completed_events = _events(caplog.records, "chat.turn.completed")
     assert completed_events
@@ -130,7 +130,7 @@ async def test_create_message_uses_completed_history() -> None:
                 sequence=2,
                 role=MessageRole.ASSISTANT,
                 status=MessageStatus.COMPLETED,
-                content="A cell is a basic unit of life.",
+                content="A cell is a basic unit of life. ",
             ),
             _message(
                 conversation=conversation,
@@ -162,10 +162,65 @@ async def test_create_message_uses_completed_history() -> None:
 
     assert response.assistant_message.content == "Cells contain organelles."
     assert session.commit_count == 2
-    assert llm_service.requests[0].history == [
-        ChatMessage(role=ChatRole.USER, content="What is a cell?"),
-        ChatMessage(role=ChatRole.ASSISTANT, content="A cell is a basic unit of life."),
-    ]
+    assert llm_service.requests[0].history[0].role == ChatRole.USER
+    assert json.loads(llm_service.requests[0].history[0].content) == {
+        "studentMessage": "What is a cell?",
+        "previousRetrievedContext": [],
+    }
+    assert llm_service.requests[0].history[1] == ChatMessage(
+        role=ChatRole.ASSISTANT,
+        content="A cell is a basic unit of life. ",
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_message_rehydrates_assistant_cited_content_in_history() -> None:
+    user = _current_user()
+    session = FakeSession()
+    conversation = _conversation(user_id=user.id)
+    assistant_message = _message(
+        conversation=conversation,
+        user_id=user.id,
+        sequence=2,
+        role=MessageRole.ASSISTANT,
+        status=MessageStatus.COMPLETED,
+        content="State belongs to a component. [1]",
+    )
+    repository = FakeChatRepository(
+        user_id=user.id,
+        conversations=[conversation],
+        messages=[
+            _message(
+                conversation=conversation,
+                user_id=user.id,
+                sequence=1,
+                role=MessageRole.USER,
+                status=MessageStatus.COMPLETED,
+                content="What owns state?",
+            ),
+            assistant_message,
+        ],
+    )
+    llm_service = FakeLLMService(
+        LLMResult(
+            content="Components own local state.",
+            provider_response=ProviderResponse(content="Components own local state."),
+        )
+    )
+    service = ChatService(
+        session=session,
+        user_id=user.id,
+        llm_service=llm_service,
+        repository=repository,
+    )
+
+    await service.create_message(conversation.id, "Tell me more.")
+
+    assert llm_service.requests[0].history[1] == ChatMessage(
+        role=ChatRole.ASSISTANT,
+        content="State belongs to a component. [1]",
+    )
+    assert assistant_message.content == "State belongs to a component. [1]"
 
 
 @pytest.mark.asyncio
@@ -239,7 +294,36 @@ async def test_list_messages_allows_empty_unfinished_assistant_content(
 
 
 @pytest.mark.asyncio
-async def test_create_conversation_message_warns_when_provider_metadata_missing(
+async def test_list_messages_returns_assistant_cited_content() -> None:
+    service, _session, repository, _llm_service, conversation = _service_with_existing_message(
+        role=MessageRole.ASSISTANT,
+        status=MessageStatus.COMPLETED,
+        content="State belongs to a component. [1]",
+    )
+
+    response = await service.list_messages(conversation.id)
+
+    assert response.messages[0].content == "State belongs to a component. [1]"
+    assert repository.messages[0].content == "State belongs to a component. [1]"
+
+
+@pytest.mark.asyncio
+async def test_list_messages_returns_user_text_verbatim() -> None:
+    service, _session, _repository, _llm_service, conversation = _service_with_existing_message(
+        role=MessageRole.USER,
+        status=MessageStatus.COMPLETED,
+        content="Please explain this phrase literally: not a special token.",
+    )
+
+    response = await service.list_messages(conversation.id)
+
+    assert response.messages[0].content == (
+        "Please explain this phrase literally: not a special token."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_message_warns_when_provider_response_missing(
     caplog,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="backend.chat.service")
@@ -252,8 +336,6 @@ async def test_create_conversation_message_warns_when_provider_metadata_missing(
     assert response.assistant_message.status == MessageStatus.COMPLETED
     assert response.assistant_message.content == "ok"
     assert response.finish_reason is None
-    assert repository.messages[-1].finish_reason is None
-    assert repository.messages[-1].provider_response is None
     warning_events = _events(caplog.records, "chat.turn.provider_response_missing")
     assert len(warning_events) == 1
     assert warning_events[0].status == MessageStatus.COMPLETED.value
@@ -262,7 +344,7 @@ async def test_create_conversation_message_warns_when_provider_metadata_missing(
 
 
 @pytest.mark.asyncio
-async def test_blocked_message_warns_when_provider_metadata_missing(caplog) -> None:
+async def test_blocked_message_warns_when_provider_response_missing(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="backend.chat.service")
     service, _session, _repository = _new_conversation_service(
         LLMResult(
@@ -320,16 +402,10 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
                 role=MessageRole.USER,
                 status=MessageStatus.COMPLETED,
                 content=f"Question {index}?",
-                retrieved_context=[
+                history_context=[
                     {
+                        "heading": f"Biology Notes {index}",
                         "content": f"Stored note for chunk_{index}",
-                        "metadata": {
-                            "source_id": "doc_1",
-                            "title": "Biology Notes",
-                            "page": index,
-                            "distance": 0.12,
-                            "similarity": 0.88,
-                        },
                     }
                 ],
             )
@@ -366,47 +442,63 @@ async def test_create_message_adds_stored_context_to_recent_user_history() -> No
 
     history = llm_service.requests[0].history
     user_history = [message for message in history if message.role == ChatRole.USER]
-    assert user_history[0].content == "Question 1?"
-    assert user_history[1].content == "Question 2?"
-    assert "<retrieved_context>" in user_history[2].content
-    assert "Stored note for chunk_3" in user_history[2].content
-    assert "<retrieved_context>" in user_history[3].content
-    assert "Stored note for chunk_4" in user_history[3].content
-    assert "<retrieved_context>" in user_history[4].content
-    assert "Stored note for chunk_5" in user_history[4].content
+    user_payloads = [json.loads(message.content) for message in user_history]
+    assert [payload["studentMessage"] for payload in user_payloads[:2]] == [
+        "Question 1?",
+        "Question 2?",
+    ]
+    assert user_payloads[0]["previousRetrievedContext"] == []
+    assert user_payloads[1]["previousRetrievedContext"] == []
+    recent_payloads = user_payloads[2:5]
+    assert [payload["previousRetrievedContext"][0]["content"] for payload in recent_payloads] == [
+        "Stored note for chunk_3",
+        "Stored note for chunk_4",
+        "Stored note for chunk_5",
+    ]
+    assert [payload["previousRetrievedContext"][0]["heading"] for payload in recent_payloads] == [
+        "Biology Notes 3",
+        "Biology Notes 4",
+        "Biology Notes 5",
+    ]
+    assert [payload["studentMessage"] for payload in recent_payloads] == [
+        "Question 3?",
+        "Question 4?",
+        "Question 5?",
+    ]
+    assert "citationId" not in recent_payloads[0]["previousRetrievedContext"][0]
     assert ChatMessage(role=ChatRole.ASSISTANT, content="Answer 5.") in history
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "retrieved_context",
+    "history_context",
     [
         pytest.param(
-            [{"content": "Stored note", "metadata": "bad"}],
-            id="current-metadata-not-mapping",
+            [{"content": "Stored note", "metadata": {"source": "Biology Notes"}}],
+            id="extra-metadata",
         ),
         pytest.param(
-            [{"metadata": {"source": "Biology Notes"}}],
+            [{"heading": "Biology Notes"}],
             id="missing-content",
         ),
         pytest.param([42], id="scalar-item"),
     ],
 )
-async def test_create_message_rejects_malformed_retrieved_context(
-    retrieved_context,
+async def test_create_message_rejects_malformed_history_context(
+    history_context,
 ) -> None:
     service, session, _repository, llm_service, conversation = _service_with_existing_message(
         role=MessageRole.USER,
         status=MessageStatus.COMPLETED,
         content="What is a cell?",
-        retrieved_context=retrieved_context,
+        history_context=history_context,
         llm_result=LLMResult(
             content="A cell is a basic unit of life.",
             provider_response=ProviderResponse(content="A cell is a basic unit of life."),
         ),
     )
 
-    with pytest.raises(ValueError, match="retrieved context is malformed"):
+    with pytest.raises(ValueError, match="history context is malformed"):
         await service.create_message(conversation.id, "Tell me more.")
 
     assert llm_service.requests == []
@@ -440,8 +532,10 @@ async def test_blocked_input_returns_blocked_assistant_message(caplog) -> None:
 
     assert response.assistant_message.status == MessageStatus.BLOCKED
     assert response.assistant_message.content == "Input blocked."
+    assert response.assistant_message.citations == []
     assert response.blocked_reason == "Input blocked."
     assert repository.messages[-1].blocked_reason == "Input blocked."
+    assert not hasattr(repository.messages[-1], "content" + "_parts")
     assert repository.messages[-1].latency_ms is not None
     assert _events(caplog.records, "chat.turn.blocked")
     assert session.commit_count == 2
@@ -477,6 +571,7 @@ async def test_blocked_output_returns_blocked_assistant_message() -> None:
 
     assert response.assistant_message.status == MessageStatus.BLOCKED
     assert response.assistant_message.content == "Output blocked."
+    assert response.assistant_message.citations == []
     assert response.blocked_reason == "Output blocked."
     assert session.commit_count == 2
 
@@ -499,6 +594,7 @@ async def test_llm_exception_marks_assistant_failed_and_raises_api_error(caplog)
 
     assert exc_info.value.code == "llm_unavailable"
     assert repository.messages[-1].status == MessageStatus.FAILED.value
+    assert not hasattr(repository.messages[-1], "content" + "_parts")
     assert repository.messages[-1].error == {"type": "RuntimeError"}
     assert repository.messages[-1].latency_ms is not None
     failed_events = _events(caplog.records, "chat.turn.failed")
@@ -525,6 +621,7 @@ async def test_llm_service_error_persists_failed_cost_components() -> None:
 
     assert exc_info.value.code == "llm_unavailable"
     assert repository.messages[-1].status == MessageStatus.FAILED.value
+    assert not hasattr(repository.messages[-1], "content" + "_parts")
     assert repository.messages[-1].error == {"type": "RuntimeError"}
     assert repository.cost_components == llm_service.cost_components
     assert repository.cost_components[0].assistant_message_id == repository.messages[-1].id
@@ -686,293 +783,3 @@ async def test_unrelated_message_integrity_error_rolls_back_and_reraises() -> No
 
     assert session.rollback_count == 1
     assert llm_service.requests == []
-
-
-class FakeSession:
-    def __init__(self) -> None:
-        self.commit_count = 0
-        self.rollback_count = 0
-
-    async def commit(self) -> None:
-        self.commit_count += 1
-
-    async def rollback(self) -> None:
-        self.rollback_count += 1
-
-
-class FakeChatRepository:
-    def __init__(
-        self,
-        *,
-        user_id,
-        conversations: list[Conversation] | None = None,
-        messages: list[Message] | None = None,
-    ) -> None:
-        self.user_id = user_id
-        self.conversations = conversations or []
-        self.messages = messages or []
-        self.cost_components = []
-
-    async def create_conversation(
-        self,
-        session,
-        *,
-        user_id,
-        title,
-        model_profile_key,
-        model_profile_version,
-        guardrails_config_id,
-        rag_index_version,
-    ):
-        conversation = _conversation(
-            user_id=user_id,
-            title=title,
-            model_profile_key=model_profile_key,
-            model_profile_version=model_profile_version,
-            guardrails_config_id=guardrails_config_id,
-            rag_index_version=rag_index_version,
-        )
-        self.conversations.append(conversation)
-        return conversation
-
-    async def get_conversation(self, session, *, conversation_id, user_id):
-        for conversation in self.conversations:
-            if conversation.id == conversation_id and conversation.user_id == user_id:
-                return conversation
-        return None
-
-    async def list_messages(self, session, *, conversation_id, user_id):
-        return [
-            message
-            for message in self.messages
-            if message.conversation_id == conversation_id and message.user_id == user_id
-        ]
-
-    async def create_turn_messages(
-        self,
-        session,
-        *,
-        conversation,
-        user_id,
-        content,
-        request_id,
-    ):
-        next_sequence = (
-            len([item for item in self.messages if item.conversation_id == conversation.id]) + 1
-        )
-        user_message = _message(
-            conversation=conversation,
-            user_id=user_id,
-            sequence=next_sequence,
-            role=MessageRole.USER,
-            status=MessageStatus.COMPLETED,
-            content=content,
-            extra_metadata={"requestId": request_id},
-        )
-        assistant_message = _message(
-            conversation=conversation,
-            user_id=user_id,
-            sequence=next_sequence + 1,
-            role=MessageRole.ASSISTANT,
-            status=MessageStatus.PENDING,
-            content="",
-            extra_metadata={"requestId": request_id},
-        )
-        self.messages.extend([user_message, assistant_message])
-        return user_message, assistant_message
-
-    async def create_llm_cost_components(self, session, *, components):
-        self.cost_components.extend(components)
-
-
-class ConflictingChatRepository(FakeChatRepository):
-    def __init__(self, *, user_id, exc: Exception | None = None) -> None:
-        super().__init__(user_id=user_id)
-        self.exc = exc or MessageSequenceConflictError()
-
-    async def create_turn_messages(
-        self,
-        session,
-        *,
-        conversation,
-        user_id,
-        content,
-        request_id,
-    ):
-        raise self.exc
-
-
-class FakeLLMService:
-    def __init__(self, result: LLMResult) -> None:
-        self.result = result
-        self.requests = []
-
-    async def complete(self, request):
-        self.requests.append(request)
-        return self.result
-
-
-class CostedLLMService:
-    def __init__(self) -> None:
-        self.requests = []
-        self.result = LLMResult(content="")
-
-    async def complete(self, request):
-        self.requests.append(request)
-        self.result = LLMResult(
-            content="Cells are small units.",
-            provider_response=ProviderResponse(content="Cells are small units."),
-            cost_components=[
-                LLMCostComponent(
-                    user_id=request.user_id,
-                    conversation_id=request.conversation_id,
-                    user_message_id=request.user_message_id,
-                    assistant_message_id=request.assistant_message_id,
-                    component_order=1,
-                    component_type="main_generation",
-                    status="completed",
-                    estimated_cost_usd="0.001000000000",
-                )
-            ],
-        )
-        return self.result
-
-
-class FailingLLMService:
-    async def complete(self, request):
-        raise RuntimeError("provider unavailable")
-
-
-class FailingCostedLLMService:
-    def __init__(self) -> None:
-        self.cost_components = []
-
-    async def complete(self, request):
-        self.cost_components = [
-            LLMCostComponent(
-                user_id=request.user_id,
-                conversation_id=request.conversation_id,
-                user_message_id=request.user_message_id,
-                assistant_message_id=request.assistant_message_id,
-                component_order=1,
-                component_type="main_generation",
-                status="failed",
-                error_type="RuntimeError",
-            )
-        ]
-        raise LLMServiceError(
-            RuntimeError("provider unavailable"),
-            cost_components=self.cost_components,
-        )
-
-
-class IncompleteTraceSink(LLMTraceSink):
-    pass
-
-
-class FailingTraceSink(NoopLLMTraceSink):
-    async def record(self, operation, metadata):
-        raise RuntimeError("trace sink unavailable")
-
-
-def _new_conversation_service(llm_result: LLMResult):
-    user = _current_user()
-    session = FakeSession()
-    repository = FakeChatRepository(user_id=user.id)
-    service = ChatService(
-        session=session,
-        user_id=user.id,
-        llm_service=FakeLLMService(llm_result),
-        repository=repository,
-    )
-    return service, session, repository
-
-
-def _service_with_existing_message(
-    *,
-    role: MessageRole,
-    status: MessageStatus,
-    content: str | None,
-    sequence: int = 1,
-    retrieved_context=None,
-    llm_result: LLMResult | None = None,
-):
-    user = _current_user()
-    session = FakeSession()
-    conversation = _conversation(user_id=user.id)
-    repository = FakeChatRepository(
-        user_id=user.id,
-        conversations=[conversation],
-        messages=[
-            _message(
-                conversation=conversation,
-                user_id=user.id,
-                sequence=sequence,
-                role=role,
-                status=status,
-                content=content,
-                retrieved_context=retrieved_context,
-            ),
-        ],
-    )
-    llm_service = FakeLLMService(llm_result or LLMResult(content="unused"))
-    service = ChatService(
-        session=session,
-        user_id=user.id,
-        llm_service=llm_service,
-        repository=repository,
-    )
-    return service, session, repository, llm_service, conversation
-
-
-def _events(records, event: str):
-    return [record for record in records if getattr(record, "event", None) == event]
-
-
-def _conversation(
-    *,
-    user_id,
-    title: str | None = "Existing title",
-    model_profile_key: str = "model",
-    model_profile_version: str | None = None,
-    guardrails_config_id: str | None = None,
-    rag_index_version: str | None = None,
-) -> Conversation:
-    now = datetime.now(UTC)
-    return Conversation(
-        id=uuid4(),
-        user_id=user_id,
-        title=title,
-        status=ConversationStatus.ACTIVE.value,
-        model_profile_key=model_profile_key,
-        model_profile_version=model_profile_version,
-        guardrails_config_id=guardrails_config_id,
-        rag_index_version=rag_index_version,
-        created_at=now,
-        updated_at=now,
-    )
-
-
-def _message(
-    *,
-    conversation: Conversation,
-    user_id,
-    sequence: int,
-    role: MessageRole,
-    status: MessageStatus,
-    content: str | None,
-    retrieved_context: list[dict] | None = None,
-    extra_metadata: dict | None = None,
-) -> Message:
-    return Message(
-        id=uuid4(),
-        conversation_id=conversation.id,
-        user_id=user_id,
-        sequence=sequence,
-        role=role.value,
-        status=status.value,
-        content=content,
-        retrieved_context=retrieved_context or [],
-        extra_metadata=extra_metadata or {},
-        created_at=datetime.now(UTC),
-    )

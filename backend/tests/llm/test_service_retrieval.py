@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 import pytest
@@ -42,10 +43,13 @@ async def test_llm_service_adds_retrieved_context_to_user_message(caplog) -> Non
     assert provider.messages[0].role == ChatRole.SYSTEM
     assert provider.messages[0].content == BASE_SYSTEM_PROMPT
     assert provider.messages[-1].role == ChatRole.USER
-    assert "Relevant note for: What is photosynthesis?" in provider.messages[-1].content
-    assert "Biology Notes - doc_1 - page 3" in provider.messages[-1].content
-    assert "<retrieved_context>" in provider.messages[-1].content
-    assert "<student_message>\nWhat is photosynthesis?" in provider.messages[-1].content
+    payload = json.loads(provider.messages[-1].content)
+    assert payload["studentMessage"] == "What is photosynthesis?"
+    assert payload["retrievedContext"][0]["citationId"] == "1"
+    assert payload["retrievedContext"][0]["content"] == (
+        "Relevant note for: What is photosynthesis?"
+    )
+    assert set(payload["retrievedContext"][0]) == {"citationId", "heading", "content"}
     assert _events(caplog.records, "guardrail.check.completed")
     retrieval_events = _events(caplog.records, "rag.retrieve.completed")
     assert retrieval_events[-1].chunk_count == 1
@@ -105,7 +109,8 @@ async def test_llm_service_accepts_retrieval_result_contract() -> None:
         },
         "distance": 0.12,
     }
-    assert "Rich note for: What is photosynthesis?" in provider.messages[-1].content
+    payload = json.loads(provider.messages[-1].content)
+    assert payload["retrievedContext"][0]["content"] == ("Rich note for: What is photosynthesis?")
     assert result.retrieved_context[0].distance == 0.12
 
 
@@ -123,10 +128,10 @@ async def test_llm_service_omits_retrieved_context_block_without_chunks(caplog) 
     assert isinstance(service._retriever, EmptyRetrievalProvider)
     assert result.retrieved_context == []
     assert provider.messages[-1].role == ChatRole.USER
-    assert "<retrieved_context>" not in provider.messages[-1].content
-    assert provider.messages[-1].content == (
-        "<student_message>\nWhat is photosynthesis?\n</student_message>"
-    )
+    assert json.loads(provider.messages[-1].content) == {
+        "studentMessage": "What is photosynthesis?",
+        "retrievedContext": [],
+    }
     retrieval_events = _events(caplog.records, "rag.retrieve.completed")
     assert retrieval_events[-1].chunk_count == 0
     assert _events(caplog.records, "rag.retrieve.failed") == []
@@ -163,7 +168,10 @@ async def test_llm_service_complete_starts_retrieval_before_input_guardrail_fini
 
     assert result.retrieved_context[0].metadata["source_id"] == "doc_concurrent"
     assert provider.complete_called
-    assert "Concurrent note for: What is concurrent retrieval?" in provider.messages[-1].content
+    payload = json.loads(provider.messages[-1].content)
+    assert payload["retrievedContext"][0]["content"] == (
+        "Concurrent note for: What is concurrent retrieval?"
+    )
     assert provider.messages[0].content == BASE_SYSTEM_PROMPT
 
 
@@ -233,7 +241,7 @@ async def test_llm_service_degrades_allowed_retrieval_failure_to_empty_context(
     assert result.content == "Plants turn light into energy."
     assert result.retrieved_context == []
     assert provider.complete_called
-    assert "<retrieved_context>" not in provider.messages[-1].content
+    assert json.loads(provider.messages[-1].content)["retrievedContext"] == []
     failed_events = _events(caplog.records, "rag.retrieve.failed")
     assert failed_events
     failed_event = failed_events[-1]

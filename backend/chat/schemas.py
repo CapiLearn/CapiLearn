@@ -5,6 +5,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from backend.core.citations import CitationRecord
+
 MAX_MESSAGE_CONTENT_LENGTH = 8000
 
 
@@ -35,6 +37,18 @@ class MessageStatus(StrEnum):
     FAILED = "failed"
 
 
+class StoredRagHistoryContext(ChatBaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        from_attributes=True,
+        extra="forbid",
+    )
+
+    heading: str | None = None
+    content: str
+
+
 class SendMessageRequest(ChatBaseModel):
     content: str = Field(min_length=1, max_length=MAX_MESSAGE_CONTENT_LENGTH)
 
@@ -50,12 +64,15 @@ class ConversationListResponse(ChatBaseModel):
 
 
 class MessageResponse(ChatBaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: UUID
     conversation_id: UUID
     role: MessageRole
     content: str
     status: MessageStatus
     created_at: datetime
+    citations: list[CitationRecord]
 
 
 class MessageListResponse(ChatBaseModel):
