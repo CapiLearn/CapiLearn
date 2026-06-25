@@ -518,7 +518,7 @@ function AdminDashboard() {
                 <p className="admin-panel-label">Users</p>
                 <h2>User access and guardrail usage</h2>
               </div>
-              <span>{adminUsers.length} shown</span>
+              <span>Showing {adminUsers.length} most recent users</span>
             </div>
 
             <div className="metrics-date-controls">
