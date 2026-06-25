@@ -2,21 +2,34 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
-from uuid import UUID
 
-from sentence_transformers import SentenceTransformer
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import SessionFactory
 from backend.ingestion.ingest_repo import find_course_files, make_document
-from backend.rag.chunk_documents import chunk_document, is_english_source
-from backend.rag.defaults import DEFAULT_RAG_MODEL_NAME
-from backend.rag.models import EMBEDDING_DIMENSIONS
+from backend.rag.chunk_documents import is_english_source
+from backend.rag.chunk_identity import content_hash
+from backend.rag.chunking import (
+    DEFAULT_MAX_OVERSIZED_CODE_CHARS,
+    DEFAULT_MIN_CHUNK_CHARS,
+    PreparedChunk,
+    SourceDocument,
+    prepare_chunks,
+)
+from backend.rag.defaults import (
+    DEFAULT_RAG_EMBEDDING_DIMENSIONS,
+    DEFAULT_RAG_EMBEDDING_PROVIDER,
+    DEFAULT_RAG_MODEL_NAME,
+    validate_pgvector_embedding_contract,
+)
+from backend.rag.embeddings import QueryEmbeddingProvider, get_embedding_provider
 from backend.rag.repository import ChunkRecord, EmbeddingRecord
 from backend.rag.service import RagService
 
@@ -27,18 +40,54 @@ DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_EMBEDDING_BATCH_SIZE = 64
 DEFAULT_REPO_PATH = Path(__file__).parent / "data" / "raw" / "fullstack-hy2020.github.io"
+SessionFactoryCallable = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+RagServiceFactory = Callable[..., RagService]
+
+REQUIRED_RAG_STORAGE_COLUMNS = {
+    "rag_documents": {
+        "id",
+        "source_type",
+        "source_path",
+        "content_hash",
+        "is_active",
+    },
+    "rag_chunks": {
+        "id",
+        "document_id",
+        "chunk_index",
+        "content",
+    },
+    "rag_embeddings": {
+        "id",
+        "chunk_id",
+        "embedding",
+        "embedding_provider",
+        "embedding_model",
+        "embedding_dimensions",
+    },
+}
 
 
 class EmbeddingModel(Protocol):
-    def get_sentence_embedding_dimension(self) -> int | None: ...
-
-    def encode(
+    def embed_documents(
         self,
-        sentences: Sequence[str],
+        texts: list[str],
         *,
-        batch_size: int,
-        show_progress_bar: bool,
-    ) -> Any: ...
+        model_name: str,
+        embedding_dimensions: int,
+    ) -> list[list[float]]: ...
+
+
+async def run_storage_preflight(session: AsyncSession, config: IngestionConfig) -> None:
+    """Fail before paid embedding work if pgvector storage is not ready."""
+    validate_pgvector_embedding_contract(
+        embedding_provider=config.embedding_provider,
+        model_name=config.model_name,
+        embedding_dimensions=config.embedding_dimensions,
+    )
+    await session.execute(text("SELECT 1"))
+    await _validate_required_storage_columns(session)
+    await _validate_pgvector_column(session, expected_dimensions=config.embedding_dimensions)
 
 
 @dataclass(frozen=True)
@@ -46,12 +95,20 @@ class IngestionConfig:
     repo_path: Path = DEFAULT_REPO_PATH
     source_type: str = "course_repo"
     course_name: str = "Full Stack Open"
+    embedding_provider: str = DEFAULT_RAG_EMBEDDING_PROVIDER
     model_name: str = DEFAULT_MODEL_NAME
+    embedding_dimensions: int = DEFAULT_RAG_EMBEDDING_DIMENSIONS
     chunk_size: int = DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+    min_chunk_chars: int = DEFAULT_MIN_CHUNK_CHARS
+    max_oversized_code_chars: int = DEFAULT_MAX_OVERSIZED_CODE_CHARS
     embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE
     dry_run: bool = False
     fail_fast: bool = False
+    reconcile_deletions: bool = False
+
+
+StoragePreflight = Callable[[AsyncSession, IngestionConfig], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -60,7 +117,7 @@ class PreparedDocument:
     title: str | None
     content_hash: str
     metadata: dict[str, Any]
-    chunks: list[dict[str, Any]]
+    chunks: list[PreparedChunk]
 
 
 @dataclass
@@ -74,8 +131,12 @@ class IngestionSummary:
     documents_written: int = 0
     chunks_written: int = 0
     embeddings_written: int = 0
+    documents_deactivated: int = 0
     database_failures: int = 0
     failed_paths: list[str] = field(default_factory=list)
+    discovered_source_paths: set[str] = field(default_factory=set, repr=False)
+    indexed_source_paths: set[str] = field(default_factory=set, repr=False)
+    unindexable_source_paths: set[str] = field(default_factory=set, repr=False)
 
 
 def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], IngestionSummary]:
@@ -86,6 +147,10 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
         raise ValueError("chunk_size must be at least 1")
     if config.chunk_overlap < 0 or config.chunk_overlap >= config.chunk_size:
         raise ValueError("chunk_overlap must be between 0 and chunk_size - 1")
+    if config.min_chunk_chars < 0:
+        raise ValueError("min_chunk_chars must be at least 0")
+    if config.max_oversized_code_chars < config.chunk_size:
+        raise ValueError("max_oversized_code_chars must be at least chunk_size")
     if config.embedding_batch_size < 1:
         raise ValueError("embedding_batch_size must be at least 1")
 
@@ -95,31 +160,43 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
 
     for path in files:
         relative_path = path.relative_to(repo_root).as_posix()
+        summary.discovered_source_paths.add(relative_path)
         try:
             document = make_document(path, repo_root)
             document["id"] = relative_path
             document["metadata"]["source_path"] = relative_path
-            if not document["content"]:
-                summary.skipped_empty += 1
-                continue
             if not is_english_source(document):
                 summary.skipped_non_english += 1
+                summary.unindexable_source_paths.add(relative_path)
+                continue
+            if not document["content"]:
+                summary.skipped_empty += 1
+                summary.unindexable_source_paths.add(relative_path)
                 continue
 
-            chunks = chunk_document(
-                document,
+            chunks = prepare_chunks(
+                SourceDocument(
+                    content=document["content"],
+                    source_type=config.source_type,
+                    source_path=relative_path,
+                    document_id=relative_path,
+                    metadata=dict(document["metadata"]),
+                ),
                 chunk_size=config.chunk_size,
                 overlap=config.chunk_overlap,
+                min_chunk_chars=config.min_chunk_chars,
+                max_oversized_code_chars=config.max_oversized_code_chars,
             )
             if not chunks:
                 summary.skipped_empty += 1
+                summary.unindexable_source_paths.add(relative_path)
                 continue
 
             prepared.append(
                 PreparedDocument(
                     source_path=relative_path,
                     title=document["metadata"].get("file_name"),
-                    content_hash=_content_hash(document["content"]),
+                    content_hash=content_hash(document["content"]),
                     metadata=dict(document["metadata"]),
                     chunks=chunks,
                 )
@@ -139,10 +216,17 @@ def prepare_corpus(config: IngestionConfig) -> tuple[list[PreparedDocument], Ing
 async def ingest_corpus(
     config: IngestionConfig,
     *,
-    model_factory: Callable[[str], EmbeddingModel] = SentenceTransformer,
-    session_factory=SessionFactory,
-    service_factory=RagService,
+    embedding_provider_factory: Callable[[], QueryEmbeddingProvider] = get_embedding_provider,
+    model_factory: Callable[[], EmbeddingModel] | None = None,
+    session_factory: SessionFactoryCallable = SessionFactory,
+    service_factory: RagServiceFactory = RagService,
+    storage_preflight: StoragePreflight = run_storage_preflight,
 ) -> IngestionSummary:
+    validate_pgvector_embedding_contract(
+        embedding_provider=config.embedding_provider,
+        model_name=config.model_name,
+        embedding_dimensions=config.embedding_dimensions,
+    )
     prepared, summary = prepare_corpus(config)
     _log_preprocessing_summary(summary)
 
@@ -155,47 +239,56 @@ async def ingest_corpus(
         )
         return summary
 
-    if not prepared:
-        logger.warning("No documents were prepared; nothing will be written.")
+    if not prepared and not summary.unindexable_source_paths:
+        logger.warning("No documents were prepared; nothing will be written or deactivated.")
         return summary
 
-    model = model_factory(config.model_name)
-    dimensions = model.get_sentence_embedding_dimension()
-    if dimensions != EMBEDDING_DIMENSIONS:
-        raise ValueError(
-            f"Embedding model must produce {EMBEDDING_DIMENSIONS} dimensions; "
-            f"{config.model_name} reports {dimensions}."
-        )
-
-    all_chunks = [chunk for document in prepared for chunk in document.chunks]
-    logger.info(
-        "Generating embeddings: model=%s chunks=%d batch_size=%d",
-        config.model_name,
-        len(all_chunks),
-        config.embedding_batch_size,
-    )
-    encoded = model.encode(
-        [chunk["content"] for chunk in all_chunks],
-        batch_size=config.embedding_batch_size,
-        show_progress_bar=True,
-    )
-    vectors = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
-    if len(vectors) != len(all_chunks):
-        raise ValueError("Embedding model returned a different number of vectors than chunks.")
-
-    vector_offset = 0
+    vectors: list[Any] = []
     async with session_factory() as session:
         service = service_factory(session=session)
+        await storage_preflight(session, config)
+
+        if prepared:
+            provider = (
+                model_factory() if model_factory is not None else embedding_provider_factory()
+            )
+            all_chunks = [chunk for document in prepared for chunk in document.chunks]
+            logger.info(
+                "Generating embeddings: provider=%s model=%s dimensions=%d chunks=%d batch_size=%d",
+                config.embedding_provider,
+                config.model_name,
+                config.embedding_dimensions,
+                len(all_chunks),
+                config.embedding_batch_size,
+            )
+            vectors = _embed_texts_in_batches(
+                provider=provider,
+                texts=[chunk.content for chunk in all_chunks],
+                config=config,
+            )
+            if len(vectors) != len(all_chunks):
+                raise ValueError(
+                    "Embedding model returned a different number of vectors than chunks."
+                )
+
+        vector_offset = 0
         for document in prepared:
             document_vectors = vectors[vector_offset : vector_offset + len(document.chunks)]
             vector_offset += len(document.chunks)
             try:
                 chunks = [
                     ChunkRecord(
-                        id=UUID(chunk["chunk_id"]),
-                        chunk_index=chunk["chunk_index"],
-                        content=chunk["content"],
-                        metadata=dict(chunk.get("metadata") or {}),
+                        id=chunk.chunk_id,
+                        chunk_index=chunk.chunk_index,
+                        content=chunk.content,
+                        content_hash=chunk.content_hash,
+                        char_start=chunk.char_start,
+                        char_end=chunk.char_end,
+                        heading_path=chunk.heading_path,
+                        section_heading=chunk.section_heading,
+                        chunk_type=chunk.chunk_type,
+                        chunker_version=chunk.chunker_version,
+                        metadata=chunk.persistence_metadata(),
                     )
                     for chunk in document.chunks
                 ]
@@ -203,7 +296,9 @@ async def ingest_corpus(
                     EmbeddingRecord(
                         chunk_id=chunk.id,
                         embedding=vector,
+                        embedding_provider=config.embedding_provider,
                         embedding_model=config.model_name,
+                        embedding_dimensions=config.embedding_dimensions,
                     )
                     for chunk, vector in zip(chunks, document_vectors, strict=True)
                 ]
@@ -220,6 +315,7 @@ async def ingest_corpus(
                 summary.documents_written += 1
                 summary.chunks_written += len(chunks)
                 summary.embeddings_written += len(embeddings)
+                summary.indexed_source_paths.add(document.source_path)
                 logger.info(
                     "Indexed document: source=%s chunks=%d embeddings=%d",
                     document.source_path,
@@ -233,12 +329,132 @@ async def ingest_corpus(
                 if config.fail_fast:
                     raise
 
+        if summary.unindexable_source_paths:
+            try:
+                summary.documents_deactivated += await service.deactivate_documents_by_source_paths(
+                    source_type=config.source_type,
+                    source_paths=sorted(summary.unindexable_source_paths),
+                )
+            except Exception:
+                summary.database_failures += 1
+                logger.exception("Failed to deactivate unindexable source documents.")
+                if config.fail_fast:
+                    raise
+
+        if _can_reconcile(config, summary):
+            try:
+                summary.documents_deactivated += await service.reconcile_documents(
+                    source_type=config.source_type,
+                    course_name=config.course_name,
+                    seen_source_paths=sorted(summary.discovered_source_paths),
+                )
+            except Exception:
+                summary.database_failures += 1
+                logger.exception("Failed to reconcile missing source documents.")
+                if config.fail_fast:
+                    raise
+        elif config.reconcile_deletions:
+            logger.warning(
+                "Deletion reconciliation skipped: dry_run=%s prepared=%d "
+                "preprocessing_failures=%d database_failures=%d seen=%d",
+                config.dry_run,
+                summary.prepared_documents,
+                summary.preprocessing_failures,
+                summary.database_failures,
+                len(summary.discovered_source_paths),
+            )
+
     _log_write_summary(summary)
     return summary
 
 
-def _content_hash(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+def _can_reconcile(config: IngestionConfig, summary: IngestionSummary) -> bool:
+    return (
+        config.reconcile_deletions
+        and not config.dry_run
+        and bool(summary.discovered_source_paths)
+        and summary.preprocessing_failures == 0
+        and summary.database_failures == 0
+    )
+
+
+async def _validate_required_storage_columns(session: AsyncSession) -> None:
+    table_names = tuple(REQUIRED_RAG_STORAGE_COLUMNS)
+    column_names = tuple(
+        sorted({column for columns in REQUIRED_RAG_STORAGE_COLUMNS.values() for column in columns})
+    )
+    result = await session.execute(
+        text(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+                AND table_name = ANY(:table_names)
+                AND column_name = ANY(:column_names)
+            """
+        ),
+        {"table_names": list(table_names), "column_names": list(column_names)},
+    )
+    present = {(row[0], row[1]) for row in result.all()}
+    missing = sorted(
+        f"{table}.{column}"
+        for table, columns in REQUIRED_RAG_STORAGE_COLUMNS.items()
+        for column in columns
+        if (table, column) not in present
+    )
+    if missing:
+        raise RuntimeError(
+            "RAG storage schema is missing required tables or columns: " + ", ".join(missing)
+        )
+
+
+async def _validate_pgvector_column(session: AsyncSession, *, expected_dimensions: int) -> None:
+    extension_result = await session.execute(
+        text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')")
+    )
+    if not extension_result.scalar_one():
+        raise RuntimeError("Postgres extension 'vector' is not installed.")
+
+    column_result = await session.execute(
+        text(
+            """
+            SELECT format_type(attribute.atttypid, attribute.atttypmod)
+            FROM pg_attribute attribute
+            JOIN pg_class relation ON relation.oid = attribute.attrelid
+            JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = current_schema()
+                AND relation.relname = 'rag_embeddings'
+                AND attribute.attname = 'embedding'
+                AND NOT attribute.attisdropped
+            """
+        )
+    )
+    column_type = column_result.scalar_one_or_none()
+    expected_type = f"vector({expected_dimensions})"
+    if column_type != expected_type:
+        raise RuntimeError(
+            "RAG embedding column has unexpected type: "
+            f"expected {expected_type}, found {column_type or 'missing'}."
+        )
+
+
+def _embed_texts_in_batches(
+    *,
+    provider: EmbeddingModel,
+    texts: list[str],
+    config: IngestionConfig,
+) -> list[list[float]]:
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), config.embedding_batch_size):
+        batch = texts[start : start + config.embedding_batch_size]
+        vectors.extend(
+            provider.embed_documents(
+                batch,
+                model_name=config.model_name,
+                embedding_dimensions=config.embedding_dimensions,
+            )
+        )
+    return vectors
 
 
 def _log_preprocessing_summary(summary: IngestionSummary) -> None:
@@ -258,10 +474,14 @@ def _log_preprocessing_summary(summary: IngestionSummary) -> None:
 
 def _log_write_summary(summary: IngestionSummary) -> None:
     logger.info(
-        "Postgres ingestion complete: documents=%d chunks=%d embeddings=%d failures=%d",
+        (
+            "Postgres ingestion complete: documents=%d chunks=%d embeddings=%d "
+            "deactivated=%d failures=%d"
+        ),
         summary.documents_written,
         summary.chunks_written,
         summary.embeddings_written,
+        summary.documents_deactivated,
         summary.database_failures,
     )
 
@@ -276,6 +496,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
     parser.add_argument("--chunk-overlap", type=int, default=DEFAULT_CHUNK_OVERLAP)
+    parser.add_argument("--min-chunk-chars", type=int, default=DEFAULT_MIN_CHUNK_CHARS)
+    parser.add_argument(
+        "--max-oversized-code-chars",
+        type=int,
+        default=DEFAULT_MAX_OVERSIZED_CODE_CHARS,
+    )
     parser.add_argument(
         "--embedding-batch-size",
         type=int,
@@ -291,6 +517,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stop on the first preprocessing or database failure.",
     )
+    parser.add_argument(
+        "--reconcile-deletions",
+        action="store_true",
+        help="Deactivate previously indexed source documents missing from a successful scan.",
+    )
     return parser
 
 
@@ -304,9 +535,12 @@ def main() -> None:
         model_name=args.model_name,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
+        min_chunk_chars=args.min_chunk_chars,
+        max_oversized_code_chars=args.max_oversized_code_chars,
         embedding_batch_size=args.embedding_batch_size,
         dry_run=args.dry_run,
         fail_fast=args.fail_fast,
+        reconcile_deletions=args.reconcile_deletions,
     )
     asyncio.run(ingest_corpus(config))
 

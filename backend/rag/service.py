@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.rag.defaults import validate_pgvector_embedding_contract
 from backend.rag.models import EMBEDDING_DIMENSIONS, RagChunk, RagDocument, RagEmbedding
 from backend.rag.repository import (
     ChunkRecord,
@@ -80,13 +81,55 @@ class RagService:
         embeddings: Sequence[EmbeddingRecord],
     ) -> list[RagEmbedding]:
         for record in embeddings:
-            _validate_embedding(record.embedding)
+            _validate_embedding_record(record)
         rows = await self._repository.insert_embeddings(
             self._session,
             embeddings=embeddings,
         )
         await self._session.commit()
         return rows
+
+    async def reconcile_documents(
+        self,
+        *,
+        source_type: str,
+        course_name: str,
+        seen_source_paths: Sequence[str],
+    ) -> int:
+        if not seen_source_paths:
+            raise ValueError("seen_source_paths must not be empty")
+        try:
+            count = await self._repository.deactivate_missing_documents(
+                self._session,
+                source_type=source_type,
+                course_name=course_name,
+                seen_source_paths=seen_source_paths,
+            )
+            await self._session.commit()
+            return count
+        except Exception:
+            await self._session.rollback()
+            raise
+
+    async def deactivate_documents_by_source_paths(
+        self,
+        *,
+        source_type: str,
+        source_paths: Sequence[str],
+    ) -> int:
+        if not source_paths:
+            raise ValueError("source_paths must not be empty")
+        try:
+            count = await self._repository.deactivate_documents_by_source_paths(
+                self._session,
+                source_type=source_type,
+                source_paths=source_paths,
+            )
+            await self._session.commit()
+            return count
+        except Exception:
+            await self._session.rollback()
+            raise
 
     async def replace_document_index(
         self,
@@ -133,35 +176,29 @@ class RagService:
     async def retrieve(
         self,
         *,
-        query_text: str,
         query_embedding: Sequence[float],
+        embedding_provider: str,
         embedding_model: str,
+        embedding_dimensions: int,
         top_k: int = 5,
-        write_log: bool = False,
-        conversation_id: UUID | None = None,
-        message_id: UUID | None = None,
-        rag_index_version: str | None = None,
     ) -> list[SimilarChunk]:
         _validate_embedding(query_embedding)
+        if embedding_dimensions != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"embedding_dimensions must be {EMBEDDING_DIMENSIONS}; "
+                f"received {embedding_dimensions}."
+            )
         if top_k < 1:
             raise ValueError("top_k must be at least 1")
 
         results = await self._repository.find_similar_chunks(
             self._session,
             query_embedding=query_embedding,
+            embedding_provider=embedding_provider,
             embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
             top_k=top_k,
         )
-        if write_log:
-            await self._repository.write_retrieval_log(
-                self._session,
-                query_text=query_text,
-                results=results,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                rag_index_version=rag_index_version,
-            )
-            await self._session.commit()
         return results
 
 
@@ -171,6 +208,15 @@ def _validate_embedding(embedding: Sequence[float]) -> None:
             f"Embeddings must contain exactly {EMBEDDING_DIMENSIONS} dimensions; "
             f"received {len(embedding)}."
         )
+
+
+def _validate_embedding_record(record: EmbeddingRecord) -> None:
+    _validate_embedding(record.embedding)
+    validate_pgvector_embedding_contract(
+        embedding_provider=record.embedding_provider,
+        model_name=record.embedding_model,
+        embedding_dimensions=record.embedding_dimensions,
+    )
 
 
 def _validate_chunk_embeddings(
@@ -183,6 +229,9 @@ def _validate_chunk_embeddings(
         raise ValueError("Chunk IDs are required when replacing a document index.")
     if len(chunk_ids) != len(chunks):
         raise ValueError("Chunk IDs must be unique when replacing a document index.")
+    chunk_indexes = {chunk.chunk_index for chunk in chunks}
+    if len(chunk_indexes) != len(chunks):
+        raise ValueError("Chunk indexes must be unique within a document.")
     if len(embeddings) != len(chunks):
         raise ValueError("Each chunk must have exactly one embedding.")
 
@@ -190,4 +239,4 @@ def _validate_chunk_embeddings(
     if embedding_chunk_ids != chunk_ids:
         raise ValueError("Embedding chunk IDs must match the supplied chunk IDs.")
     for record in embeddings:
-        _validate_embedding(record.embedding)
+        _validate_embedding_record(record)

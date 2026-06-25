@@ -25,7 +25,31 @@ body {
 
   display: flex;
   flex-direction: column;
+  position: relative;
+  overflow: hidden;
   min-height: 100vh;
+}
+
+.instructor-sidebar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 200px; /* sits above logout button */
+  transform: translateX(-50%);
+  width: 230px;
+  height: 230px;
+  background-image: url("../assets/capi_instructor_watermark.webp");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.instructor-sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .instructor-brand {
@@ -42,13 +66,10 @@ body {
 .instructor-brand-icon {
   width: 34px;
   height: 34px;
+  flex: 0 0 34px;
   border-radius: 8px;
-  background: #557c38;
-  color: #fff7e3;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  object-fit: contain;
+  display: block;
 }
 
 .instructor-nav {
@@ -127,27 +148,6 @@ body {
   margin-bottom: 30px;
 }
 
-.instructor-main::after {
-  content: "";
-  position: fixed;
-  right: 32px;
-  bottom: 24px;
-  width: 300px;
-  height: 300px;
-  background-image: url("../assets/capi-instructor.svg");
-  background-repeat: no-repeat;
-  background-size: contain;
-  background-position: center;
-  opacity: 0.08;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.instructor-main > * {
-  position: relative;
-  z-index: 1;
-}
-
 .instructor-kicker {
   margin: 0 0 8px;
   color: #557c38;
@@ -173,26 +173,14 @@ body {
   line-height: 1.6;
 }
 
-.export-button {
-  border: 1px solid #d8cfb1;
-  border-radius: 999px;
-  background: #fffdf0;
-  color: #557c38;
-
-  padding: 12px 18px;
-  font-weight: 800;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
 /* Stats */
 
 .instructor-stat-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 24px;
-}
+}  
 
 .instructor-stat-card {
   background: #fbf8e8;
@@ -238,6 +226,11 @@ body {
   border: 1px solid #e0d8bd;
   border-radius: 22px;
   padding: 22px;
+}
+
+.instructor-panel,
+.instructor-header {
+  scroll-margin-top: 24px;
 }
 
 .panel-header {
@@ -334,18 +327,6 @@ body {
 
 .roster-panel {
   margin-bottom: 20px;
-}
-
-.small-outline-button {
-  border: 1px solid #d8cfb1;
-  border-radius: 999px;
-  background: #fffdf0;
-  color: #557c38;
-
-  padding: 10px 14px;
-  font-weight: 800;
-  cursor: pointer;
-  white-space: nowrap;
 }
 
 .roster-table-wrapper {

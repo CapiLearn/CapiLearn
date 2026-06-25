@@ -1,44 +1,25 @@
+"""FastAPI dependency providers for the chat API."""
+
 from functools import lru_cache
 from typing import Annotated
-from uuid import UUID
 
-from fastapi import Depends, Header, status
+from fastapi import Depends, Request
 
-from backend.chat.schemas import CurrentUser
+from backend.auth.dependencies import StudentUserDep
+from backend.auth.schemas import CurrentUser
 from backend.chat.service import ChatService
-from backend.core.config import settings
 from backend.core.database import DbSession
-from backend.core.exceptions import ApiError
 from backend.llm.service import LLMService
-from backend.rag.config import rag_settings
+from backend.rag.config import RagBackend, rag_settings
 from backend.rag.retrieval import build_rag_retrieval_provider
 from backend.rag.schemas import RetrievalProvider
-
-
-async def get_current_user(
-    x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
-    x_user_email: Annotated[str | None, Header(alias="X-User-Email")] = None,
-) -> CurrentUser:
-    if x_user_id is None:
-        return CurrentUser(id=settings.local_dev_user_id, email=x_user_email)
-
-    try:
-        user_id = UUID(x_user_id)
-    except ValueError as exc:
-        raise ApiError(
-            code="invalid_user_header",
-            message="X-User-Id must be a valid UUID.",
-            status_code=status.HTTP_401_UNAUTHORIZED,
-        ) from exc
-
-    return CurrentUser(id=user_id, email=x_user_email)
-
-
-CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+from backend.rag.trace_contracts import BestEffortRetrievalTraceSink
+from backend.rag.tracing import PostgresRagTraceSink
 
 
 @lru_cache(maxsize=1)
 def get_rag_retrieval_provider() -> RetrievalProvider:
+    """Build the process-local retrieval provider used by chat completions."""
     return build_rag_retrieval_provider(rag_settings)
 
 
@@ -49,20 +30,40 @@ RetrievalProviderDep = Annotated[
 
 
 def get_llm_service(retriever: RetrievalProviderDep) -> LLMService:
-    return LLMService(retriever=retriever)
+    """Create an LLM service wired with retrieval and optional RAG tracing."""
+    retrieval_trace_sink = None
+    if rag_settings.backend == RagBackend.PGVECTOR and rag_settings.write_retrieval_logs:
+        # Retrieval traces are observational data, so failures must not block chat turns.
+        retrieval_trace_sink = BestEffortRetrievalTraceSink(
+            PostgresRagTraceSink(rag_index_version=rag_settings.index_version)
+        )
+    return LLMService(retriever=retriever, retrieval_trace_sink=retrieval_trace_sink)
 
 
 LLMServiceDep = Annotated[LLMService, Depends(get_llm_service)]
 
 
+async def bind_chat_rate_limit_user(
+    request: Request,
+    current_user: StudentUserDep,
+) -> CurrentUser:
+    """Expose the authenticated user to the shared chat rate-limit key function."""
+    request.state.current_user = current_user
+    return current_user
+
+
+ChatRateLimitUserDep = Annotated[CurrentUser, Depends(bind_chat_rate_limit_user)]
+
+
 def get_chat_service(
     session: DbSession,
-    current_user: CurrentUserDep,
+    current_user: StudentUserDep,
     llm_service: LLMServiceDep,
 ) -> ChatService:
+    """Create the per-request chat service for the authenticated student."""
     return ChatService(
         session=session,
-        current_user=current_user,
+        user_id=current_user.id,
         llm_service=llm_service,
     )
 

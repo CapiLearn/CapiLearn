@@ -1,3 +1,5 @@
+"""Shared schemas and provider protocols for LLM orchestration."""
+
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Protocol
@@ -10,6 +12,8 @@ from backend.rag.schemas import RetrievalResult, RetrievedChunk
 
 
 class LLMBaseModel(BaseModel):
+    """Base model using camelCase aliases for API and log payloads."""
+
     model_config = ConfigDict(
         alias_generator=to_camel,
         populate_by_name=True,
@@ -18,17 +22,23 @@ class LLMBaseModel(BaseModel):
 
 
 class ChatRole(StrEnum):
+    """Roles supported by chat completion providers."""
+
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
 
 
 class ChatMessage(LLMBaseModel):
+    """One provider-compatible chat message."""
+
     role: ChatRole
     content: str
 
 
 class GuardrailResult(LLMBaseModel):
+    """Normalized result returned by any guardrail provider."""
+
     blocked: bool = False
     reason: str | None = None
     rail: str | None = None
@@ -36,15 +46,19 @@ class GuardrailResult(LLMBaseModel):
 
 
 class LLMRequest(LLMBaseModel):
+    """Request envelope for generating a response to one user message."""
+
     user_id: UUID
     conversation_id: UUID
     user_message_id: UUID
-    assistant_message_id: UUID | None = None
+    assistant_message_id: UUID
     content: str
     history: list[ChatMessage] = Field(default_factory=list)
 
 
 class ProviderResponse(LLMBaseModel):
+    """Normalized response and usage metadata from an LLM provider."""
+
     content: str
     model: str | None = None
     finish_reason: str | None = None
@@ -52,14 +66,15 @@ class ProviderResponse(LLMBaseModel):
     completion_tokens: int | None = None
     total_tokens: int | None = None
     latency_ms: int | None = None
-    raw_response: dict[str, Any] | None = None
 
 
 class LLMCostComponent(LLMBaseModel):
+    """Cost and usage record for one provider-backed LLM component call."""
+
     user_id: UUID
     conversation_id: UUID
     user_message_id: UUID
-    assistant_message_id: UUID | None = None
+    assistant_message_id: UUID
     component_order: int
     component_type: str
     attempt_index: int = 1
@@ -78,6 +93,8 @@ class LLMCostComponent(LLMBaseModel):
 
 
 class LLMResult(LLMBaseModel):
+    """Final response payload returned by the LLM service."""
+
     content: str
     retrieval_result: RetrievalResult = Field(default_factory=RetrievalResult)
     retrieved_context: list[RetrievedChunk] = Field(default_factory=list)
@@ -88,10 +105,14 @@ class LLMResult(LLMBaseModel):
 
 
 class LLMProvider(Protocol):
+    """Protocol for chat completion providers consumed by LLMService."""
+
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse: ...
 
 
 class GuardrailsProvider(Protocol):
+    """Protocol for input and output guardrail providers."""
+
     async def check_input(self, content: str) -> GuardrailResult: ...
 
     async def check_output(

@@ -1,3 +1,5 @@
+"""HTTP middleware for request ids and request lifecycle logs."""
+
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -17,11 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Bind a request id for each HTTP request and echo it in responses."""
+
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
+        """Log request start and completion with latency and route metadata."""
         request_id = request.headers.get(settings.request_id_header) or new_request_id()
         token = set_request_id(request_id)
         started_at = timer_start()
@@ -33,7 +38,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         )
         try:
             response = await call_next(request)
-        except Exception:
+        except Exception as exc:
             log_event(
                 logger,
                 "http.request.failed",
@@ -42,7 +47,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 route=_route_path(request),
                 latency_ms=elapsed_ms(started_at),
-                exc_info=True,
+                exc_info=exc,
             )
             raise
         else:
@@ -58,6 +63,8 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             )
             return response
         finally:
+            # ContextVars must be reset so async worker reuse cannot leak ids
+            # between unrelated requests.
             reset_request_id(token)
 
 

@@ -32,9 +32,9 @@ CapiLearn is an independent educational project. It is not affiliated with, endo
 
 | Tool | Use in CapiLearn |
 |---|---|
-| **ChromaDB** | Local vector storage for course context chunks |
-| **sentence-transformers** | Local text embedding library |
-| **all-MiniLM-L6-v2** | Default embedding model for local retrieval experiments (`sentence-transformers/all-MiniLM-L6-v2`) |
+| **PostgreSQL pgvector** | Runtime vector storage and similarity search for course context chunks |
+| **OpenAI embeddings** | Runtime text embedding generation for pgvector retrieval |
+| **LiteLLM** | OpenAI embedding API adapter used by the RAG embedding provider |
 
 ---
 

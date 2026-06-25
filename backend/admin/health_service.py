@@ -1,0 +1,521 @@
+"""Admin health checks for backend, database, RAG, LLM provider, and guardrails."""
+
+import asyncio
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Protocol
+
+from litellm import get_llm_provider, get_valid_models
+from sqlalchemy import and_, func, select, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.admin.schemas import AdminHealthCheck, AdminHealthResponse, HealthStatus
+from backend.core.observability import elapsed_ms, timer_start
+from backend.llm.config import (
+    InputGuardrailMode,
+    LLMSettings,
+    OutputGuardrailMode,
+    llm_settings,
+)
+from backend.rag.config import RagBackend, RagSettings, rag_settings
+from backend.rag.models import RagChunk, RagDocument, RagEmbedding, RagRetrievalLog
+from backend.rag.repository import embedding_contract_filter
+
+PROVIDER_METADATA_CACHE_TTL_SECONDS = 300
+ADMIN_HEALTH_CACHE_TTL_SECONDS = 30
+
+
+class ProviderMetadataProvider(Protocol):
+    """Protocol for loading model metadata from an LLM provider."""
+
+    async def get_models(self, provider: str) -> list[str]:
+        """Return model names advertised by the provider."""
+        ...
+
+
+@dataclass(frozen=True)
+class ProviderMetadataCacheEntry:
+    """Cached provider model list with a monotonic-clock expiry."""
+
+    models: tuple[str, ...]
+    expires_at: float
+
+
+class AdminHealthResponseCache:
+    """Short-lived async cache for the full admin health response."""
+
+    def __init__(self, *, ttl_seconds: int = ADMIN_HEALTH_CACHE_TTL_SECONDS) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._response: AdminHealthResponse | None = None
+        self._expires_at = 0.0
+        self._lock = asyncio.Lock()
+
+    async def get_or_load(
+        self,
+        loader: Callable[[], Awaitable[AdminHealthResponse]],
+    ) -> AdminHealthResponse:
+        """Return a cached health response or load one under a single-flight lock."""
+        now = time.monotonic()
+        if self._response is not None and now < self._expires_at:
+            return self._response.model_copy(deep=True)
+
+        async with self._lock:
+            # Recheck after acquiring the lock so concurrent misses share one load.
+            now = time.monotonic()
+            if self._response is not None and now < self._expires_at:
+                return self._response.model_copy(deep=True)
+
+            response = await loader()
+            self._response = response.model_copy(deep=True)
+            self._expires_at = time.monotonic() + self._ttl_seconds
+            return self._response.model_copy(deep=True)
+
+    def clear(self) -> None:
+        """Invalidate the cached health response."""
+        self._response = None
+        self._expires_at = 0.0
+
+
+class CachedLiteLLMProviderMetadataProvider:
+    """Loads LiteLLM provider metadata with a short in-memory TTL cache."""
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: int = PROVIDER_METADATA_CACHE_TTL_SECONDS,
+        model_loader: Callable[[str], list[str]] | None = None,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._model_loader = model_loader or _load_valid_models
+        self._cache_by_provider: dict[str, ProviderMetadataCacheEntry] = {}
+        self._lock = asyncio.Lock()
+
+    async def get_models(self, provider: str) -> list[str]:
+        """Return provider model names without blocking the event loop."""
+        now = time.monotonic()
+        cached_models = self._cached_models(provider, now=now)
+        if cached_models is not None:
+            return cached_models
+
+        async with self._lock:
+            # LiteLLM metadata calls can be slow; avoid duplicate concurrent probes.
+            now = time.monotonic()
+            cached_models = self._cached_models(provider, now=now)
+            if cached_models is not None:
+                return cached_models
+
+            models = await asyncio.to_thread(self._model_loader, provider)
+            cached_entry = ProviderMetadataCacheEntry(
+                models=tuple(models),
+                expires_at=time.monotonic() + self._ttl_seconds,
+            )
+            self._cache_by_provider[provider] = cached_entry
+            return list(cached_entry.models)
+
+    def _cached_models(self, provider: str, *, now: float) -> list[str] | None:
+        cached_entry = self._cache_by_provider.get(provider)
+        if cached_entry is None:
+            return None
+        if now >= cached_entry.expires_at:
+            return None
+        return list(cached_entry.models)
+
+    def clear(self) -> None:
+        """Invalidate all cached provider metadata."""
+        self._cache_by_provider.clear()
+
+
+def _load_valid_models(provider: str) -> list[str]:
+    return get_valid_models(
+        check_provider_endpoint=True,
+        custom_llm_provider=provider,
+    )
+
+
+provider_metadata_provider = CachedLiteLLMProviderMetadataProvider()
+admin_health_response_cache = AdminHealthResponseCache()
+
+
+class AdminHealthService:
+    """Builds the admin health response from dependency-specific probes."""
+
+    def __init__(
+        self,
+        *,
+        session: AsyncSession,
+        provider_metadata_provider: ProviderMetadataProvider = provider_metadata_provider,
+        response_cache: AdminHealthResponseCache = admin_health_response_cache,
+        llm_config: LLMSettings = llm_settings,
+        rag_config: RagSettings = rag_settings,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._session = session
+        self._provider_metadata_provider = provider_metadata_provider
+        self._response_cache = response_cache
+        self._llm_config = llm_config
+        self._rag_config = rag_config
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._provider_models: dict[str, list[str]] = {}
+
+    async def get_health(self) -> AdminHealthResponse:
+        """Return the cached admin health response, loading checks when stale."""
+        return await self._response_cache.get_or_load(self._load_health)
+
+    async def _load_health(self) -> AdminHealthResponse:
+        """Run health checks and aggregate their statuses."""
+        checks = [
+            self._check_backend(),
+            await self._check_database(),
+            await self._check_rag(),
+            await self._check_llm_provider_metadata(),
+            await self._check_guardrails(),
+        ]
+        return AdminHealthResponse(
+            status=_aggregate_status(checks),
+            checked_at=self._clock(),
+            checks=checks,
+        )
+
+    def _check_backend(self) -> AdminHealthCheck:
+        return AdminHealthCheck(
+            id="backend",
+            name="Backend",
+            status=HealthStatus.OK,
+            message="Backend process is healthy",
+        )
+
+    async def _check_database(self) -> AdminHealthCheck:
+        started_at = timer_start()
+        try:
+            value = await self._session.scalar(text("SELECT 1"))
+        except Exception:
+            return AdminHealthCheck(
+                id="database",
+                name="Database",
+                status=HealthStatus.UNHEALTHY,
+                latency_ms=elapsed_ms(started_at),
+                message="Database check failed.",
+            )
+
+        if value != 1:
+            return AdminHealthCheck(
+                id="database",
+                name="Database",
+                status=HealthStatus.UNHEALTHY,
+                latency_ms=elapsed_ms(started_at),
+                message="Database check returned an unexpected result.",
+            )
+        return AdminHealthCheck(
+            id="database",
+            name="Database",
+            status=HealthStatus.OK,
+            latency_ms=elapsed_ms(started_at),
+            message="Database connected",
+        )
+
+    async def _check_rag(self) -> AdminHealthCheck:
+        if self._rag_config.backend == RagBackend.CHROMA:
+            # Chroma deployments may be remote or file-backed; a cheap portable probe
+            # is not available without adding backend-specific I/O here.
+            return AdminHealthCheck(
+                id="rag",
+                name="RAG",
+                status=HealthStatus.NOT_CHECKED,
+                message="Chroma RAG backend does not expose a cheap admin health probe.",
+                details={
+                    "backend": self._rag_config.backend.value,
+                    "modelName": self._rag_config.model_name,
+                    "indexVersion": self._rag_config.index_version,
+                },
+            )
+
+        started_at = timer_start()
+        try:
+            document_count = await self._count(RagDocument.id)
+            chunk_count = await self._count(RagChunk.id)
+            embedding_count = await self._count(RagEmbedding.id)
+            chunks_missing_embeddings = await self._count_chunks_missing_embeddings()
+            configured_model_embedding_count = await self._count_configured_model_embeddings()
+            chunks_missing_configured_model_embeddings = (
+                await self._count_chunks_missing_configured_model_embeddings()
+            )
+            latest_document_updated_at = await self._session.scalar(
+                select(func.max(RagDocument.updated_at))
+            )
+            latest_retrieval_log_created_at = await self._session.scalar(
+                select(func.max(RagRetrievalLog.created_at))
+            )
+        except SQLAlchemyError:
+            return AdminHealthCheck(
+                id="rag",
+                name="RAG",
+                status=HealthStatus.UNHEALTHY,
+                latency_ms=elapsed_ms(started_at),
+                message="RAG storage health check failed.",
+                details={
+                    "backend": self._rag_config.backend.value,
+                    "modelName": self._rag_config.model_name,
+                    "indexVersion": self._rag_config.index_version,
+                },
+            )
+
+        status = (
+            HealthStatus.DEGRADED
+            if chunk_count > 0 and chunks_missing_configured_model_embeddings > 0
+            else HealthStatus.OK
+        )
+        message = (
+            "RAG storage has chunks missing configured model embeddings."
+            if status == HealthStatus.DEGRADED
+            else "RAG storage counts are available."
+        )
+        return AdminHealthCheck(
+            id="rag",
+            name="RAG",
+            status=status,
+            latency_ms=elapsed_ms(started_at),
+            message=message,
+            details={
+                "backend": self._rag_config.backend.value,
+                "modelName": self._rag_config.model_name,
+                "indexVersion": self._rag_config.index_version,
+                "documents": document_count,
+                "chunks": chunk_count,
+                "embeddings": embedding_count,
+                "chunksMissingEmbeddings": chunks_missing_embeddings,
+                "configuredModelEmbeddings": configured_model_embedding_count,
+                "chunksMissingConfiguredModelEmbeddings": (
+                    chunks_missing_configured_model_embeddings
+                ),
+                "latestDocumentUpdatedAt": latest_document_updated_at.isoformat()
+                if latest_document_updated_at
+                else None,
+                "latestRetrievalLogCreatedAt": latest_retrieval_log_created_at.isoformat()
+                if latest_retrieval_log_created_at
+                else None,
+            },
+        )
+
+    async def _check_llm_provider_metadata(self) -> AdminHealthCheck:
+        return await self._build_provider_metadata_check(
+            id="llm-provider",
+            name="LLM Provider",
+            model=self._llm_config.model,
+            ok_message="LLM provider metadata",
+            unresolved_message=(
+                "Configured LLM provider could not be resolved; provider liveness "
+                "could not be confirmed."
+            ),
+            failed_message=(
+                "Configured LLM provider metadata check failed; provider liveness "
+                "could not be confirmed."
+            ),
+            empty_message=(
+                "Configured LLM provider returned no model metadata; provider liveness "
+                "could not be confirmed."
+            ),
+        )
+
+    async def _check_guardrails(self) -> AdminHealthCheck:
+        details = {
+            "enabled": self._llm_config.guardrails_enabled,
+            "inputMode": self._llm_config.input_guardrail_mode.value,
+            "outputMode": self._llm_config.output_guardrail_mode.value,
+            "judgeEnabled": self._llm_config.guardrails_judge_enabled,
+        }
+        if not self._guardrails_need_provider_metadata():
+            return AdminHealthCheck(
+                id="guardrails",
+                name="Guardrails",
+                status=HealthStatus.OK,
+                message="Regex mode does not require a judge model",
+                details=details,
+            )
+
+        check = await self._build_provider_metadata_check(
+            id="guardrails",
+            name="Guardrails",
+            model=self._llm_config.guardrails_judge_model,
+            ok_message="Guardrail judge provider returned model metadata.",
+            unresolved_message=(
+                "Guardrail judge provider could not be resolved; provider liveness "
+                "could not be confirmed."
+            ),
+            failed_message=(
+                "Guardrail judge provider metadata check failed; provider liveness "
+                "could not be confirmed."
+            ),
+            empty_message=(
+                "Guardrail judge provider returned no model metadata; provider liveness "
+                "could not be confirmed."
+            ),
+        )
+        check.details.update(details)
+        return check
+
+    def _guardrails_need_provider_metadata(self) -> bool:
+        """Return whether configured guardrails depend on the judge provider."""
+        if not self._llm_config.guardrails_enabled:
+            return False
+        if not self._llm_config.guardrails_judge_enabled:
+            return False
+        input_needs_judge = self._llm_config.input_guardrail_mode == InputGuardrailMode.POLICY
+        output_needs_judge = self._llm_config.output_guardrail_mode == OutputGuardrailMode.POLICY
+        return input_needs_judge or output_needs_judge
+
+    async def _build_provider_metadata_check(
+        self,
+        *,
+        id: str,
+        name: str,
+        model: str,
+        ok_message: str,
+        unresolved_message: str,
+        failed_message: str,
+        empty_message: str,
+    ) -> AdminHealthCheck:
+        """Build a degraded check when provider metadata cannot confirm liveness."""
+        started_at = timer_start()
+        try:
+            provider = _provider_for_model(model)
+        except Exception:
+            return AdminHealthCheck(
+                id=id,
+                name=name,
+                status=HealthStatus.DEGRADED,
+                latency_ms=elapsed_ms(started_at),
+                message=unresolved_message,
+                details={
+                    "configuredModel": model,
+                    "provider": None,
+                    "returnedModelCount": 0,
+                    "providerAvailable": False,
+                },
+            )
+
+        details = {
+            "configuredModel": model,
+            "provider": provider,
+            "returnedModelCount": 0,
+        }
+        try:
+            models = await self._get_provider_models(provider)
+        except Exception:
+            return AdminHealthCheck(
+                id=id,
+                name=name,
+                status=HealthStatus.DEGRADED,
+                latency_ms=elapsed_ms(started_at),
+                message=failed_message,
+                details={
+                    **details,
+                    "providerAvailable": False,
+                },
+            )
+
+        details = {
+            **details,
+            "returnedModelCount": len(models),
+        }
+        if not models:
+            return AdminHealthCheck(
+                id=id,
+                name=name,
+                status=HealthStatus.DEGRADED,
+                latency_ms=elapsed_ms(started_at),
+                message=empty_message,
+                details={
+                    **details,
+                    "providerAvailable": False,
+                },
+            )
+        return AdminHealthCheck(
+            id=id,
+            name=name,
+            status=HealthStatus.OK,
+            latency_ms=elapsed_ms(started_at),
+            message=ok_message,
+            details={
+                **details,
+                "providerAvailable": True,
+            },
+        )
+
+    async def _get_provider_models(self, provider: str) -> list[str]:
+        """Memoize provider metadata within one health response load."""
+        if provider not in self._provider_models:
+            self._provider_models[provider] = await self._provider_metadata_provider.get_models(
+                provider
+            )
+        return list(self._provider_models[provider])
+
+    async def _count(self, column) -> int:
+        value = await self._session.scalar(select(func.count(column)))
+        return _count_value(value)
+
+    async def _count_chunks_missing_embeddings(self) -> int:
+        value = await self._session.scalar(
+            select(func.count(RagChunk.id))
+            .outerjoin(RagEmbedding, RagEmbedding.chunk_id == RagChunk.id)
+            .where(RagEmbedding.id.is_(None))
+        )
+        return _count_value(value)
+
+    async def _count_configured_model_embeddings(self) -> int:
+        value = await self._session.scalar(
+            select(func.count(RagEmbedding.id)).where(
+                *embedding_contract_filter(
+                    embedding_provider=self._rag_config.embedding_provider,
+                    embedding_model=self._rag_config.model_name,
+                    embedding_dimensions=self._rag_config.embedding_dimensions,
+                )
+            )
+        )
+        return _count_value(value)
+
+    async def _count_chunks_missing_configured_model_embeddings(self) -> int:
+        value = await self._session.scalar(
+            select(func.count(RagChunk.id))
+            .outerjoin(
+                RagEmbedding,
+                and_(
+                    RagEmbedding.chunk_id == RagChunk.id,
+                    *embedding_contract_filter(
+                        embedding_provider=self._rag_config.embedding_provider,
+                        embedding_model=self._rag_config.model_name,
+                        embedding_dimensions=self._rag_config.embedding_dimensions,
+                    ),
+                ),
+            )
+            .where(RagEmbedding.id.is_(None))
+        )
+        return _count_value(value)
+
+
+def _provider_for_model(model: str) -> str:
+    """Resolve the LiteLLM provider for a configured model name."""
+    _, provider, _, _ = get_llm_provider(model)
+    if not provider:
+        raise ValueError("LiteLLM did not resolve a provider for the configured model.")
+    return provider
+
+
+def _count_value(value: int | None) -> int:
+    if value is None:
+        raise ValueError("COUNT query returned no scalar value.")
+    return int(value)
+
+
+def _aggregate_status(checks: list[AdminHealthCheck]) -> HealthStatus:
+    """Collapse individual health checks into the top-level admin status."""
+    statuses = {check.status for check in checks}
+    if HealthStatus.UNHEALTHY in statuses:
+        return HealthStatus.UNHEALTHY
+    if HealthStatus.DEGRADED in statuses:
+        return HealthStatus.DEGRADED
+    if HealthStatus.OK in statuses:
+        return HealthStatus.OK
+    return HealthStatus.NOT_CHECKED

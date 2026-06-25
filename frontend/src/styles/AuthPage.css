@@ -1,0 +1,106 @@
+.auth-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(223, 232, 193, 0.85), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(240, 224, 135, 0.35), transparent 34%),
+    #f6f3e4;
+
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(360px, 520px);
+  align-items: center;
+  gap: 48px;
+
+  padding: 56px clamp(24px, 6vw, 88px);
+  color: #2b1d15;
+}
+
+.auth-hero-panel {
+  max-width: 560px;
+}
+
+.auth-brand-mark {
+  width: 100px;
+  height: 100px;
+  border-radius: 18px;
+  background: #557c38;
+  color: #fff7e3;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 28px;
+  font-weight: 900;
+  margin-bottom: 24px;
+}
+
+.auth-kicker {
+  margin: 0 0 12px;
+  color: #557c38;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.auth-hero-panel h1 {
+  margin: 0;
+  font-size: clamp(42px, 6vw, 72px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+}
+
+.auth-hero-panel p:last-child {
+  max-width: 520px;
+  margin: 24px 0 0;
+  color: #5f554b;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.auth-card-shell {
+  width: 100%;
+
+  display: flex;
+  justify-content: center;
+}
+
+.auth-clerk-root {
+  width: 100%;
+}
+
+.auth-clerk-card {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .auth-page {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 40px 20px;
+  }
+
+  .auth-hero-panel {
+    text-align: center;
+    margin: 0 auto;
+  }
+
+  .auth-brand-mark {
+    width: 52px;
+    height: 52px;
+    object-fit: contain;
+    display: block;
+    margin-bottom: 18px;
+    border-radius: 16px;
+  }
+
+  .auth-hero-panel p:last-child {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .auth-card-shell {
+    max-width: 520px;
+    margin: 0 auto;
+  }
+}

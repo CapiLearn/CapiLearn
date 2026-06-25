@@ -8,6 +8,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from backend.activity import models as activity_models  # noqa: F401
+from backend.auth import models as auth_models  # noqa: F401
 from backend.chat import models as chat_models  # noqa: F401
 from backend.core.config import settings
 from backend.core.database import Base

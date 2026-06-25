@@ -1,91 +1,97 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { highlightMarkdownChildren } from "./markdownHighlighting";
+
+function shouldSkipTextRenderingElement(child) {
+  const tagName = child.props?.node?.tagName;
+
+  return (
+    child.type === "a" ||
+    child.type === "code" ||
+    tagName === "a" ||
+    tagName === "code"
+  );
+}
 
 /**
  * Renders assistant message content as GitHub-flavored Markdown.
  *
- * LLM responses may include headings, bullet points, tables, inline code,
- * or code blocks. This component converts that markdown into React-rendered
- * HTML elements without manually injecting raw HTML.
+ * When a search term is provided, visible rendered text is highlighted while
+ * preserving Markdown structure.
  *
  * @param {Object} props - Component props.
- * @param {string} props.content - Markdown text to render.
- * @returns {JSX.Element} Rendered markdown message content.
+ * @param {string} props.content - Markdown content to render.
+ * @param {string} [props.searchTerm] - Optional search term to highlight.
+ * @returns {JSX.Element} Rendered Markdown message.
  */
+function MarkdownMessage({ content = "", searchTerm = "" }) {
+  const renderHighlightedChildren = (children) =>
+    highlightMarkdownChildren(
+      children,
+      searchTerm,
+      shouldSkipTextRenderingElement
+    );
+  const defaultComponents = {
+    p({ children }) {
+      return <p>{renderHighlightedChildren(children)}</p>;
+    },
+    li({ children }) {
+      return <li>{renderHighlightedChildren(children)}</li>;
+    },
+    h1({ children }) {
+      return <h1>{renderHighlightedChildren(children)}</h1>;
+    },
+    h2({ children }) {
+      return <h2>{renderHighlightedChildren(children)}</h2>;
+    },
+    h3({ children }) {
+      return <h3>{renderHighlightedChildren(children)}</h3>;
+    },
+    h4({ children }) {
+      return <h4>{renderHighlightedChildren(children)}</h4>;
+    },
+    h5({ children }) {
+      return <h5>{renderHighlightedChildren(children)}</h5>;
+    },
+    h6({ children }) {
+      return <h6>{renderHighlightedChildren(children)}</h6>;
+    },
+    td({ children }) {
+      return <td>{renderHighlightedChildren(children)}</td>;
+    },
+    th({ children }) {
+      return <th>{renderHighlightedChildren(children)}</th>;
+    },
+    strong({ children }) {
+      return <strong>{renderHighlightedChildren(children)}</strong>;
+    },
+    em({ children }) {
+      return <em>{renderHighlightedChildren(children)}</em>;
+    },
+    a({ children, href, title }) {
+      const safeHref = defaultUrlTransform(href);
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function HighlightedText({ text, searchTerm }) {
-  const normalizedSearchTerm = searchTerm.trim();
-
-  if (!normalizedSearchTerm || typeof text !== "string") {
-    return text;
-  }
-
-  const escapedSearchTerm = escapeRegExp(normalizedSearchTerm);
-  const parts = text.split(new RegExp(`(${escapedSearchTerm})`, "gi"));
-
-  return parts.map((part, index) =>
-    part.toLowerCase() === normalizedSearchTerm.toLowerCase() ? (
-      <mark className="message-search-highlight" key={`${part}-${index}`}>
-        {part}
-      </mark>
-    ) : (
-      part
-    )
-  );
-}
-
-function highlightChildren(children, searchTerm) {
-  return Array.isArray(children)
-    ? children.map((child, index) =>
-        typeof child === "string" ? (
-          <HighlightedText
-            key={`${child}-${index}`}
-            text={child}
-            searchTerm={searchTerm}
-          />
-        ) : (
-          child
-        )
-      )
-    : typeof children === "string"
-      ? <HighlightedText text={children} searchTerm={searchTerm} />
-      : children;
-}
-
-function MarkdownMessage({ content, searchTerm = "" }) {
+      return (
+        <a href={safeHref} title={title}>
+          {renderHighlightedChildren(children)}
+        </a>
+      );
+    },
+    code({ children, className }) {
+      return (
+        <code className={className}>
+          {renderHighlightedChildren(children)}
+        </code>
+      );
+    },
+  };
 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      components={{
-        p({ children }) {
-          return <p>{highlightChildren(children, searchTerm)}</p>;
-        },
-        li({ children }) {
-          return <li>{highlightChildren(children, searchTerm)}</li>;
-        },
-        h1({ children }) {
-          return <h1>{highlightChildren(children, searchTerm)}</h1>;
-        },
-        h2({ children }) {
-          return <h2>{highlightChildren(children, searchTerm)}</h2>;
-        },
-        h3({ children }) {
-          return <h3>{highlightChildren(children, searchTerm)}</h3>;
-        },
-        td({ children }) {
-          return <td>{highlightChildren(children, searchTerm)}</td>;
-        },
-        th({ children }) {
-          return <th>{highlightChildren(children, searchTerm)}</th>;
-        },
-      }}
+      components={defaultComponents}
     >
-      {content}
+      {typeof content === "string" ? content : ""}
     </ReactMarkdown>
   );
 }

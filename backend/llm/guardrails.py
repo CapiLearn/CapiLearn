@@ -1,3 +1,5 @@
+"""Guardrail providers for input safety and Socratic output policy checks."""
+
 import json
 import re
 from collections.abc import Awaitable, Callable, Sequence
@@ -67,6 +69,8 @@ Return only strict JSON with this shape:
 
 @dataclass(frozen=True)
 class RegexRule:
+    """A deterministic input rule used before more expensive policy checks."""
+
     id: str
     category: str
     reason: str
@@ -121,10 +125,16 @@ INPUT_REGEX_RULES = [
 
 
 class NoopGuardrailsProvider:
+    """Guardrail provider that records check metadata without blocking content."""
+
     async def check_input(self, content: str) -> GuardrailResult:
+        """Return a passing input result."""
+
         return GuardrailResult(metadata={"checked_content_length": len(content)})
 
     async def check_output(self, content: str, *, user_input: str) -> GuardrailResult:
+        """Return a passing output result."""
+
         return GuardrailResult(
             metadata={
                 "checked_content_length": len(content),
@@ -134,10 +144,14 @@ class NoopGuardrailsProvider:
 
 
 class RegexGuardrailsProvider:
+    """Deterministic guardrail provider backed by regular-expression rules."""
+
     def __init__(self, rules: Sequence[RegexRule] | None = None) -> None:
         self._rules = list(rules or INPUT_REGEX_RULES)
 
     async def check_input(self, content: str) -> GuardrailResult:
+        """Block input when it matches a configured regex rule."""
+
         for rule in self._rules:
             if rule.pattern.search(content):
                 return GuardrailResult(
@@ -162,6 +176,8 @@ class RegexGuardrailsProvider:
         )
 
     async def check_output(self, content: str, *, user_input: str) -> GuardrailResult:
+        """Return a passing output result; regex rules are input-only."""
+
         return GuardrailResult(
             metadata={
                 "checkType": "output",
@@ -173,6 +189,8 @@ class RegexGuardrailsProvider:
 
 
 class LLMJudgeGuardrailsProvider:
+    """Policy guardrail provider that asks a configured LLM judge for JSON verdicts."""
+
     def __init__(
         self,
         *,
@@ -189,6 +207,8 @@ class LLMJudgeGuardrailsProvider:
         self._completion = completion
 
     async def check_input(self, content: str) -> GuardrailResult:
+        """Judge whether a student input should be blocked."""
+
         messages = [
             ChatMessage(role=ChatRole.SYSTEM, content=INPUT_JUDGE_SYSTEM_PROMPT),
             ChatMessage(
@@ -199,6 +219,8 @@ class LLMJudgeGuardrailsProvider:
         return await self._judge(messages, check_type="input", default_rail="input_policy")
 
     async def check_output(self, content: str, *, user_input: str) -> GuardrailResult:
+        """Judge whether an assistant response should be blocked."""
+
         messages = [
             ChatMessage(role=ChatRole.SYSTEM, content=OUTPUT_JUDGE_SYSTEM_PROMPT),
             ChatMessage(
@@ -218,6 +240,8 @@ class LLMJudgeGuardrailsProvider:
         check_type: str,
         default_rail: str,
     ) -> GuardrailResult:
+        """Run the judge call and normalize its JSON verdict."""
+
         try:
             response = await tracked_acompletion(
                 component_type=guardrail_component_type(check_type),
@@ -240,8 +264,13 @@ class LLMJudgeGuardrailsProvider:
         content = ""
         try:
             content = _response_content(response)
-            payload = _parse_judge_json(content)
+            payload = _normalize_judge_payload(
+                _parse_judge_json(content),
+                default_rail=default_rail,
+            )
         except Exception as exc:
+            # A syntactically successful but unparsable judge response is fail-closed:
+            # the judge ran, but its verdict cannot be trusted.
             return self._judge_parse_error_result(
                 check_type=check_type,
                 default_rail=default_rail,
@@ -249,22 +278,25 @@ class LLMJudgeGuardrailsProvider:
                 content=content,
             )
 
-        blocked = bool(payload.get("blocked", False))
-        rail = str(payload.get("rail") or default_rail)
-        reason = payload.get("reason")
+        blocked = payload["blocked"]
+        rail = payload["rail"]
+        reason = payload["reason"]
         if blocked and not reason:
             reason = "Message blocked by guardrails."
-        confidence = _coerce_confidence(payload.get("confidence"))
+        confidence = payload["confidence"]
+        metadata = {
+            "checkType": check_type,
+            "provider": "llm_judge",
+            "model": self._model,
+            **payload["metadata"],
+        }
+        if confidence is not None:
+            metadata["confidence"] = confidence
         return GuardrailResult(
             blocked=blocked,
             reason=str(reason) if reason is not None else None,
             rail=rail,
-            metadata={
-                "checkType": check_type,
-                "provider": "llm_judge",
-                "model": self._model,
-                "confidence": confidence,
-            },
+            metadata=metadata,
         )
 
     def _judge_parse_error_result(
@@ -275,6 +307,8 @@ class LLMJudgeGuardrailsProvider:
         error: Exception,
         content: str,
     ) -> GuardrailResult:
+        """Return a blocking result for malformed judge output."""
+
         return GuardrailResult(
             blocked=True,
             reason="Message blocked by guardrails.",
@@ -297,6 +331,8 @@ class LLMJudgeGuardrailsProvider:
         default_rail: str,
         error: Exception,
     ) -> GuardrailResult:
+        """Return the configured fail-open or fail-closed result for judge errors."""
+
         blocked = not self._fail_open_on_error
         return GuardrailResult(
             blocked=blocked,
@@ -314,10 +350,16 @@ class LLMJudgeGuardrailsProvider:
 
 
 class CompositeGuardrailsProvider:
+    """Runs guardrail providers in order and stops at the first blocking result."""
+
     def __init__(self, providers: Sequence[GuardrailsProvider]) -> None:
         self.providers = list(providers)
+        if not self.providers:
+            raise ValueError("CompositeGuardrailsProvider requires at least one provider.")
 
     async def check_input(self, content: str) -> GuardrailResult:
+        """Run input checks until one blocks or all pass."""
+
         passed_checks = []
         for provider in self.providers:
             result = await provider.check_input(content)
@@ -333,6 +375,8 @@ class CompositeGuardrailsProvider:
         )
 
     async def check_output(self, content: str, *, user_input: str) -> GuardrailResult:
+        """Run output checks until one blocks or all pass."""
+
         passed_checks = []
         for provider in self.providers:
             result = await provider.check_output(content, user_input=user_input)
@@ -381,6 +425,8 @@ def _response_content(response: Any) -> str:
 
 
 def _parse_judge_json(content: str) -> dict[str, Any]:
+    """Parse a judge JSON object, accepting common fenced-code formatting."""
+
     normalized = content.strip()
     if normalized.startswith("```"):
         normalized = re.sub(r"^```(?:json)?\s*", "", normalized, flags=re.IGNORECASE)
@@ -391,7 +437,73 @@ def _parse_judge_json(content: str) -> dict[str, Any]:
     return payload
 
 
+def _normalize_judge_payload(
+    payload: dict[str, Any],
+    *,
+    default_rail: str,
+) -> dict[str, Any]:
+    """Validate required judge fields and preserve normalization metadata."""
+
+    if "blocked" not in payload:
+        raise ValueError("Guardrail judge JSON missing required field: blocked.")
+
+    blocked = payload["blocked"]
+    if not isinstance(blocked, bool):
+        raise ValueError("Guardrail judge JSON field 'blocked' must be a boolean.")
+
+    missing_fields = []
+    invalid_fields = []
+
+    if "reason" not in payload:
+        missing_fields.append("reason")
+        reason = None
+    else:
+        reason = payload["reason"]
+    if reason is not None and not isinstance(reason, str):
+        invalid_fields.append("reason")
+        reason = None
+
+    if "rail" not in payload:
+        missing_fields.append("rail")
+        rail = default_rail
+    else:
+        rail = payload["rail"]
+    if not isinstance(rail, str) or not rail:
+        invalid_fields.append("rail")
+        rail = default_rail
+
+    if "confidence" not in payload:
+        missing_fields.append("confidence")
+        confidence = None
+    else:
+        confidence = payload["confidence"]
+    if isinstance(confidence, bool) or not isinstance(confidence, int | float):
+        if "confidence" in payload:
+            invalid_fields.append("confidence")
+        confidence = None
+    else:
+        confidence = float(confidence)
+
+    metadata = {}
+    if missing_fields or invalid_fields:
+        metadata["judgePayloadNormalized"] = True
+        if missing_fields:
+            metadata["judgeMissingFields"] = missing_fields
+        if invalid_fields:
+            metadata["judgeInvalidFields"] = invalid_fields
+
+    return {
+        "blocked": blocked,
+        "reason": reason,
+        "rail": rail,
+        "confidence": confidence,
+        "metadata": metadata,
+    }
+
+
 def _loads_json_object(content: str) -> Any:
+    """Load a JSON object, tolerating explanatory text before the first object."""
+
     try:
         return json.loads(content)
     except json.JSONDecodeError as direct_error:
@@ -406,12 +518,3 @@ def _loads_json_object(content: str) -> Any:
             if isinstance(payload, dict):
                 return payload
         raise direct_error
-
-
-def _coerce_confidence(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None

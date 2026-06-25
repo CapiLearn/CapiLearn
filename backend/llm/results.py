@@ -1,3 +1,5 @@
+"""Helpers for assembling LLM service results."""
+
 from backend.llm.schemas import GuardrailResult, LLMResult, ProviderResponse
 from backend.rag.schemas import RetrievalResult
 
@@ -9,6 +11,8 @@ def build_result(
     provider_response: ProviderResponse,
     retrieval_result: RetrievalResult,
 ) -> LLMResult:
+    """Build the final result, replacing unsafe content with guardrail reasons."""
+
     content = provider_response.content
     if input_result.blocked:
         content = input_result.reason or "That request was blocked by guardrails."
@@ -30,6 +34,8 @@ def with_repair_metadata(
     *,
     initial_result: GuardrailResult,
 ) -> GuardrailResult:
+    """Attach output-repair audit metadata to the final guardrail result."""
+
     metadata = dict(result.metadata)
     metadata["repairAttempted"] = True
     metadata["repairPassed"] = not result.blocked

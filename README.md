@@ -138,30 +138,50 @@ frontend/
 5. Run database migrations:
 
     ```bash
+    uv run alembic heads
     uv run alembic upgrade head
     uv run alembic current
     ```
 
-    The migration graph should have one head; verify it with `uv run alembic heads`.
+    The migration graph should have one head at `20260624_0016` on current
+    `main`. A fresh re-ingestion is required after schema changes that affect
+    RAG document or embedding metadata.
 
-6. Ingest the pgvector corpus:
+6. Ingest the pgvector corpus manually:
 
     ```bash
     uv run python -m backend.ingestion.ingest_pgvector
     ```
 
-    The current corpus should produce 72 documents, 2,353 chunks, and 2,353
-    384-dimensional embeddings.
+    These are manual RAG maintenance/ingestion commands. Do not put ingestion
+    commands in the Render backend start command or the frontend build command.
+    Render backend startup should only start the API server; it should not
+    ingest corpus data during startup.
+
+    The current corpus should produce 72 active documents, 4,274 active chunks,
+    and 4,274 active 384-dimensional embeddings. Stale-source reconciliation is
+    intentionally opt-in:
+
+    ```bash
+    uv run python -m backend.ingestion.ingest_pgvector --fail-fast --reconcile-deletions
+    ```
+
+    Reconciliation retains stale documents with `is_active=false` and
+    `deleted_at` populated; inactive documents are excluded from retrieval.
+    See the RAG runbook before enabling this flag on a shared environment.
 
 7. Confirm `.env` selects the preferred backend:
 
     ```env
     RAG_BACKEND=pgvector
-    RAG_WRITE_RETRIEVAL_LOGS=true
+    RAG_EMBEDDING_PROVIDER=openai
+    RAG_MODEL_NAME=text-embedding-3-small
+    RAG_EMBEDDING_DIMENSIONS=384
+    RAG_WRITE_RETRIEVAL_LOGS=false
     ```
 
-    Chroma remains available as a rollback path with `RAG_BACKEND=chroma`.
-    Restart the backend whenever this setting changes.
+    `RAG_BACKEND=chroma` is no longer supported. Restart the backend whenever
+    RAG settings change.
 
 8. Start the FastAPI backend:
 

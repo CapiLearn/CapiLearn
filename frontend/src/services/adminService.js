@@ -1,12 +1,14 @@
 import { API_BASE_URL, handleApiResponse } from "./apiClient";
 
+/**
+ * Admin service reads authenticated operations data for the admin dashboard.
+ *
+ * It normalizes backend health responses into frontend display states while
+ * preserving RAG, database, guardrail, and usage details for launch review.
+ */
+// Disabled by default; retained only as a local UI fallback when backend admin
+// endpoints are intentionally unavailable during manual frontend work.
 const USE_MOCK_ADMIN_API = false;
-
-const ADMIN_HEADERS = {
-  "X-Admin-User": "true",
-  "X-User-Id": "00000000-0000-0000-0000-000000000001",
-  "X-User-Email": "instructor@example.com",
-};
 
 const mockAdminUsageSummary = {
   range: {
@@ -40,6 +42,81 @@ const mockAdminUsageSummary = {
   ],
 };
 
+const mockAdminSystemHealth = {
+  overallStatus: "warning",
+  checkedAt: "2026-06-07T12:00:00Z",
+  checks: [
+    {
+      id: "backend",
+      name: "Backend",
+      status: "healthy",
+      message: "API is running.",
+      details: {
+        service: "FastAPI",
+        endpoint: "/api/admin/system-health",
+      },
+    },
+    {
+      id: "database",
+      name: "Database",
+      status: "healthy",
+      message: "Database accepts connections and pgvector is available.",
+      details: {
+        databaseConnected: true,
+        pgvectorAvailable: true,
+      },
+    },
+    {
+      id: "rag",
+      name: "RAG",
+      status: "warning",
+      message: "6 documents failed processing.",
+      details: {
+        indexReady: true,
+        documentsProcessed: 118,
+        documentsFailed: 6,
+        lastIngestionRun: "2026-06-07T11:30:00Z",
+      },
+    },
+    {
+      id: "llm-provider",
+      name: "LLM Provider",
+      status: "healthy",
+      message: "Provider configuration is available.",
+      details: {
+        providerConfigured: true,
+        provider: "openrouter",
+        modelConfigured: true,
+      },
+    },
+    {
+      id: "guardrails",
+      name: "Guardrails",
+      status: "healthy",
+      message: "Guardrails are enabled.",
+      details: {
+        enabled: true,
+      },
+    },
+  ],
+};
+
+async function authFetch(url, getToken, options = {}) {
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("Not authenticated.");
+  }
+
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+}
+
 /**
  * Fetches aggregate usage metrics for the Admin Dashboard.
  *
@@ -50,13 +127,17 @@ const mockAdminUsageSummary = {
  * If no date range is provided, the backend defaults to its configured
  * recent usage window.
  *
+ * @param {Function} getToken - Clerk token getter used for authenticated requests.
  * @param {Object} [options] - Optional date range filters.
  * @param {string} [options.fromDate] - Inclusive UTC start date in YYYY-MM-DD format.
  * @param {string} [options.toDate] - Exclusive UTC end date in YYYY-MM-DD format.
  * @returns {Promise<Object>} Admin usage summary response from the backend.
  */
 
-export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
+export async function getAdminUsageSummary(
+  getToken,
+  { fromDate, toDate } = {}
+) {
   if (USE_MOCK_ADMIN_API) {
     return mockAdminUsageSummary;
   }
@@ -77,10 +158,94 @@ export async function getAdminUsageSummary({ fromDate, toDate } = {}) {
     ? `${API_BASE_URL}/api/admin/usage/summary?${queryString}`
     : `${API_BASE_URL}/api/admin/usage/summary`;
 
-  const response = await fetch(url, {
+  const response = await authFetch(url, getToken, {
     method: "GET",
-    headers: ADMIN_HEADERS,
   });
 
   return handleApiResponse(response, "Unable to load admin usage summary.");
+}
+
+function mapHealthStatus(status) {
+  if (status === "ok" || status === "healthy") {
+    return "healthy";
+  }
+
+  if (status === "degraded" || status === "warning") {
+    return "warning";
+  }
+
+  if (status === "unhealthy") {
+    return "unhealthy";
+  }
+
+  return "unknown";
+}
+
+function createHealthCheckId(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function normalizeSystemHealthResponse(data) {
+  return {
+    overallStatus: mapHealthStatus(data.status),
+    checkedAt: data.checkedAt,
+    checks: (data.checks || []).map((check) => ({
+      id: check.id || createHealthCheckId(check.name),
+      name: check.name,
+      status: mapHealthStatus(check.status),
+      message: check.message,
+      latencyMs: check.latencyMs,
+      details: check.details || {},
+    })),
+  };
+}
+
+export async function getAdminUsersOverview(
+  getToken,
+  { fromDate, toDate, limit = 25, offset = 0 } = {}
+) {
+  const params = new URLSearchParams();
+
+  if (fromDate) {
+    params.set("fromDate", fromDate);
+  }
+
+  if (toDate) {
+    params.set("toDate", toDate);
+  }
+
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+
+  const queryString = params.toString();
+
+  const url = queryString
+    ? `${API_BASE_URL}/api/admin/users/overview?${queryString}`
+    : `${API_BASE_URL}/api/admin/users/overview`;
+
+  const response = await authFetch(url, getToken, {
+    method: "GET",
+  });
+
+  return handleApiResponse(response, "Unable to load admin users.");
+}
+
+export async function getAdminSystemHealth(getToken) {
+  if (USE_MOCK_ADMIN_API) {
+    return mockAdminSystemHealth;
+  }
+
+  const response = await authFetch(`${API_BASE_URL}/api/admin/health`, getToken, {
+    method: "GET",
+  });
+
+  const data = await handleApiResponse(
+    response,
+    "Unable to load system health."
+  );
+
+  return normalizeSystemHealthResponse(data);
 }

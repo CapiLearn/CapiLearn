@@ -1,3 +1,5 @@
+"""LiteLLM-backed chat completion provider for the LLM service."""
+
 import asyncio
 import logging
 from typing import Any
@@ -25,8 +27,16 @@ _TRANSIENT_PROVIDER_ERRORS = (
 )
 
 
+class ProviderResponseError(RuntimeError):
+    """Raised when the provider returns a structurally invalid success response."""
+
+
 class LiteLLMProvider:
+    """Provider adapter that turns CapiLearn chat messages into LiteLLM calls."""
+
     async def complete(self, messages: list[ChatMessage]) -> ProviderResponse:
+        """Return a normalized provider response, retrying transient provider errors."""
+
         last_error: Exception | None = None
         max_attempts = llm_settings.max_retries + 1
         for attempt in range(1, max_attempts + 1):
@@ -59,41 +69,39 @@ class LiteLLMProvider:
         *,
         attempt_index: int,
     ) -> ProviderResponse:
+        """Execute one provider attempt and validate the successful response shape."""
+
         started_at = timer_start()
-        kwargs = _completion_kwargs(messages)
+        kwargs = {
+            "model": llm_settings.model,
+            "messages": [message.model_dump(mode="json") for message in messages],
+            "max_tokens": llm_settings.max_tokens,
+            "timeout": llm_settings.request_timeout_seconds,
+            "fallbacks": [llm_settings.fallback_model] if llm_settings.fallback_model else None,
+        }
+        if llm_settings.temperature is not None:
+            kwargs["temperature"] = llm_settings.temperature
         response = await tracked_acompletion(
             component_type=current_generation_component_type(),
             configured_model=llm_settings.model,
             attempt_index=attempt_index,
             completion=acompletion,
+            validate_response=_validate_provider_response,
             **kwargs,
         )
 
         choice = _first_choice(response)
+        content = _message_content(choice)
         usage = getattr(response, "usage", None)
         return ProviderResponse(
-            content=choice.message.content or "",
+            content=content,
             model=getattr(response, "model", None),
             finish_reason=getattr(choice, "finish_reason", None),
             prompt_tokens=getattr(usage, "prompt_tokens", None),
             completion_tokens=getattr(usage, "completion_tokens", None),
             total_tokens=getattr(usage, "total_tokens", None),
             latency_ms=elapsed_ms(started_at),
-            raw_response=_serialize_response(response),
         )
-
-
-def _completion_kwargs(messages: list[ChatMessage]) -> dict[str, Any]:
-    kwargs = {
-        "model": llm_settings.model,
-        "messages": [message.model_dump(mode="json") for message in messages],
-        "max_tokens": llm_settings.max_tokens,
-        "timeout": llm_settings.request_timeout_seconds,
-        "fallbacks": [llm_settings.fallback_model] if llm_settings.fallback_model else None,
-    }
-    if llm_settings.temperature is not None:
-        kwargs["temperature"] = llm_settings.temperature
-    return kwargs
 
 
 def _first_choice(response: Any) -> Any:
@@ -103,9 +111,19 @@ def _first_choice(response: Any) -> Any:
     return choices[0]
 
 
-def _serialize_response(response: Any) -> dict[str, Any] | None:
-    if hasattr(response, "model_dump"):
-        return response.model_dump(mode="json")
-    if isinstance(response, dict):
-        return response
-    return None
+def _validate_provider_response(response: Any) -> None:
+    _message_content(_first_choice(response))
+
+
+def _message_content(choice: Any) -> str:
+    message = getattr(choice, "message", None)
+    content = getattr(message, "content", None)
+    if content is None:
+        raise ProviderResponseError(
+            "LLM provider returned a response choice with no message content."
+        )
+    if not isinstance(content, str):
+        raise ProviderResponseError(
+            "LLM provider returned a response choice with non-text message content."
+        )
+    return content

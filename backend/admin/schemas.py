@@ -1,12 +1,19 @@
+"""Pydantic response schemas shared by admin API endpoints."""
+
 from datetime import date, datetime
 from decimal import Decimal
-from uuid import UUID
+from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+from backend.auth.schemas import UserRole
 
 
 class AdminBaseModel(BaseModel):
+    """Base admin schema using public camelCase aliases."""
+
     model_config = ConfigDict(
         alias_generator=to_camel,
         populate_by_name=True,
@@ -15,11 +22,15 @@ class AdminBaseModel(BaseModel):
 
 
 class UsageRange(AdminBaseModel):
+    """Inclusive/exclusive UTC calendar date range shown in usage responses."""
+
     from_date: date
     to_date: date
 
 
 class UsageMetrics(AdminBaseModel):
+    """Aggregate usage counters and cost metrics for a selected range."""
+
     total_users: int
     total_conversations: int
     user_queries: int
@@ -32,6 +43,8 @@ class UsageMetrics(AdminBaseModel):
 
 
 class DailyUsagePoint(AdminBaseModel):
+    """Per-day usage point rendered in admin trend charts."""
+
     date: date
     user_queries: int
     assistant_responses: int
@@ -39,45 +52,57 @@ class DailyUsagePoint(AdminBaseModel):
 
 
 class AdminUsageSummaryResponse(AdminBaseModel):
+    """Usage summary payload for the admin dashboard."""
+
     range: UsageRange
     metrics: UsageMetrics
     daily_usage: list[DailyUsagePoint]
 
 
-class CostComponentResponse(AdminBaseModel):
-    id: UUID
-    user_id: UUID
-    conversation_id: UUID
-    user_message_id: UUID
-    assistant_message_id: UUID
-    component_order: int
-    component_type: str
-    attempt_index: int
-    provider: str | None
-    configured_model: str | None
-    response_model: str | None
-    finish_reason: str | None
-    status: str
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
-    estimated_cost_usd: str | None
-    latency_ms: int | None
-    error_type: str | None
-    metadata: dict
-    created_at: datetime
+class AdminUserOverview(AdminBaseModel):
+    """User activity rollup for admin overview tables."""
+
+    display_name: str
+    access_level: UserRole
+    total_messages_sent: int
+    blocked_requests: int
+    last_activity: datetime | None
 
 
-class CostComponentsResponse(AdminBaseModel):
-    range: UsageRange
-    cost_components: list[CostComponentResponse]
+class AdminUserOverviewResponse(AdminBaseModel):
+    """Paginated collection of admin user activity rollups."""
+
+    users: list[AdminUserOverview]
+
+
+class HealthStatus(StrEnum):
+    """Health states exposed by admin health checks."""
+
+    OK = "ok"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+    NOT_CHECKED = "not_checked"
+
+
+class AdminHealthCheck(AdminBaseModel):
+    """Single admin health check result with optional diagnostic details."""
+
+    id: str
+    name: str
+    status: HealthStatus
+    latency_ms: int | None = None
+    message: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminHealthResponse(AdminBaseModel):
+    """Top-level admin health response assembled from individual checks."""
+
+    status: HealthStatus
+    checked_at: datetime
+    checks: list[AdminHealthCheck]
 
 
 def format_cost(value: Decimal) -> str:
+    """Format USD cost values with stable six-decimal precision."""
     return format(value.quantize(Decimal("0.000001")), "f")
-
-
-def format_component_cost(value: Decimal | None) -> str | None:
-    if value is None:
-        return None
-    return format(value.quantize(Decimal("0.000000000001")), "f")

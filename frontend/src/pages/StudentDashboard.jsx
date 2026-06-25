@@ -1,4 +1,8 @@
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@clerk/react";
 import { Link } from "react-router-dom";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
+import { getActivityCalendar } from "../services/activityService";
 import "../styles/StudentDashboard.css";
 
 const statCards = [
@@ -17,55 +21,143 @@ const statCards = [
     value: "23",
     helper: "Study sessions completed",
   },
-  {
-    label: "Current streak",
-    value: "5 days",
-    helper: "Keep the habit going",
-  },
 ];
 
 const modules = [
   {
-    title: "Ipsum Lorem",
+    title: "React fundamentals",
     progress: 90,
     status: "Almost complete",
   },
   {
-    title: "Ipsum Lorem",
+    title: "Backend APIs",
     progress: 72,
     status: "In progress",
   },
   {
-    title: "Ipsum Lorem",
+    title: "State and effects",
     progress: 55,
     status: "Needs review",
   },
   {
-    title: "Ipsum Lorem",
+    title: "Database basics",
     progress: 38,
     status: "Started",
   },
 ];
 
 const recentActivity = [
-  "Ipsum Lorem",
-  "Ipsum Lorem",
-  "Ipsum Lorem",
-  "Ipsum Lorem",
+  "Reviewed component state",
+  "Asked about API request flow",
+  "Practiced database terminology",
+  "Revisited effect dependencies",
 ];
 
 const focusAreas = [
-  "Ipsum Lorem",
-  "Ipsum Lorem",
-  "Ipsum Lorem",
+  "Async data loading",
+  "RAG citations",
+  "Error handling",
 ];
 
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentMonthRange() {
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  return {
+    fromDate: toDateKey(firstDay),
+    toDate: toDateKey(lastDay),
+  };
+}
+
+/**
+ * StudentDashboard summarizes learning activity for signed-in students.
+ *
+ * It combines static course-progress placeholders with authenticated activity
+ * data from the backend calendar endpoint until fuller curriculum progress
+ * tracking is available.
+ */
 function StudentDashboard() {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const [currentStreak, setCurrentStreak] = useState(null);
+  const [activeDaysCount, setActiveDaysCount] = useState(null);
+  const [activityError, setActivityError] = useState("");
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadActivityCalendar() {
+      try {
+        setActivityError("");
+
+        const token = await getToken();
+
+        if (!token) {
+          if (isMounted) {
+            setActivityError("Unable to load activity. Please sign in again.");
+          }
+
+          return;
+        }
+        const calendarActivity = await getActivityCalendar(
+          token,
+          getCurrentMonthRange()
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentStreak(calendarActivity.currentStreak);
+        setActiveDaysCount((calendarActivity.days || []).length);
+      } catch (error) {
+        if (isMounted) {
+          setActivityError(error.message || "Unable to load activity.");
+        }
+      }
+    }
+
+    loadActivityCalendar();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [getToken, isLoaded, isSignedIn]);
+
+  const dashboardStats = useMemo(
+    () => [
+      ...statCards,
+      {
+        label: "Current streak",
+        value: `${currentStreak ?? "--"} days`,
+        helper: activityError || "Keep the habit going",
+      },
+    ],
+    [activityError, currentStreak]
+  );
+
   return (
     <main className="student-dashboard-page">
       <aside className="student-dashboard-sidebar">
         <div className="dashboard-brand">
-          <div className="dashboard-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="dashboard-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
@@ -97,12 +189,12 @@ function StudentDashboard() {
           </div>
 
           <Link className="return-button" to="/workspace">
-              Return to workspace
+            Return to workspace
           </Link>
         </header>
 
         <section className="dashboard-stat-grid">
-          {statCards.map((stat) => (
+          {dashboardStats.map((stat) => (
             <article className="dashboard-stat-card" key={stat.label}>
               <p>{stat.label}</p>
               <h2>{stat.value}</h2>
@@ -118,7 +210,7 @@ function StudentDashboard() {
                 <p className="panel-label">Course Progress</p>
                 <h2>Learning modules</h2>
               </div>
-              <span>4 active</span>
+              <span>{activeDaysCount ?? "--"} active this month</span>
             </div>
 
             <div className="module-list">

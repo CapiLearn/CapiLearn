@@ -1,39 +1,145 @@
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import MarkdownMessage from "../components/MarkdownMessage";
+import { useEffect, useMemo, useRef, useState } from "react";
+import CitedMarkdownMessage from "../components/CitedMarkdownMessage";
+import { useAuth } from "@clerk/react";
+import capiCoffeeIcon from "../assets/capi_coffee_icon.png";
+import capiBooksIcon from "../assets/capi_books.png";
+import LogoutButton from "../components/LogoutButton";
 
-import { 
-  createConversation, 
-  createMessage, 
-  listConversations, 
+import {
+  createConversation,
+  createMessage,
+  listConversations,
   listMessages,
 } from "../services/conversationService";
+import {
+  getActivityCalendar,
+  recordLoginActivity,
+} from "../services/activityService";
 
 import "../styles/LearningWorkspace.css";
 
-const suggestedPrompts = [
-  "Help me understand this lesson",
-  "Ask me a guiding question",
-  "Point me to the right course material",
-  "Help me think through this bug",
-];
+const initialChatMessages = [];
 
-const calendarDays = [
-  "", "", "", "1", "2", "3", "4",
-  "5", "6", "7", "8", "9", "10", "11",
-  "12", "13", "14", "15", "16", "17", "18",
-  "19", "20", "21", "22", "23", "24", "25",
-  "26", "27", "28", "29", "30", "31", "",
-];
+/**
+ * LearningWorkspace is the main student chat surface.
+ *
+ * It coordinates authenticated conversation history, course-grounded assistant
+ * responses, citation rendering, message search, and learning-activity
+ * tracking. API request construction stays in the service layer so this page
+ * can stay focused on user workflow and state transitions.
+ */
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-const initialChatMessages = [
-  {
-    id: "mock-assistant-welcome",
-    role: "assistant",
-    content:
-      "Hi, I’m Capi. What lesson, assignment, or concept would you like help thinking through?",
-  },
-];
+function normalizeVisibleText(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function createTextProtector() {
+  const protectedTexts = [];
+
+  function protect(value) {
+    const placeholder = `\uE000${protectedTexts.length}\uE001`;
+    protectedTexts.push(value);
+
+    return placeholder;
+  }
+
+  function restore(value) {
+    return value.replace(/\uE000(\d+)\uE001/g, (_, index) =>
+      protectedTexts[Number(index)] || ""
+    );
+  }
+
+  return {
+    protect,
+    restore,
+  };
+}
+
+function isMarkdownTableDivider(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function isMarkdownTableRow(line) {
+  const trimmedLine = line.trim();
+
+  return (
+    trimmedLine.startsWith("|") &&
+    trimmedLine.endsWith("|") &&
+    trimmedLine.slice(1, -1).includes("|")
+  );
+}
+
+function getVisibleMarkdownText(content) {
+  const protector = createTextProtector();
+
+  // Search should match what students can read, without counting Markdown
+  // syntax or table divider rows as answer text.
+  const protectedContent = content
+    .replace(/```[\s\S]*?```/g, (match) => {
+      const codeBlockText = match
+        .replace(/^```[^\n]*\n?/, "")
+        .replace(/\n?```$/, "");
+
+      return protector.protect(codeBlockText);
+    })
+    .replace(/`([^`]+)`/g, (_, inlineCodeText) =>
+      protector.protect(inlineCodeText)
+    );
+
+  const visibleLines = protectedContent
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .split(/\n+/)
+    .flatMap((line) => {
+      const cleanedLine = line
+        .replace(/^#{1,6}\s+/g, "")
+        .replace(/^>\s?/g, "")
+        .replace(/^\s*[-*+]\s+/g, "")
+        .replace(/^\s*\d+\.\s+/g, "");
+
+      if (isMarkdownTableDivider(cleanedLine)) {
+        return [];
+      }
+
+      if (isMarkdownTableRow(cleanedLine)) {
+        return cleanedLine
+          .slice(1, -1)
+          .split("|")
+          .map((cell) => cell.trim())
+          .filter(Boolean);
+      }
+
+      return [cleanedLine];
+    })
+    .join(" ");
+
+  return normalizeVisibleText(protector.restore(visibleLines));
+}
+
+function getVisibleMessageText(message) {
+  return message.role === "assistant"
+    ? getVisibleMarkdownText(message.content)
+    : message.content;
+}
+
+function countSearchMatchesInText(text, searchTerm) {
+  if (!searchTerm) {
+    return 0;
+  }
+
+  const escapedSearchTerm = escapeRegExp(searchTerm);
+  const matches = text.match(new RegExp(escapedSearchTerm, "gi"));
+
+  return matches ? matches.length : 0;
+}
 
 function HighlightedText({ text, searchTerm }) {
   const normalizedSearchTerm = searchTerm.trim();
@@ -42,11 +148,7 @@ function HighlightedText({ text, searchTerm }) {
     return text;
   }
 
-  const escapedSearchTerm = normalizedSearchTerm.replace(
-    /[.*+?^${}()|[\]\\]/g,
-    "\\$&"
-  );
-
+  const escapedSearchTerm = escapeRegExp(normalizedSearchTerm);
   const parts = text.split(new RegExp(`(${escapedSearchTerm})`, "gi"));
 
   return parts.map((part, index) =>
@@ -60,20 +162,64 @@ function HighlightedText({ text, searchTerm }) {
   );
 }
 
+function getCalendarDays(date) {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const leadingBlankDays = Array.from({ length: firstDayOfMonth }, () => "");
+  const monthDays = Array.from({ length: daysInMonth }, (_, index) =>
+    String(index + 1)
+  );
+
+  const totalCalendarCells = leadingBlankDays.length + monthDays.length;
+  const trailingBlankCount = (7 - (totalCalendarCells % 7)) % 7;
+  const trailingBlankDays = Array.from({ length: trailingBlankCount }, () => "");
+
+  return [...leadingBlankDays, ...monthDays, ...trailingBlankDays];
+}
+
+function formatCalendarTitle(date) {
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentMonthRange() {
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  return {
+    fromDate: toDateKey(firstDay),
+    toDate: toDateKey(lastDay),
+  };
+}
+
 /**
  * Learning workspace page for student chat.
  *
  * Handles conversation creation, follow-up messages, sidebar conversation
- * selection, new conversation reset behavior, and assistant response display.
+ * selection, new conversation reset behavior, assistant response display,
+ * and learning streak activity.
  */
 
 function LearningWorkspace() {
   const [conversationId, setConversationId] = useState(null);
-
   const [chatMessages, setChatMessages] = useState(initialChatMessages);
   const activeConversationIdRef = useRef(null);
-
-  //State variables
+  const hasRecordedLoginRef = useRef(false);
 
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -82,13 +228,19 @@ function LearningWorkspace() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [messageSearchTerm, setMessageSearchTerm] = useState("");
+  const [conversationSearchTerm, setConversationSearchTerm] = useState("");
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const [currentStreak, setCurrentStreak] = useState(null);
+  const [activityDays, setActivityDays] = useState([]);
+  const [activityError, setActivityError] = useState("");
 
   useEffect(() => {
     async function loadConversations() {
       try {
         setIsLoadingConversations(true);
 
-        const data = await listConversations();
+        const data = await listConversations(getToken);
 
         setConversations(data.conversations || []);
       } catch (error) {
@@ -99,7 +251,69 @@ function LearningWorkspace() {
     }
 
     loadConversations();
+  }, [getToken]);
+
+  useEffect(() => {
+    const timerId = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 60 * 1000);
+
+    return () => clearInterval(timerId);
   }, []);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadActivity() {
+      try {
+        setActivityError("");
+
+        const token = await getToken();
+
+        if (!token) {
+          if (isMounted) {
+            setActivityError("Unable to load activity. Please sign in again.");
+          }
+          return;
+        }
+
+        if (!hasRecordedLoginRef.current) {
+          hasRecordedLoginRef.current = true;
+          const loginActivity = await recordLoginActivity(token);
+
+          if (!isMounted) {
+            return;
+          }
+
+          setCurrentStreak(loginActivity.currentStreak);
+        }
+
+        const calendarRange = getCurrentMonthRange();
+        const calendarActivity = await getActivityCalendar(token, calendarRange);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentStreak(calendarActivity.currentStreak);
+        setActivityDays(calendarActivity.days || []);
+      } catch (error) {
+        if (isMounted) {
+          setActivityError(error.message || "Unable to load activity.");
+        }
+      }
+    }
+
+    loadActivity();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [getToken, isLoaded, isSignedIn]);
 
   async function handleSendMessage(event) {
     event.preventDefault();
@@ -117,7 +331,11 @@ function LearningWorkspace() {
       setErrorMessage("");
 
       if (targetConversationId) {
-        const data = await createMessage(targetConversationId, trimmedMessage);
+        const data = await createMessage(
+          targetConversationId,
+          trimmedMessage,
+          getToken
+        );
 
         if (activeConversationIdRef.current === targetConversationId) {
           setChatMessages((currentMessages) => [
@@ -127,7 +345,7 @@ function LearningWorkspace() {
           ]);
         }
       } else {
-        const data = await createConversation(trimmedMessage);
+        const data = await createConversation(trimmedMessage, getToken);
         const newConversationId = data.conversation.id;
 
         if (activeConversationIdRef.current === null) {
@@ -150,7 +368,7 @@ function LearningWorkspace() {
       setIsSending(false);
     }
   }
-  
+
   function handleNewConversation() {
     activeConversationIdRef.current = null;
     setConversationId(null);
@@ -159,8 +377,9 @@ function LearningWorkspace() {
     setErrorMessage("");
     setIsLoadingMessages(false);
     setMessageSearchTerm("");
+    setConversationSearchTerm("");
   }
-      
+
   async function handleSelectConversation(selectedConversationId) {
     activeConversationIdRef.current = selectedConversationId;
     setConversationId(selectedConversationId);
@@ -169,7 +388,7 @@ function LearningWorkspace() {
     setMessageSearchTerm("");
 
     try {
-      const data = await listMessages(selectedConversationId);
+      const data = await listMessages(selectedConversationId, getToken);
 
       if (activeConversationIdRef.current !== selectedConversationId) {
         return;
@@ -178,41 +397,84 @@ function LearningWorkspace() {
       setChatMessages(data.messages || []);
     } catch (error) {
       if (activeConversationIdRef.current === selectedConversationId) {
-        setErrorMessage(error.message || "Unable to load conversation messages.");
+        setErrorMessage(
+          error.message || "Unable to load conversation messages."
+        );
       }
     } finally {
       setIsLoadingMessages(false);
     }
   }
 
-  const normalizedSearchTerm = messageSearchTerm.trim().toLowerCase();
+  const normalizedConversationSearchTerm = conversationSearchTerm
+    .trim()
+    .toLowerCase();
+
+  const filteredConversations = normalizedConversationSearchTerm
+    ? conversations.filter((conversation) =>
+        (conversation.title || "Untitled conversation")
+          .toLowerCase()
+          .includes(normalizedConversationSearchTerm)
+      )
+    : conversations;
+
+  const normalizedSearchTerm = messageSearchTerm.trim();
 
   const visibleChatMessages = normalizedSearchTerm
     ? chatMessages.filter((message) =>
-        message.content.toLowerCase().includes(normalizedSearchTerm)
+        getVisibleMessageText(message)
+          .toLowerCase()
+          .includes(normalizedSearchTerm.toLowerCase())
       )
     : chatMessages;
 
   const searchMatchCount = normalizedSearchTerm
-  ? chatMessages.reduce((count, message) => {
-      const escapedSearchTerm = normalizedSearchTerm.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        "\\$&"
-      );
+    ? visibleChatMessages.reduce(
+        (count, message) =>
+          count +
+          countSearchMatchesInText(
+            getVisibleMessageText(message),
+            normalizedSearchTerm
+          ),
+        0
+      )
+    : 0;
 
-      const matches = message.content.toLowerCase().match(
-        new RegExp(escapedSearchTerm, "g")
-      );
+  const calendarDays = useMemo(
+    () => getCalendarDays(currentDate),
+    [currentDate]
+  );
 
-      return count + (matches ? matches.length : 0);
-    }, 0)
-  : 0;
+  const calendarTitle = formatCalendarTitle(currentDate);
+  const activeDateKeys = useMemo(
+    () => new Set(activityDays.map((activityDay) => activityDay.date)),
+    [activityDays]
+  );
+
+  function getCalendarDateKey(day) {
+    if (!day) {
+      return "";
+    }
+
+    const calendarDate = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      Number(day)
+    );
+
+    return toDateKey(calendarDate);
+  }
 
   return (
     <main className="workspace-page">
       <aside className="workspace-sidebar">
         <div className="workspace-brand">
-          <div className="workspace-brand-icon">♧</div>
+          <img
+            src={capiCoffeeIcon}
+            alt=""
+            className="workspace-brand-icon"
+            aria-hidden="true"
+          />
           <span>CapiLearn</span>
         </div>
 
@@ -226,7 +488,12 @@ function LearningWorkspace() {
 
         <div className="search-box">
           <span>⌕</span>
-          <input type="text" placeholder="Search conversations" />
+          <input
+            type="text"
+            placeholder="Search conversations"
+            value={conversationSearchTerm}
+            onChange={(event) => setConversationSearchTerm(event.target.value)}
+          />
         </div>
 
         <div className="chat-history">
@@ -242,10 +509,18 @@ function LearningWorkspace() {
             )}
 
             {!isLoadingConversations &&
-              conversations.map((conversation) => (
+              conversations.length > 0 &&
+              filteredConversations.length === 0 && (
+                <p className="sidebar-helper-text">No conversations found.</p>
+              )}
+
+            {!isLoadingConversations &&
+              filteredConversations.map((conversation) => (
                 <button
                   className={`chat-history-item ${
-                    conversation.id === conversationId ? "active-conversation" : ""
+                    conversation.id === conversationId
+                      ? "active-conversation"
+                      : ""
                   }`}
                   key={conversation.id}
                   type="button"
@@ -253,15 +528,11 @@ function LearningWorkspace() {
                 >
                   {conversation.title || "Untitled conversation"}
                 </button>
-            ))}
-             
+              ))}
           </section>
         </div>
 
-        <Link className="workspace-logout-link" to="/">
-          Log out
-        </Link>
-
+        <LogoutButton className="workspace-logout-link" />
         <div className="student-profile">
           <div className="student-avatar">J</div>
           <div>
@@ -277,43 +548,23 @@ function LearningWorkspace() {
             <p className="workspace-kicker">AI Tutor</p>
             <h1>What would you like to learn today?</h1>
           </div>
-
-          <div className="workspace-header-actions">
-            <button className="workspace-help-button">Guided mode</button>
-
-            <Link className="workspace-dashboard-link" to="/student-dashboard">
-              Dashboard
-            </Link>
-          </div>
         </header>
 
         <section className="welcome-card">
-          <div className="capi-avatar">🌿</div>
+          <img
+            src={capiBooksIcon}
+            alt=""
+            className="capi-avatar"
+            aria-hidden="true"
+          />
 
           <div>
-            <h2>Hi, I’m Capi.</h2>
+            <h2>Hi, I'm Capi.</h2>
             <p>
               I can help you review lessons, reason through problems, and find
-              the right course material. I won’t give direct answers, but I’ll
+              the right course material. I won't give direct answers, but I'll
               help you think through the next step.
             </p>
-          </div>
-        </section>
-
-        <section className="suggested-section">
-          <h2>Try asking</h2>
-
-          <div className="prompt-grid">
-            {suggestedPrompts.map((prompt) => (
-              <button
-                className="prompt-card"
-                key={prompt}
-                type="button"
-                onClick={() => setInputValue(prompt)}
-              >
-                {prompt}
-              </button>
-            ))}
           </div>
         </section>
 
@@ -344,8 +595,7 @@ function LearningWorkspace() {
             <span className="message-search-count">
               {searchMatchCount} {searchMatchCount === 1 ? "match" : "matches"}
             </span>
-          )}    
-
+          )}
         </section>
 
         <section className="chat-preview">
@@ -361,8 +611,9 @@ function LearningWorkspace() {
               key={message.id}
             >
               {message.role === "assistant" ? (
-                <MarkdownMessage 
+                <CitedMarkdownMessage
                   content={message.content}
+                  citations={message.citations || []}
                   searchTerm={messageSearchTerm}
                 />
               ) : (
@@ -373,16 +624,14 @@ function LearningWorkspace() {
                   />
                 </p>
               )}
-              
             </div>
           ))}
 
           {normalizedSearchTerm && visibleChatMessages.length === 0 && (
             <p className="workspace-empty-search">
-              No messages found for “{messageSearchTerm}”.
+              No messages found for "{messageSearchTerm}".
             </p>
           )}
-
         </section>
 
         <form className="chat-input-bar" onSubmit={handleSendMessage}>
@@ -406,13 +655,14 @@ function LearningWorkspace() {
       <aside className="study-panel">
         <section className="tracker-card streak-card">
           <p className="card-label">Current streak</p>
-          <h2>5 days</h2>
+          <h2>{currentStreak ?? "--"} days</h2>
+          {activityError && <p className="tracker-error">{activityError}</p>}
           <span>Keep showing up. Small steps count.</span>
         </section>
 
         <section className="tracker-card">
           <div className="calendar-header">
-            <h2>May 2026</h2>
+            <h2>{calendarTitle}</h2>
             <span>Learning calendar</span>
           </div>
 
@@ -430,9 +680,7 @@ function LearningWorkspace() {
             {calendarDays.map((day, index) => (
               <div
                 className={`calendar-day ${
-                  ["6", "7", "9", "13", "14", "16", "20"].includes(day)
-                    ? "active-day"
-                    : ""
+                  activeDateKeys.has(getCalendarDateKey(day)) ? "active-day" : ""
                 }`}
                 key={`${day}-${index}`}
               >
@@ -440,29 +688,6 @@ function LearningWorkspace() {
               </div>
             ))}
           </div>
-        </section>
-
-        <section className="tracker-card progress-card">
-          <div className="progress-heading">
-            <p className="card-label">Weekly goal</p>
-            <strong>70%</strong>
-          </div>
-
-          <div className="progress-bar">
-            <div className="progress-fill"></div>
-          </div>
-
-          <p className="progress-note">
-            You completed 7 of 10 planned study sessions.
-          </p>
-        </section>
-
-        <section className="tracker-card encouragement-card">
-          <h2>One step at a time</h2>
-          <p>
-            When you feel stuck, ask for a hint, not the answer. That is how the
-            learning sticks.
-          </p>
         </section>
       </aside>
     </main>

@@ -32,18 +32,6 @@ button {
 .capilearn-page {
   min-height: 100vh;
   padding: 0;
-  background: #fbf8e8;
-}
-
-/* Presentation slide title */
-
-.capilearn-slide-title {
-  margin: 0 0 36px;
-  color: #050505;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 42px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
 }
 
 /* Landing page mockup card */
@@ -51,80 +39,13 @@ button {
 .capilearn-card {
   width: 100%;
   min-height: 100vh;
-  background: #fbf8e8;
-}
-
-/* Header */
-
-.capilearn-nav {
-  height: 72px;
-  padding: 0 18px;
-  border-bottom: 1px solid #e0d8bd;
-
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-}
-
-.capilearn-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.capilearn-brand-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  background: #557c38;
-  color: #fff7e3;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  font-size: 17px;
-  font-weight: 800;
-}
-
-.capilearn-brand-name {
-  font-size: 18px;
-  font-weight: 800;
-  color: #2b1d15;
-}
-
-.capilearn-links {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 42px;
-}
-
-.capilearn-links a {
-  color: #4e453c;
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.capilearn-login {
-  justify-self: end;
-
-  border: none;
-  border-radius: 8px;
-  background: #557c38;
-  color: #fff7e3;
-
-  padding: 10px 22px;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
+  background: transparent;
 }
 
 /* Hero section */
 
 .capilearn-hero {
-  min-height: calc(100vh - 72px);
+  min-height: 100vh;
   padding: 80px 24px 90px;
 
   display: flex;
@@ -163,29 +84,6 @@ button {
   text-align: center;
 }
 
-.capilearn-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-
-  min-height: 42px;
-  padding: 0 22px;
-  margin-bottom: 48px;
-
-  border: 1px solid #d8cfb1;
-  border-radius: 999px;
-  background: rgba(255, 253, 238, 0.82);
-
-  color: #5f554b;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.capilearn-badge span:first-child {
-  color: #557c38;
-  font-size: 17px;
-}
-
 .capilearn-headline {
   max-width: 900px;
   margin: 0 auto;
@@ -218,30 +116,8 @@ button {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 18px;
-}
-
-.capilearn-primary,
-.capilearn-secondary {
-  min-width: 164px;
-  height: 44px;
-
-  border-radius: 7px;
-  font-size: 14px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.capilearn-primary {
-  border: 1px solid #557c38;
-  background: #557c38;
-  color: #fff7e3;
-}
-
-.capilearn-secondary {
-  border: 1px solid #d2c7a8;
-  background: #fffdf0;
-  color: #2b1d15;
+  flex-wrap: wrap;
+  gap: 14px;
 }
 
 .capilearn-feature-row {
@@ -278,36 +154,96 @@ button {
   font-weight: 900;
 }
 
+.capilearn-primary {
+  min-width: 190px;
+  height: 54px;
+
+  border: 1px solid #557c38;
+  border-radius: 999px;
+  background: #557c38;
+  color: #fff7e3;
+
+  font-size: 16px;
+  font-weight: 900;
+  cursor: pointer;
+
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.capilearn-primary:hover {
+  background: #456a2e;
+  color: #fff7e3;
+  transform: translateY(-2px);
+  box-shadow: 0 14px 28px rgba(43, 29, 21, 0.18);
+}
+
+.capilearn-secondary {
+  min-width: 190px;
+  height: 54px;
+
+  border: 1px solid rgba(85, 124, 56, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 247, 227, 0.68);
+  color: #456a2e;
+
+  font-size: 16px;
+  font-weight: 900;
+  cursor: pointer;
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.capilearn-secondary:hover:not(:disabled) {
+  border-color: #456a2e;
+  background: #fff7e3;
+  color: #2f5120;
+  transform: translateY(-2px);
+  box-shadow: 0 14px 28px rgba(43, 29, 21, 0.14);
+}
+
+.capilearn-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+  transform: none;
+  box-shadow: none;
+}
+
+.capilearn-demo-admin-login {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+}
+
+.capilearn-action-error {
+  max-width: 520px;
+  margin: 16px auto 0;
+
+  color: #7a2d1e;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 /* Smaller screens */
 
 @media (max-width: 800px) {
-  .capilearn-page {
+   .capilearn-card {
+    width: 100%;
     min-height: 100vh;
-    padding: 0;
-    background: #fbf8e8;
-  }
-
-  .capilearn-slide-title {
-    font-size: 34px;
-    margin-bottom: 24px;
-  }
-
-  .capilearn-card {
-     width: 100%;
-     min-height: 100vh;
-     background: #fbf8e8;
-  }
-
-  .capilearn-nav {
-    grid-template-columns: 1fr auto;
-  }
-
-  .capilearn-links {
-    display: none;
+    background: transparent;
   }
 
   .capilearn-hero {
-    min-height: calc(100vh - 72px);
+    min-height: 100vh;
     padding: 80px 24px 90px;
 
     display: flex;
@@ -326,12 +262,20 @@ button {
     font-size: 17px;
   }
 
-  .capilearn-actions,
   .capilearn-feature-row {
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 18px 28px;
   }
 
-  .capilearn-feature-row {
-    gap: 18px;
+  .capilearn-actions {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 460px) {
+  .capilearn-primary,
+  .capilearn-secondary {
+    width: min(100%, 270px);
   }
 }
