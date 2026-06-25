@@ -10,8 +10,20 @@ from backend.core.exceptions import ErrorResponse
 CHAT_MESSAGE_RATE_LIMIT = "10/minute"
 CHAT_MESSAGE_RATE_LIMIT_SCOPE = "chat_messages"
 DEMO_ADMIN_LOGIN_RATE_LIMIT = "10/minute"
+DEMO_ADMIN_LOGIN_RATE_LIMIT_SCOPE = "demo_admin_login"
 DEMO_ADMIN_LOGIN_RATE_LIMITED_MESSAGE = "Too many admin login attempts. Please wait and try again."
 RATE_LIMITED_MESSAGE = "You can send up to 10 messages per minute. Please wait and try again."
+GENERIC_RATE_LIMITED_MESSAGE = "Rate limit exceeded. Please wait and try again."
+RATE_LIMIT_RESPONSES = {
+    CHAT_MESSAGE_RATE_LIMIT_SCOPE: {
+        "message": RATE_LIMITED_MESSAGE,
+        "limit": CHAT_MESSAGE_RATE_LIMIT,
+    },
+    DEMO_ADMIN_LOGIN_RATE_LIMIT_SCOPE: {
+        "message": DEMO_ADMIN_LOGIN_RATE_LIMITED_MESSAGE,
+        "limit": DEMO_ADMIN_LOGIN_RATE_LIMIT,
+    },
+}
 
 
 def rate_limit_key(request: Request) -> str:
@@ -47,19 +59,18 @@ async def rate_limit_exceeded_handler(
     exc: RateLimitExceeded,
 ) -> JSONResponse:
     """Return the public error payload for exceeded rate limits."""
-    message = str(exc.detail)
-    limit = DEMO_ADMIN_LOGIN_RATE_LIMIT
-    if message != DEMO_ADMIN_LOGIN_RATE_LIMITED_MESSAGE:
-        limit = CHAT_MESSAGE_RATE_LIMIT
-
-    if message == str(exc.limit.limit):
-        message = RATE_LIMITED_MESSAGE
+    rate_limit_response = RATE_LIMIT_RESPONSES.get(exc.limit.scope)
+    if rate_limit_response is None:
+        rate_limit_response = {
+            "message": GENERIC_RATE_LIMITED_MESSAGE,
+            "limit": str(exc.limit.limit),
+        }
 
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content=ErrorResponse(
             code="rate_limited",
-            message=message,
-            details={"limit": limit},
+            message=rate_limit_response["message"],
+            details={"limit": rate_limit_response["limit"]},
         ).model_dump(),
     )

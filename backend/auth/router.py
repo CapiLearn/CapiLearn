@@ -7,7 +7,7 @@ from backend.auth.schemas import CurrentUser, DemoAdminSignInTokenResponse
 from backend.core.exceptions import ApiError
 from backend.core.rate_limiting import (
     DEMO_ADMIN_LOGIN_RATE_LIMIT,
-    DEMO_ADMIN_LOGIN_RATE_LIMITED_MESSAGE,
+    DEMO_ADMIN_LOGIN_RATE_LIMIT_SCOPE,
     ip_rate_limit_key,
     limiter,
 )
@@ -30,10 +30,10 @@ async def get_me(current_user: BootstrapCurrentUserDep) -> CurrentUser:
     operation_id="createDemoAdminSignInToken",
     summary="Create demo admin sign-in token",
 )
-@limiter.limit(
+@limiter.shared_limit(
     DEMO_ADMIN_LOGIN_RATE_LIMIT,
+    scope=DEMO_ADMIN_LOGIN_RATE_LIMIT_SCOPE,
     key_func=ip_rate_limit_key,
-    error_message=DEMO_ADMIN_LOGIN_RATE_LIMITED_MESSAGE,
 )
 async def create_demo_admin_sign_in_token(
     request: Request,

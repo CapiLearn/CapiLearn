@@ -20,11 +20,8 @@ def clear_overrides():
 
 
 @pytest.mark.asyncio
-async def test_demo_admin_sign_in_token_returns_404_when_disabled() -> None:
-    app.dependency_overrides[get_settings] = lambda: Settings(
-        _env_file=None,
-        demo_admin_login_enabled=False,
-    )
+async def test_demo_admin_sign_in_token_returns_404_with_default_config() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -68,6 +65,7 @@ async def test_demo_admin_sign_in_token_rejects_missing_clerk_secret_key() -> No
     app.dependency_overrides[get_settings] = lambda: Settings(
         _env_file=None,
         demo_admin_login_enabled=True,
+        demo_admin_email="admin+demo@example.com",
         clerk_secret_key=None,
     )
 
@@ -184,11 +182,11 @@ def test_demo_admin_sign_in_token_ttl_is_clamped_to_five_minutes() -> None:
     assert settings.demo_admin_sign_in_token_ttl_seconds == 300
 
 
-def test_demo_admin_login_defaults_to_enabled_with_email() -> None:
+def test_demo_admin_login_defaults_to_disabled_without_email() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.demo_admin_login_enabled is True
-    assert settings.demo_admin_email == "admin+clerk_test@example.com"
+    assert settings.demo_admin_login_enabled is False
+    assert settings.demo_admin_email == ""
 
 
 @pytest.mark.asyncio
