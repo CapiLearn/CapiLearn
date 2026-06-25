@@ -24,6 +24,22 @@ from backend.core.exceptions import ApiError
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+def require_demo_admin_login_enabled(settings: SettingsDep) -> Settings:
+    if not settings.demo_admin_login_enabled:
+        raise ApiError(
+            code="not_found",
+            message="Not found.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return settings
+
+
+DemoAdminLoginSettingsDep = Annotated[
+    Settings,
+    Depends(require_demo_admin_login_enabled),
+]
+
+
 class AuthRequestVerifier(Protocol):
     """Verifies an incoming bearer token and returns normalized auth claims."""
 

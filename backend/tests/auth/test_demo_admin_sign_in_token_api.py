@@ -38,6 +38,30 @@ async def test_demo_admin_sign_in_token_returns_404_with_default_config() -> Non
 
 
 @pytest.mark.asyncio
+async def test_disabled_demo_admin_sign_in_token_stays_404_after_rate_limit_threshold() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        responses = [
+            await client.post(
+                "/api/auth/demo-admin/sign-in-token",
+                headers={"X-Forwarded-For": "198.51.100.7"},
+            )
+            for _ in range(11)
+        ]
+
+    assert [response.status_code for response in responses] == [404] * 11
+    assert responses[-1].json() == {
+        "code": "not_found",
+        "message": "Not found.",
+        "details": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_demo_admin_sign_in_token_rejects_missing_demo_admin_email() -> None:
     app.dependency_overrides[get_settings] = lambda: Settings(
         _env_file=None,

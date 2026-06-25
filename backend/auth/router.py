@@ -2,7 +2,11 @@
 
 from fastapi import APIRouter, Request, status
 
-from backend.auth.dependencies import BootstrapCurrentUserDep, SettingsDep, SignInTokenClientDep
+from backend.auth.dependencies import (
+    BootstrapCurrentUserDep,
+    DemoAdminLoginSettingsDep,
+    SignInTokenClientDep,
+)
 from backend.auth.schemas import CurrentUser, DemoAdminSignInTokenResponse
 from backend.core.exceptions import ApiError
 from backend.core.rate_limiting import (
@@ -37,16 +41,9 @@ async def get_me(current_user: BootstrapCurrentUserDep) -> CurrentUser:
 )
 async def create_demo_admin_sign_in_token(
     request: Request,
-    settings: SettingsDep,
+    settings: DemoAdminLoginSettingsDep,
     sign_in_token_client: SignInTokenClientDep,
 ) -> DemoAdminSignInTokenResponse:
-    if not settings.demo_admin_login_enabled:
-        raise ApiError(
-            code="not_found",
-            message="Not found.",
-            status_code=status.HTTP_404_NOT_FOUND,
-        )
-
     email_address = settings.demo_admin_email
     if not email_address.strip():
         raise ApiError(
