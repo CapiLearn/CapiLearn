@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     clerk_jwt_key: str | None = None
     clerk_webhook_signing_secret: str | None = None
     clerk_authorized_parties: list[str] = Field(default_factory=list)
-    demo_admin_login_enabled: bool = False
-    demo_admin_clerk_user_id: str | None = None
+    demo_admin_login_enabled: bool = True
+    demo_admin_email: str = "admin+clerk_test@example.com"
     demo_admin_sign_in_token_ttl_seconds: int = 60
     auth_mode: Literal["clerk", "test"] = "clerk"
     test_auth_clerk_id: str = "user_local_dev"

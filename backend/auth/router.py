@@ -1,10 +1,16 @@
 """Authentication API routes."""
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 
 from backend.auth.dependencies import BootstrapCurrentUserDep, SettingsDep, SignInTokenClientDep
 from backend.auth.schemas import CurrentUser, DemoAdminSignInTokenResponse
 from backend.core.exceptions import ApiError
+from backend.core.rate_limiting import (
+    DEMO_ADMIN_LOGIN_RATE_LIMIT,
+    DEMO_ADMIN_LOGIN_RATE_LIMITED_MESSAGE,
+    ip_rate_limit_key,
+    limiter,
+)
 
 router = APIRouter(tags=["auth"])
 
@@ -24,7 +30,13 @@ async def get_me(current_user: BootstrapCurrentUserDep) -> CurrentUser:
     operation_id="createDemoAdminSignInToken",
     summary="Create demo admin sign-in token",
 )
+@limiter.limit(
+    DEMO_ADMIN_LOGIN_RATE_LIMIT,
+    key_func=ip_rate_limit_key,
+    error_message=DEMO_ADMIN_LOGIN_RATE_LIMITED_MESSAGE,
+)
 async def create_demo_admin_sign_in_token(
+    request: Request,
     settings: SettingsDep,
     sign_in_token_client: SignInTokenClientDep,
 ) -> DemoAdminSignInTokenResponse:
@@ -35,23 +47,16 @@ async def create_demo_admin_sign_in_token(
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
-    user_id = settings.demo_admin_clerk_user_id
-    if not user_id or not user_id.strip():
+    email_address = settings.demo_admin_email
+    if not email_address.strip():
         raise ApiError(
             code="demo_admin_login_not_configured",
             message="Demo admin login is not configured.",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-    if not settings.clerk_secret_key:
-        raise ApiError(
-            code="clerk_secret_key_not_configured",
-            message="Clerk sign-in token creation is not configured.",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-    token = await sign_in_token_client.create_sign_in_token(
-        user_id=user_id.strip(),
+    token = await sign_in_token_client.create_sign_in_token_for_email(
+        email_address=email_address.strip(),
         expires_in_seconds=settings.demo_admin_sign_in_token_ttl_seconds,
     )
     return DemoAdminSignInTokenResponse(token=token)
