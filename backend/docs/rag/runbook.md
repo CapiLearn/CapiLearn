@@ -4,33 +4,26 @@
 
 - Python 3.13 and project dependencies installed with `uv sync`
 - Docker and Docker Compose
-- Raw Full Stack Open repository at
-  `backend/ingestion/data/raw/fullstack-hy2020.github.io/`
+- Raw Full Stack Open repository at `backend/ingestion/data/raw/fullstack-hy2020.github.io/`
 - `DATABASE_URL` using `postgresql+asyncpg://`
 - A database backup or snapshot before production schema changes
 
-PostgreSQL uses pgvector with 384-dimensional OpenAI embeddings. No psycopg
-package is used.
+PostgreSQL uses pgvector with 384-dimensional OpenAI embeddings. No psycopg package is used.
 
 ## Phase 2 Deployment Order
 
-1. Confirm the release contains the complete Phase 2 implementation,
-   migrations, tests, and documentation.
+1. Confirm the release contains the complete Phase 2 implementation, migrations, tests, and documentation.
 2. Back up the target database when it contains data that cannot be recreated.
 3. Run the duplicate preflight SQL below before migration `20260610_0011`.
-4. Confirm one Alembic head, then upgrade to `20260613_0013`.
-5. Run a fresh pgvector ingestion. Re-ingestion is required because migration
-   `0011` deliberately adds nullable fields without backfilling chunk content.
+4. Confirm one Alembic head, then upgrade to the current repository head.
+5. Run a fresh pgvector ingestion. Re-ingestion is required because migration `0011` deliberately adds nullable fields without backfilling chunk content.
 6. Run the post-ingestion SQL checks and confirm the expected active corpus.
-7. Enable `--reconcile-deletions` only for an intentional, complete source
-   scan.
+7. Enable `--reconcile-deletions` only for an intentional, complete source scan.
 8. Smoke-test retrieval and confirm inactive documents are excluded.
 
 ## Required Commands
 
-Ingestion commands in this runbook are manual RAG maintenance commands. They are
-not Render startup or build commands. Render backend startup should only start
-the API server, and the frontend build should only build the static site.
+Ingestion commands in this runbook are manual RAG maintenance commands. They are not Render startup or build commands. Render backend startup should only start the API server, and the frontend build should only build the static site.
 
 Start PostgreSQL and check its health:
 
@@ -49,7 +42,7 @@ uv run alembic current
 uv run alembic check
 ```
 
-The single current head after upgrade must be `20260613_0013`.
+The single current head after upgrade must match `uv run alembic heads`. The current repository head is `20260624_0016`.
 
 Preview ingestion manually without loading the model or opening PostgreSQL:
 
@@ -86,10 +79,7 @@ uv run python -m backend.ingestion.ingest_pgvector --help
 
 ## Duplicate Preflight Before Migration 0011
 
-Migration `20260610_0011` adds unique constraints for chunk order and the full
-embedding contract identity. Migration `20260609_0010` establishes document
-source identity. Run all three checks before upgrading a populated database.
-Each query must return zero rows.
+Migration `20260610_0011` adds unique constraints for chunk order and the full embedding contract identity. Migration `20260609_0010` establishes document source identity. Run all three checks before upgrading a populated database. Each query must return zero rows.
 
 ```sql
 SELECT source_type, source_path, COUNT(*) AS duplicate_count
@@ -117,8 +107,7 @@ GROUP BY chunk_id, embedding_provider, embedding_model, embedding_dimensions
 HAVING COUNT(*) > 1;
 ```
 
-Do not apply `0011` until duplicates are understood and resolved through an
-environment-specific data repair or fresh ingestion plan.
+Do not apply `0011` until duplicates are understood and resolved through an environment-specific data repair or fresh ingestion plan.
 
 ## Ingestion Contract
 
@@ -142,9 +131,7 @@ For the current Full Stack Open corpus, a fresh verified run produces:
 0 ingestion failures
 ```
 
-Counts may change when source content or chunker semantics change. Record such
-changes in `metrics.md` and increment `CHUNKER_VERSION` when output semantics
-change.
+Counts may change when source content or chunker semantics change. Record such changes in `metrics.md` and increment `CHUNKER_VERSION` when output semantics change.
 
 ## Post-Ingestion Verification SQL
 
@@ -216,8 +203,7 @@ WHERE d.is_active IS TRUE
 
 ### Uniqueness and Orphans
 
-The three duplicate queries from the preflight section must still return zero
-rows. Also run:
+The three duplicate queries from the preflight section must still return zero rows. Also run:
 
 ```sql
 SELECT c.id
@@ -251,17 +237,11 @@ SELECT
 FROM rag_documents;
 ```
 
-Both values must be zero. The pgvector retrieval query includes
-`rag_documents.is_active IS TRUE` beside the embedding-model filter. Confirm
-the deployed code contains that predicate and perform a chat smoke test after
-any reconciliation run.
+Both values must be zero. The pgvector retrieval query includes `rag_documents.is_active IS TRUE` beside the embedding-model filter. Confirm the deployed code contains that predicate and perform a chat smoke test after any reconciliation run.
 
 ## Soft Deletion and Reactivation
 
-`rag_documents.is_active` controls retrieval eligibility and `deleted_at`
-records when a source was deactivated. Soft deletion retains the document,
-chunks, and embeddings for audit/history while excluding them from pgvector
-retrieval.
+`rag_documents.is_active` controls retrieval eligibility and `deleted_at` records when a source was deactivated. Soft deletion retains the document, chunks, and embeddings for audit/history while excluding them from pgvector retrieval.
 
 Reconciliation is opt-in. It runs only when:
 
@@ -271,20 +251,13 @@ Reconciliation is opt-in. It runs only when:
 - preprocessing completed without failure
 - every database replacement completed without failure
 
-It does not run after an empty, failed, partial, or dry-run ingestion. Its
-scope is the configured `source_type` and `course_name`. A source that
-reappears is reactivated automatically by the normal document upsert, which
-sets `is_active=true` and clears `deleted_at`.
+It does not run after an empty, failed, partial, or dry-run ingestion. Its scope is the configured `source_type` and `course_name`. A source that reappears is reactivated automatically by the normal document upsert, which sets `is_active=true` and clears `deleted_at`.
 
-Separate from missing-source reconciliation, non-dry ingestion targets
-discovered sources that are empty, excluded, or produce no chunks for soft
-deactivation. Unexpected preprocessing failures are not targeted.
+Separate from missing-source reconciliation, non-dry ingestion targets discovered sources that are empty, excluded, or produce no chunks for soft deactivation. Unexpected preprocessing failures are not targeted.
 
 ## Enable pgvector Retrieval
 
-Set these values before application startup. Keep retrieval logging disabled
-for production, Render, and default deployment unless debugging explicitly
-requires it and the privacy implications of storing `query_text` are accepted.
+Set these values before application startup. Keep retrieval logging disabled for production, Render, and default deployment unless debugging explicitly requires it and the privacy implications of storing `query_text` are accepted.
 
 ```dotenv
 RAG_BACKEND=pgvector
@@ -299,8 +272,7 @@ RAG_WRITE_RETRIEVAL_LOGS=false
 # RAG_INDEX_VERSION=full-stack-open-2026-06
 ```
 
-For local diagnostics only, temporarily set `RAG_WRITE_RETRIEVAL_LOGS=true`
-before creating and inspecting a durable retrieval record.
+For local diagnostics only, temporarily set `RAG_WRITE_RETRIEVAL_LOGS=true` before creating and inspecting a durable retrieval record.
 
 Restart FastAPI after changing RAG settings:
 
@@ -324,10 +296,7 @@ docker compose exec postgres psql -U capilearn -d capilearn -c \
    LIMIT 1;"
 ```
 
-Expected events include `rag.provider.retrieve.completed` and
-`rag.retrieve.completed`. Provider events distinguish raw candidate count,
-retained count, and deduplication suppression reasons. Durable retrieval logs
-contain the final retained chunks used by the prompt.
+Expected events include `rag.provider.retrieve.completed` and `rag.retrieve.completed`. Provider events distinguish raw candidate count, retained count, and deduplication suppression reasons. Durable retrieval logs contain the final retained chunks used by the prompt.
 
 ## Rollback
 
@@ -335,13 +304,10 @@ Application rollback must happen before schema downgrade.
 
 1. Deploy the previous application version.
 2. Restart the backend and verify retrieval.
-3. Leave the Phase 2 PostgreSQL schema and soft-deleted rows in place unless a
-   separately approved rollback requires schema downgrade.
-4. Only then consider `alembic downgrade`. Downgrading removes Phase 2 columns
-   and constraints and must not occur while Phase 2 application code is live.
+3. Leave the Phase 2 PostgreSQL schema and soft-deleted rows in place unless a separately approved rollback requires schema downgrade.
+4. Only then consider `alembic downgrade`. Downgrading removes Phase 2 columns and constraints and must not occur while Phase 2 application code is live.
 
-Inactive rows remain retained unless a later, explicit hard-deletion process
-is approved.
+Inactive rows remain retained unless a later, explicit hard-deletion process is approved.
 
 ## Troubleshooting
 
@@ -356,26 +322,20 @@ The initialization script runs `CREATE EXTENSION IF NOT EXISTS vector`.
 
 ### Empty or Stale RAG Tables
 
-For manual maintenance only, run a dry run, then a normal ingestion. Do not use
-these commands as Render startup or build commands:
+For manual maintenance only, run a dry run, then a normal ingestion. Do not use these commands as Render startup or build commands:
 
 ```bash
 uv run python -m backend.ingestion.ingest_pgvector --dry-run --fail-fast
 uv run python -m backend.ingestion.ingest_pgvector --fail-fast
 ```
 
-Verify `DATABASE_URL` points to the database used by FastAPI. Do not enable
-reconciliation while diagnosing incomplete source discovery.
+Verify `DATABASE_URL` points to the database used by FastAPI. Do not enable reconciliation while diagnosing incomplete source discovery.
 
 ### Embedding Dimension Mismatch
 
-The pgvector schema stores `vector(384)`. Both ingestion and retrieval must use
-the configured OpenAI embedding contract; unsupported pgvector embedding
-contracts fail configuration validation.
+The pgvector schema stores `vector(384)`. Both ingestion and retrieval must use the configured OpenAI embedding contract; unsupported pgvector embedding contracts fail configuration validation.
 
-Follow-up: introduce a first-class
-`EmbeddingContract(provider, model, dimensions)` value object to reduce loose
-primitive plumbing across validation, ingestion, and retrieval.
+Follow-up: introduce a first-class `EmbeddingContract(provider, model, dimensions)` value object to reduce loose primitive plumbing across validation, ingestion, and retrieval.
 
 ### Alembic Migration Issues
 
@@ -386,21 +346,16 @@ uv run alembic history --verbose
 uv run alembic check
 ```
 
-Do not blindly stamp a database that may be missing schema changes. Never use a
-destructive volume reset for shared, staging, or production data.
+Do not blindly stamp a database that may be missing schema changes. Never use a destructive volume reset for shared, staging, or production data.
 
 ### Backend Selection
 
-The only supported runtime value is `RAG_BACKEND=pgvector`. Settings are cached
-at startup, so restart FastAPI after changing the value.
+The only supported runtime value is `RAG_BACKEND=pgvector`. Settings are cached at startup, so restart FastAPI after changing the value.
 
 ### Downstream LLM Failure
 
-An external LLM authentication or billing failure after successful
-`rag.provider.retrieve.completed` and `rag.retrieve.completed` events is not a
-pgvector retrieval failure.
+An external LLM authentication or billing failure after successful `rag.provider.retrieve.completed` and `rag.retrieve.completed` events is not a pgvector retrieval failure.
 
 ### Embedding Provider Configuration
 
-Set `OPENAI_API_KEY` before running ingestion or retrieval. Use `--dry-run`
-when only preprocessing counts are needed.
+Set `OPENAI_API_KEY` before running ingestion or retrieval. Use `--dry-run` when only preprocessing counts are needed.
